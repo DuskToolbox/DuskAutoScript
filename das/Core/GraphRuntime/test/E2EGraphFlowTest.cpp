@@ -491,6 +491,7 @@ public:
     std::atomic<int>      do_count{0};
     double                last_result = 0.0;
     std::string           last_string_result;
+    std::string           last_string_output;
 
     explicit CountingTaskComponent(
         Das::DasPtr<Das::PluginInterface::IDasTaskComponent> inner)
@@ -557,6 +558,7 @@ public:
                 last_result = value;
             }
             last_string_result = PortMapGetString(*pp_out_port_map, "result");
+            last_string_output = PortMapGetString(*pp_out_port_map, "value");
         }
         return hr;
     }
@@ -850,7 +852,7 @@ TEST_F(E2EGraphFlowTest, ConstantsAndConcatChainProducesJoinedString)
 
     ASSERT_EQ(counting_host->counters.size(), 2u);
     EXPECT_EQ(counting_host->counters[0]->do_count.load(), 1);
-    EXPECT_EQ(counting_host->counters[0]->last_string_result, "Hello");
+    EXPECT_EQ(counting_host->counters[0]->last_string_output, "Hello");
     EXPECT_EQ(counting_host->counters[1]->do_count.load(), 1);
     EXPECT_EQ(counting_host->counters[1]->last_string_result, "Hello World");
 }

@@ -166,6 +166,41 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
+    // Typed constants: write the config `value` key (falling back to the
+    // type's zero value when the key is absent) to the `value` output port
+    // on every execution — no compile-time constant folding special case
+    // (a constant producer without a signal in-edge is auto-evaluated by
+    // the closure rule instead).
+    DasResult DoConstantBool(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
+    // See DoConstantBool.
+    DasResult DoConstantInt64(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
+    // See DoConstantBool.
+    DasResult DoConstantDouble(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
+    // See DoConstantBool.
+    DasResult DoConstantString(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
+    // String concatenation: reads left/right (falling back to config panel
+    // defaults on unconnected ports) and writes result = left + right.
+    DasResult DoConcatString(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
     // φ-join: gated by in_true/in_false signals; copies whichever of
     // value_true/value_false the taken branch produced into `result`.
     DasResult DoMerge(

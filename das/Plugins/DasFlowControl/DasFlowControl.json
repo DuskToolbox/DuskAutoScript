@@ -230,6 +230,106 @@
           "diagnostics": []
         }
       },
+      "68F10009-0000-4000-8000-000000000009": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.constant_bool",
+          "label": { "en": "Constant (Bool)", "zh-cn": "常量（布尔）" },
+          "componentGuid": "68F10009-0000-4000-8000-000000000009",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "value",
+              "type": "bool",
+              "label": { "en": "Value", "zh-cn": "值" }
+            }
+          ],
+          "config": {
+            "value": {
+              "type": "bool",
+              "label": { "en": "Value", "zh-cn": "值" },
+              "default": false
+            }
+          },
+          "diagnostics": []
+        }
+      },
+      "68F1000A-0000-4000-8000-00000000000A": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.constant_int64",
+          "label": { "en": "Constant (Int64)", "zh-cn": "常量（整数）" },
+          "componentGuid": "68F1000A-0000-4000-8000-00000000000A",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "value",
+              "type": "int64",
+              "label": { "en": "Value", "zh-cn": "值" }
+            }
+          ],
+          "config": {
+            "value": {
+              "type": "int64",
+              "label": { "en": "Value", "zh-cn": "值" },
+              "default": 0
+            }
+          },
+          "diagnostics": []
+        }
+      },
+      "68F1000B-0000-4000-8000-00000000000B": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.constant_double",
+          "label": { "en": "Constant (Double)", "zh-cn": "常量（双精度）" },
+          "componentGuid": "68F1000B-0000-4000-8000-00000000000B",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "value",
+              "type": "double",
+              "label": { "en": "Value", "zh-cn": "值" }
+            }
+          ],
+          "config": {
+            "value": {
+              "type": "double",
+              "label": { "en": "Value", "zh-cn": "值" },
+              "default": 0
+            }
+          },
+          "diagnostics": []
+        }
+      },
+      "68F1000C-0000-4000-8000-00000000000C": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.constant_string",
+          "label": { "en": "Constant (String)", "zh-cn": "常量（字符串）" },
+          "componentGuid": "68F1000C-0000-4000-8000-00000000000C",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "value",
+              "type": "string",
+              "label": { "en": "Value", "zh-cn": "值" }
+            }
+          ],
+          "config": {
+            "value": {
+              "type": "string",
+              "label": { "en": "Value", "zh-cn": "值" },
+              "default": ""
+            }
+          },
+          "diagnostics": []
+        }
+      },
       "68F1000E-0000-4000-8000-00000000000E": {
         "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
         "definition": {
@@ -260,7 +360,8 @@
             "operator": {
               "type": "string",
               "label": { "en": "Operator", "zh-cn": "运算符" },
-              "default": "<"
+              "default": "<",
+              "options": ["<", "<=", ">", ">=", "==", "!="]
             },
             "left": {
               "type": "double",
@@ -306,7 +407,8 @@
             "operator": {
               "type": "string",
               "label": { "en": "Operator", "zh-cn": "运算符" },
-              "default": "+"
+              "default": "+",
+              "options": ["+", "-", "*", "/"]
             },
             "left": {
               "type": "double",
@@ -317,6 +419,47 @@
               "type": "double",
               "label": { "en": "Right Default", "zh-cn": "右值默认" },
               "default": 1
+            }
+          },
+          "diagnostics": []
+        }
+      },
+      "68F10011-0000-4000-8000-000000000011": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.concat_string",
+          "label": { "en": "Concat (String)", "zh-cn": "拼接（字符串）" },
+          "componentGuid": "68F10011-0000-4000-8000-000000000011",
+          "inputs": [
+            {
+              "id": "left",
+              "type": "string",
+              "label": { "en": "Left", "zh-cn": "左值" }
+            },
+            {
+              "id": "right",
+              "type": "string",
+              "label": { "en": "Right", "zh-cn": "右值" }
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "type": "string",
+              "label": { "en": "Result", "zh-cn": "结果" }
+            }
+          ],
+          "config": {
+            "left": {
+              "type": "string",
+              "label": { "en": "Left Default", "zh-cn": "左值默认" },
+              "default": ""
+            },
+            "right": {
+              "type": "string",
+              "label": { "en": "Right Default", "zh-cn": "右值默认" },
+              "default": ""
             }
           },
           "diagnostics": []

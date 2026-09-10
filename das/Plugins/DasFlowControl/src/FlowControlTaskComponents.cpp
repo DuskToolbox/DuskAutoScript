@@ -452,6 +452,13 @@ namespace
     constexpr std::string_view COMPARE_DOUBLE_KIND = "das.flow.compare_double";
     constexpr std::string_view ARITHMETIC_NUMBER_KIND =
         "das.flow.arithmetic_number";
+    constexpr std::string_view CONSTANT_BOOL_KIND = "das.flow.constant_bool";
+    constexpr std::string_view CONSTANT_INT64_KIND = "das.flow.constant_int64";
+    constexpr std::string_view CONSTANT_DOUBLE_KIND =
+        "das.flow.constant_double";
+    constexpr std::string_view CONSTANT_STRING_KIND =
+        "das.flow.constant_string";
+    constexpr std::string_view CONCAT_STRING_KIND = "das.flow.concat_string";
 
     // 等窗轮询的小时间片（stop 只能轮询，切片保证响应性）与超时上限兜底
     // （防病态配置把执行占死）；waitWindowTimeoutMs 缺省用默认值。
@@ -460,7 +467,7 @@ namespace
         std::chrono::milliseconds(30000);
     constexpr auto MAX_WAIT_WINDOW_TIMEOUT = std::chrono::milliseconds(120000);
 
-    constexpr std::array<ComponentSpec, 9> COMPONENTS{
+    constexpr std::array<ComponentSpec, 14> COMPONENTS{
         ComponentSpec{
             DasGuid{
                 0x68f10001,
@@ -511,6 +518,38 @@ namespace
             "das.flow.merge"},
         ComponentSpec{
             DasGuid{
+                0x68f10009,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09}},
+            "68F10009-0000-4000-8000-000000000009",
+            "das.flow.constant_bool"},
+        ComponentSpec{
+            DasGuid{
+                0x68f1000a,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a}},
+            "68F1000A-0000-4000-8000-00000000000A",
+            "das.flow.constant_int64"},
+        ComponentSpec{
+            DasGuid{
+                0x68f1000b,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0b}},
+            "68F1000B-0000-4000-8000-00000000000B",
+            "das.flow.constant_double"},
+        ComponentSpec{
+            DasGuid{
+                0x68f1000c,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c}},
+            "68F1000C-0000-4000-8000-00000000000C",
+            "das.flow.constant_string"},
+        ComponentSpec{
+            DasGuid{
                 0x68f1000e,
                 0x0000,
                 0x4000,
@@ -525,6 +564,14 @@ namespace
                 {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10}},
             "68F10010-0000-4000-8000-000000000010",
             "das.flow.arithmetic_number"},
+        ComponentSpec{
+            DasGuid{
+                0x68f10011,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11}},
+            "68F10011-0000-4000-8000-000000000011",
+            "das.flow.concat_string"},
         ComponentSpec{
             DasGuid{
                 0x95fd2ffa,
@@ -1619,6 +1666,213 @@ DasResult DasFlowControlTaskComponent::DoArithmeticNumber(
     return DAS_S_OK;
 }
 
+DasResult DasFlowControlTaskComponent::DoConstantBool(
+    PluginInterface::IDasStopToken* stop_token,
+    ExportInterface::IDasReadOnlyPortMap* /*p_input_port_map*/,
+    ExportInterface::IDasPortMap** pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 纯数据原语：无子调用无等待，不轮询取消。
+    (void)stop_token;
+
+    // config 缺 value 键回落零值（缺省即语义）。
+    bool value = false;
+    if (auto settings_obj = settings_.as_object())
+    {
+        if (const auto v = (*settings_obj)[std::string_view("value")].as_bool())
+        {
+            value = *v;
+        }
+    }
+
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    SetPortString(output_map.Get(), "status", "completed");
+    const DasReadOnlyString value_key{"value"};
+    output_map.Get()->SetBool(value_key.Get(), value);
+    EmitSignal(output_map.Get(), "signal_out");
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult DasFlowControlTaskComponent::DoConstantInt64(
+    PluginInterface::IDasStopToken* stop_token,
+    ExportInterface::IDasReadOnlyPortMap* /*p_input_port_map*/,
+    ExportInterface::IDasPortMap** pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 纯数据原语：无子调用无等待，不轮询取消。
+    (void)stop_token;
+
+    // config 缺 value 键回落零值（缺省即语义）。
+    int64_t value = 0;
+    if (auto settings_obj = settings_.as_object())
+    {
+        if (const auto v = (*settings_obj)[std::string_view("value")].as_int())
+        {
+            value = *v;
+        }
+    }
+
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    SetPortString(output_map.Get(), "status", "completed");
+    SetPortInt(output_map.Get(), "value", value);
+    EmitSignal(output_map.Get(), "signal_out");
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult DasFlowControlTaskComponent::DoConstantDouble(
+    PluginInterface::IDasStopToken* stop_token,
+    ExportInterface::IDasReadOnlyPortMap* /*p_input_port_map*/,
+    ExportInterface::IDasPortMap** pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 纯数据原语：无子调用无等待，不轮询取消。
+    (void)stop_token;
+
+    // config 缺 value 键回落零值（缺省即语义）。
+    double value = 0.0;
+    if (auto settings_obj = settings_.as_object())
+    {
+        if (const auto v = (*settings_obj)[std::string_view("value")].as_num())
+        {
+            value = *v;
+        }
+    }
+
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    SetPortString(output_map.Get(), "status", "completed");
+    SetPortFloat(output_map.Get(), "value", value);
+    EmitSignal(output_map.Get(), "signal_out");
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult DasFlowControlTaskComponent::DoConstantString(
+    PluginInterface::IDasStopToken* stop_token,
+    ExportInterface::IDasReadOnlyPortMap* /*p_input_port_map*/,
+    ExportInterface::IDasPortMap** pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 纯数据原语：无子调用无等待，不轮询取消。
+    (void)stop_token;
+
+    // config 缺 value 键回落空串（缺省即语义）。
+    std::string value;
+    if (auto settings_obj = settings_.as_object())
+    {
+        if (const auto v =
+                (*settings_obj)[std::string_view("value")].as_string())
+        {
+            value = std::string(*v);
+        }
+    }
+
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    SetPortString(output_map.Get(), "status", "completed");
+    SetPortString(output_map.Get(), "value", value);
+    EmitSignal(output_map.Get(), "signal_out");
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult DasFlowControlTaskComponent::DoConcatString(
+    PluginInterface::IDasStopToken*       stop_token,
+    ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+    ExportInterface::IDasPortMap**        pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 纯数据原语：无子调用无等待，不轮询取消。
+    (void)stop_token;
+
+    std::string left_default;
+    std::string right_default;
+    if (auto settings_obj = settings_.as_object())
+    {
+        if (const auto v =
+                (*settings_obj)[std::string_view("left")].as_string())
+        {
+            left_default = std::string(*v);
+        }
+        if (const auto v =
+                (*settings_obj)[std::string_view("right")].as_string())
+        {
+            right_default = std::string(*v);
+        }
+    }
+
+    // 悬空口回落面板默认值（缺省即语义）：连线则动态、不连则默认。
+    const std::string left =
+        p_input_port_map ? GetPortString(p_input_port_map, "left", left_default)
+                         : left_default;
+    const std::string right =
+        p_input_port_map
+            ? GetPortString(p_input_port_map, "right", right_default)
+            : right_default;
+
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    SetPortString(output_map.Get(), "status", "completed");
+    SetPortString(output_map.Get(), "result", left + right);
+    EmitSignal(output_map.Get(), "signal_out");
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
+    return DAS_S_OK;
+}
+
 DasResult DasFlowControlTaskComponent::DoMerge(
     PluginInterface::IDasStopToken*       stop_token,
     ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
@@ -1993,6 +2247,31 @@ DasResult DasFlowControlTaskComponent::Do(
             stop_token,
             p_input_port_map,
             pp_out_port_map);
+    }
+
+    if (kind_ == CONSTANT_BOOL_KIND)
+    {
+        return DoConstantBool(stop_token, p_input_port_map, pp_out_port_map);
+    }
+
+    if (kind_ == CONSTANT_INT64_KIND)
+    {
+        return DoConstantInt64(stop_token, p_input_port_map, pp_out_port_map);
+    }
+
+    if (kind_ == CONSTANT_DOUBLE_KIND)
+    {
+        return DoConstantDouble(stop_token, p_input_port_map, pp_out_port_map);
+    }
+
+    if (kind_ == CONSTANT_STRING_KIND)
+    {
+        return DoConstantString(stop_token, p_input_port_map, pp_out_port_map);
+    }
+
+    if (kind_ == CONCAT_STRING_KIND)
+    {
+        return DoConcatString(stop_token, p_input_port_map, pp_out_port_map);
     }
 
     if (kind_ == MERGE_KIND)

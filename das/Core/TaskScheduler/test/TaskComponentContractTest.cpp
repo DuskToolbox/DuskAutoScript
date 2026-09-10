@@ -57,7 +57,7 @@ namespace
         std::string_view guid_text;
     };
 
-    constexpr std::array<OfficialFlowComponent, 9> OFFICIAL_COMPONENTS{
+    constexpr std::array<OfficialFlowComponent, 14> OFFICIAL_COMPONENTS{
         OfficialFlowComponent{
             "branch",
             "das.flow.branch",
@@ -83,6 +83,22 @@ namespace
             "das.flow.merge",
             "68F10008-0000-4000-8000-000000000008"},
         OfficialFlowComponent{
+            "constantBool",
+            "das.flow.constant_bool",
+            "68F10009-0000-4000-8000-000000000009"},
+        OfficialFlowComponent{
+            "constantInt64",
+            "das.flow.constant_int64",
+            "68F1000A-0000-4000-8000-00000000000A"},
+        OfficialFlowComponent{
+            "constantDouble",
+            "das.flow.constant_double",
+            "68F1000B-0000-4000-8000-00000000000B"},
+        OfficialFlowComponent{
+            "constantString",
+            "das.flow.constant_string",
+            "68F1000C-0000-4000-8000-00000000000C"},
+        OfficialFlowComponent{
             "compareDouble",
             "das.flow.compare_double",
             "68F1000E-0000-4000-8000-00000000000E"},
@@ -90,6 +106,10 @@ namespace
             "arithmeticNumber",
             "das.flow.arithmetic_number",
             "68F10010-0000-4000-8000-000000000010"},
+        OfficialFlowComponent{
+            "concatString",
+            "das.flow.concat_string",
+            "68F10011-0000-4000-8000-000000000011"},
         OfficialFlowComponent{
             "launch",
             "das.flow.launch",
@@ -1149,7 +1169,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     // signals 键，DasMaaPi 的 signals 条目形状为 {id,label}）；
     // config_field_count = config 对象的声明字段数（空 config 计 0）。
     const std::array<ManifestSpec, 3> manifests{
-        ManifestSpec{"DasFlowControl", 9, 31, 14},
+        ManifestSpec{"DasFlowControl", 14, 38, 20},
         ManifestSpec{"DasMaaPi", 1, 8, 2},
         ManifestSpec{"DasGraphTask", 1, 2, 0},
     };
@@ -1256,9 +1276,9 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
         total_ports += ports_with_label;
         total_config_fields += config_fields_with_label;
     }
-    EXPECT_EQ(total_definitions, 11u);
-    EXPECT_EQ(total_ports, 41u);
-    EXPECT_EQ(total_config_fields, 16u);
+    EXPECT_EQ(total_definitions, 16u);
+    EXPECT_EQ(total_ports, 48u);
+    EXPECT_EQ(total_config_fields, 22u);
 }
 
 TEST_F(
