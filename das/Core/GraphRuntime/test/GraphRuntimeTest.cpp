@@ -899,6 +899,19 @@ namespace SignalGatedTestMock
 
             if (mode == "loop")
             {
+                // 读 cond 输入口（外层携带通道的落点）：外层重启后能否读到
+                // 上圈回边值是归属规则的验收点，缺失时不记录。
+                if (p_input_port_map != nullptr)
+                {
+                    const DasReadOnlyString cond_key{"cond"};
+                    int64_t                 cond_value{};
+                    if (DAS::IsOk(p_input_port_map->GetInt(
+                            cond_key.Get(),
+                            &cond_value)))
+                    {
+                        input_values.push_back(cond_value);
+                    }
+                }
                 if (counter < loop_end)
                 {
                     SetOutInt(output.Get(), "index", counter);
@@ -965,6 +978,9 @@ namespace SignalGatedTestMock
                 input_values.push_back(in_value);
                 const int64_t out_value = in_value + 1;
                 SetOutInt(output.Get(), "out", out_value);
+                // count 与 out 同值不同口：外层携带通道用它，与内层自环通
+                // 道（out）分开清场互不影响。
+                SetOutInt(output.Get(), "count", out_value);
                 EmitSignal(
                     output.Get(),
                     out_value <= acc_until ? "done" : "break");
@@ -1535,6 +1551,48 @@ TEST(SignalGatedRuntimeTest, NestedInnerRunsPerOuterRoundCounts)
     EXPECT_EQ(h->components[4]->do_count.load(), 2); // C1: 恰 N 次
     ASSERT_FALSE(h->components[3]->input_values.empty());
     EXPECT_EQ(h->components[3]->input_values.back(), 7);
+}
+
+// -------------------------------------------------------------------
+// 外层携带通道存活性：内层体的数据回边直连外层头（归属外层清单）时，
+// 外层发火只清严格内层源口，外层头重启后能读到上圈回边值（不回落缺
+// 省/缺键）。
+// -------------------------------------------------------------------
+TEST(SignalGatedRuntimeTest, NestedOuterRestartReadsOuterCarriedValue)
+{
+    using namespace SignalGatedTestMock;
+    auto fx = MakeNestedLoopPlan(2, 2, 1);
+
+    // 内层体 count 口直连外层头 cond 口的数据回边——按目标头归属外层
+    // （编译期 ComputeTopology 新规则），源口记外层清单。
+    fx.plan.back_edges.push_back(MakeDataBackEdge(
+        "be_outer_data",
+        fx.inner_body,
+        "count",
+        fx.outer_head,
+        "cond",
+        fx.outer_head));
+    fx.plan.loop_layers[0].data_back_edge_sources = {
+        MakePortRef(fx.inner_body, "count")};
+    fx.plan.binding_plan.bindings.push_back(
+        MakeBinding(fx.inner_body, "count", fx.outer_head, "cond", "int"));
+
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(fx.plan, "fp_v1", token.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK);
+
+    auto* h = static_cast<BehaviorHost*>(host.Get());
+    ASSERT_EQ(h->components.size(), 5u);
+    // 外层头每圈重启都读到上圈内层终值 3（首圈无携带值不记录）。
+    EXPECT_EQ(h->components[0]->input_values, (std::vector<int64_t>{3, 3}));
+    // 内层自环通道仍按内层清场语义工作：每外圈从 seed 重新累计。
+    EXPECT_EQ(
+        h->components[3]->input_values,
+        (std::vector<int64_t>{1, 2, 1, 2}));
 }
 
 // -------------------------------------------------------------------

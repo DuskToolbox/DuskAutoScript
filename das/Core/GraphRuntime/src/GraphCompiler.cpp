@@ -1151,11 +1151,25 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         }
         else
         {
-            auto member_it = layers_of_member.find(edge->source_node_id);
-            if (member_it != layers_of_member.end()
-                && !member_it->second.empty())
+            // 数据回边直连某层头（如内环节点把计数值带回外层 while 的条件
+            // 口）携带的是该层自己的循环状态：按源最内层归属会把它记进
+            // 内层，外层发火清严格内层源口时就把外层自己的携带值清掉了，
+            // 外层头重启后读不到上圈回边值。目标头归属优先；层内通道维持
+            // 按源最内层。
+            auto head_it = layer_of_head.find(edge->target_node_id);
+            if (head_it != layer_of_head.end()
+                && layer_drafts[head_it->second].has_signal_back_edge)
             {
-                owner = innermost_of(member_it->second);
+                owner = head_it->second;
+            }
+            else
+            {
+                auto member_it = layers_of_member.find(edge->source_node_id);
+                if (member_it != layers_of_member.end()
+                    && !member_it->second.empty())
+                {
+                    owner = innermost_of(member_it->second);
+                }
             }
         }
         if (owner != layer_drafts.size())

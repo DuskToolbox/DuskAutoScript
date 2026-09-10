@@ -1599,6 +1599,83 @@ TEST(SignalAwareCompileTest, NestedWhileLoopsRecordTwoTiersAndOwnership)
 }
 
 // ---------------------------------------------------------------------
+// 内环节点的数据回边直连外层头时归属外层：该通道携带外层自己的循环
+// 状态，记进内层清单会被「外层发火清严格内层源口」误清，外层头重启
+// 后读不到上圈回边值。
+// ---------------------------------------------------------------------
+TEST(SignalAwareCompileTest, DataBackEdgeToOuterHeadOwnedByOuterLayer)
+{
+    GraphCompiler compiler;
+
+    GraphDocumentDto doc;
+    for (const char* id : {"W1", "B", "W2", "A", "C1"})
+    {
+        doc.nodes.push_back(
+            MakeComponentNode(id, "00000000-0000-0000-0000-000000000001"));
+    }
+    doc.edges.push_back(MakeSignalEdge("e_s1", "W1", "continue", "B", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s2", "B", "out", "W2", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s3", "W2", "continue", "A", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s4", "A", "done", "W2", "loop_in"));
+    doc.edges.push_back(MakeSignalEdge("e_s5", "A", "break", "C1", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s6", "C1", "done", "W1", "loop_in"));
+    // 内层体自身数据回边（归内层）+ 内层体直连外层头的数据回边（归外层）。
+    doc.edges.push_back(MakeEdge("e_d1", "A", "out", "A", "state"));
+    doc.edges.push_back(MakeEdge("e_d2", "A", "count", "W1", "cond"));
+
+    auto topo = compiler.ComputeTopology(doc);
+
+    ASSERT_EQ(topo.loop_layers.size(), 2u);
+    const Dto::LoopLayerDto* outer = nullptr;
+    const Dto::LoopLayerDto* inner = nullptr;
+    for (const auto& layer : topo.loop_layers)
+    {
+        if (layer.head_node_id == "W1")
+        {
+            outer = &layer;
+        }
+        else if (layer.head_node_id == "W2")
+        {
+            inner = &layer;
+        }
+    }
+    ASSERT_NE(outer, nullptr);
+    ASSERT_NE(inner, nullptr);
+
+    const Dto::BackEdgeDto* inner_data_back = nullptr;
+    const Dto::BackEdgeDto* outer_data_back = nullptr;
+    for (const auto& be : topo.back_edges)
+    {
+        if (be.edge_id == "e_d1")
+        {
+            inner_data_back = &be;
+        }
+        else if (be.edge_id == "e_d2")
+        {
+            outer_data_back = &be;
+        }
+    }
+    ASSERT_NE(inner_data_back, nullptr);
+    ASSERT_NE(outer_data_back, nullptr);
+
+    // 直连外层头的数据回边记档在外层（loop_head_node_id 与源口清单），
+    // 层内自环通道维持归内层。
+    EXPECT_EQ(outer_data_back->edge_kind, "data");
+    EXPECT_EQ(outer_data_back->loop_head_node_id, "W1");
+    EXPECT_EQ(inner_data_back->edge_kind, "data");
+    EXPECT_EQ(inner_data_back->loop_head_node_id, "W2");
+
+    ASSERT_EQ(outer->data_back_edge_sources.size(), 1u);
+    EXPECT_EQ(outer->data_back_edge_sources[0].node_id, "A");
+    EXPECT_EQ(outer->data_back_edge_sources[0].port_id, "count");
+    ASSERT_EQ(inner->data_back_edge_sources.size(), 1u);
+    EXPECT_EQ(inner->data_back_edge_sources[0].node_id, "A");
+    EXPECT_EQ(inner->data_back_edge_sources[0].port_id, "out");
+
+    EXPECT_TRUE(topo.diagnostics.empty());
+}
+
+// ---------------------------------------------------------------------
 // 闭包边界：无顺序线生产者的归属由消费者位置精确决定——P1 的消费者在
 // 环内 → 并入环成员每圈重算；P2 的消费者全在环外 → 不入任何层（启动
 // 时只算一次）。
