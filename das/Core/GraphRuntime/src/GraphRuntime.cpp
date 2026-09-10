@@ -862,14 +862,39 @@ DasResult GraphRuntime::RunSignalGated(
             }
             if (!fired_head.empty())
             {
+                // 外层重开=内层从头来：清空严格内层数据回边源口的帧值，
+                // 内层重开第一圈读不到旧值、经缺口语径回落组件缺省——
+                // 这是「清信号留数据」原则的唯一精确例外，只发生在外环
+                // 重启内环这一处。判据与编译期分层一致：内层头落在发火
+                // 层的成员集内。
+                const std::vector<std::string>& fired_members =
+                    loop_scc[fired_head];
+                std::unordered_set<std::string> fired_member_set(
+                    fired_members.begin(),
+                    fired_members.end());
+                for (const auto& layer : plan.loop_layers)
+                {
+                    if (layer.head_node_id == fired_head
+                        || fired_member_set.count(layer.head_node_id) == 0)
+                    {
+                        continue;
+                    }
+                    for (const auto& source : layer.data_back_edge_sources)
+                    {
+                        // 缺键是正常形态（被跳过的圈从未写过该口），布尔
+                        // 返回值只报告是否真有条目被删——无需消费。
+                        (void)frame.Remove(
+                            PortKey{source.node_id, source.port_id});
+                    }
+                }
                 // iteration boundary: clear stale signals, then re-pend head +
                 // body
-                for (const auto& m : loop_scc[fired_head])
+                for (const auto& m : fired_members)
                 {
                     frame.ClearSignalsByNode(m);
                 }
                 state[fired_head] = NState::Pending;
-                for (const auto& m : loop_scc[fired_head])
+                for (const auto& m : fired_members)
                 {
                     state[m] = NState::Pending;
                 }
