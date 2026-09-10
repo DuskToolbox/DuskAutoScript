@@ -201,6 +201,13 @@ namespace Contract
     /// `required` marks the field as compile-validated (an empty value yields
     /// a RequiredFieldMissing diagnostic — the compile layer receives the
     /// declaration through the session-injected required map).
+    /// `options` is the closed candidate-list declaration channel (e.g. the
+    /// operator vocabulary of a compare/arithmetic component): a plain string
+    /// array authored once in the manifest — each entry is simultaneously the
+    /// value and the display label (operator IS the label, no {value,label}
+    /// double declaration on the authoring side). The fields projection
+    /// mechanically derives strict CandidateDescriptor objects from it and
+    /// switches inputType to select(1).
     /// Like ports, this is internal to the catalog channel and is NOT emitted
     /// on the public actionCatalog wire — the node fields[] projection is
     /// where config declarations surface.
@@ -212,6 +219,7 @@ namespace Contract
         yyjson::value              default_value;
         std::optional<std::string> task_guid;
         bool                       required = false;
+        std::vector<std::string>   options;
     };
 
     /// One entry in the shared actionCatalog. `action_id` is the

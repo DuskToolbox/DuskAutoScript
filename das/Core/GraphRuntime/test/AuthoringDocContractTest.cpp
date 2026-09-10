@@ -1019,6 +1019,107 @@ namespace
         EXPECT_FALSE(inputs_field->contains(std::string_view("taskGuid")));
     }
 
+    // The closed candidate-list declaration (options) rides the declaration→
+    // projection→wire channel: a config field carrying an options array
+    // projects as a select field (inputType=1) whose candidates are strict
+    // CandidateDescriptor objects ({value,label} with the operator string in
+    // both slots — the strict candidate wire shape the document validator
+    // enforces), while a sibling field without options keeps the plain
+    // projection (zero regression).
+    TEST(
+        AuthoringDocContractTest,
+        ConfigProjection_OptionsProjectAsSelectCandidates)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "compare";
+        ConfigFieldDescriptor operator_field =
+            MakeConfigField("operator", "string", yyjson::value("<"));
+        operator_field.options = {"<", "<=", ">", ">=", "==", "!="};
+        entry.config_fields.push_back(std::move(operator_field));
+        entry.config_fields.push_back(MakeConfigField("left", "double"));
+        catalog.entries.push_back(entry);
+
+        const auto  out = ToAuthoringDocument(doc, catalog);
+        const auto& fields = out.graph->nodes[0].fields;
+        ASSERT_EQ(fields.size(), 2u);
+
+        // Options-bearing field: select control with the declared candidates.
+        EXPECT_EQ(fields[0].name, "operator");
+        EXPECT_EQ(fields[0].input_type, 1);
+        ASSERT_EQ(fields[0].candidates.size(), 6u);
+        const std::vector<std::string>
+            expected_operators{"<", "<=", ">", ">=", "==", "!="};
+        for (std::size_t index = 0; index < expected_operators.size(); ++index)
+        {
+            auto candidate_obj = fields[0].candidates[index].as_object();
+            ASSERT_TRUE(candidate_obj.has_value()) << expected_operators[index];
+            EXPECT_EQ(
+                (*candidate_obj)[std::string_view("value")]
+                    .as_string()
+                    .value_or(""),
+                expected_operators[index]);
+            EXPECT_EQ(
+                (*candidate_obj)[std::string_view("label")]
+                    .as_string()
+                    .value_or(""),
+                expected_operators[index]);
+        }
+
+        // Sibling field without options: plain projection, zero regression.
+        EXPECT_EQ(fields[1].name, "left");
+        EXPECT_EQ(fields[1].input_type, 0);
+        EXPECT_TRUE(fields[1].candidates.empty());
+
+        // Wire emission mirrors the projection engaged-only: the operator
+        // descriptor carries the candidates array, the plain field does not.
+        const auto wire = SerializeDocument(doc, catalog);
+        auto       wire_obj = wire.as_object();
+        ASSERT_TRUE(wire_obj.has_value());
+        auto graph = (*wire_obj)[std::string_view("graph")].as_object();
+        ASSERT_TRUE(graph.has_value());
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        ASSERT_TRUE(nodes.has_value());
+        auto node_obj = (*nodes)[0].as_object();
+        ASSERT_TRUE(node_obj.has_value());
+        auto wire_fields = (*node_obj)[std::string_view("fields")].as_array();
+        ASSERT_TRUE(wire_fields.has_value());
+        ASSERT_EQ(wire_fields->size(), 2u);
+
+        auto operator_wire = (*wire_fields)[0].as_object();
+        ASSERT_TRUE(operator_wire.has_value());
+        EXPECT_EQ(
+            (*operator_wire)[std::string_view("inputType")].as_int().value_or(
+                -1),
+            1);
+        ASSERT_TRUE(operator_wire->contains(std::string_view("candidates")));
+        auto wire_candidates =
+            (*operator_wire)[std::string_view("candidates")].as_array();
+        ASSERT_TRUE(wire_candidates.has_value());
+        ASSERT_EQ(wire_candidates->size(), 6u);
+        auto first_candidate = (*wire_candidates)[0].as_object();
+        ASSERT_TRUE(first_candidate.has_value());
+        EXPECT_EQ(
+            (*first_candidate)[std::string_view("value")].as_string().value_or(
+                ""),
+            "<");
+        EXPECT_EQ(
+            (*first_candidate)[std::string_view("label")].as_string().value_or(
+                ""),
+            "<");
+
+        auto left_wire = (*wire_fields)[1].as_object();
+        ASSERT_TRUE(left_wire.has_value());
+        EXPECT_FALSE(left_wire->contains(std::string_view("candidates")));
+        EXPECT_EQ(
+            (*left_wire)[std::string_view("inputType")].as_int().value_or(-1),
+            0);
+    }
+
     // The formSequence projection merges config declarations the same way
     // (items of a linear document reference components too).
     TEST(AuthoringDocContractTest, ConfigProjection_FormSequenceItemsMerge)
