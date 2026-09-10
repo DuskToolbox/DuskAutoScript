@@ -618,50 +618,6 @@ TEST(PortTypeCompatibilityTest, TypeMismatch)
     EXPECT_TRUE(found_type_mismatch);
 }
 
-TEST(PortTypeCompatibilityTest, BaseToComponentCompatible)
-{
-    StubFactoryManager mgr;
-    auto               node_a_def = MakeDefinition({}, {{"out1", "base"}});
-    auto               node_b_def = MakeDefinition({{"in1", "component"}}, {});
-    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
-    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
-
-    GraphCompiler compiler;
-    compiler.SetFactoryManager(&mgr);
-
-    GraphDocumentDto doc;
-    doc.nodes.push_back(
-        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
-    doc.nodes.push_back(
-        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
-    doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
-
-    auto diagnostics = compiler.ValidateEdgePorts(doc);
-    EXPECT_TRUE(diagnostics.empty());
-}
-
-TEST(PortTypeCompatibilityTest, ComponentToBaseCompatible)
-{
-    StubFactoryManager mgr;
-    auto               node_a_def = MakeDefinition({}, {{"out1", "component"}});
-    auto               node_b_def = MakeDefinition({{"in1", "base"}}, {});
-    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
-    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
-
-    GraphCompiler compiler;
-    compiler.SetFactoryManager(&mgr);
-
-    GraphDocumentDto doc;
-    doc.nodes.push_back(
-        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
-    doc.nodes.push_back(
-        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
-    doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
-
-    auto diagnostics = compiler.ValidateEdgePorts(doc);
-    EXPECT_TRUE(diagnostics.empty());
-}
-
 TEST(PortTypeCompatibilityTest, UnknownTypeWarning)
 {
     StubFactoryManager mgr;

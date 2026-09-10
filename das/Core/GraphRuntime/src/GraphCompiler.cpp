@@ -297,18 +297,6 @@ bool GraphCompiler::IsTypeCompatible(
         return true;
     }
 
-    // base -> component: base can be QI'd to component
-    if (source_type == "base" && target_type == "component")
-    {
-        return true;
-    }
-
-    // component -> base: component IS base (COM identity)
-    if (source_type == "component" && target_type == "base")
-    {
-        return true;
-    }
-
     // Number equivalence classes: the integer family {int, int64} and the
     // float family {float, double} interconnect freely inside a family and
     // integer widens to float (loss-free). double -> float is allowed as a
