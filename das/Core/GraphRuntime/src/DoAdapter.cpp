@@ -342,6 +342,18 @@ namespace
         return DAS_S_OK;
     }
 
+    // 数字等价族判定与 GraphCompiler::IsTypeCompatible 的整数/浮点族划
+    // 分同源（同一张等价表）——读值侧物化只关心目标口属于哪个族。
+    bool IsIntegerFamilyPortType(const std::string& port_type)
+    {
+        return port_type == "int" || port_type == "int64";
+    }
+
+    bool IsFloatFamilyPortType(const std::string& port_type)
+    {
+        return port_type == "float" || port_type == "double";
+    }
+
 } // namespace
 
 // ===========================================================================
@@ -400,6 +412,42 @@ DasResult BuildInputPortMap(
                 "Source port not found: node = {}, port = {}.",
                 binding.source_node_id,
                 binding.source_port_id);
+            continue;
+        }
+
+        // 读值侧物化：生产者按自身声明类型写帧，消费侧在装配点把帧值
+        // 物化成目标口的声明类型（binding.target_type）。整数→浮点是
+        // 无损宽化；浮点→整数是精度截断，从不静默做——WARN 后跳过该
+        // 键，组件见缺键回落自身默认（与「源口无帧值」的缺口语径同
+        // 构）。合法 plan 已在编译期被方向规则拒绝，此处是运行期防
+        // 御位，不该再有截断副作用。
+        if (IsFloatFamilyPortType(binding.target_type) && pv->IsInt())
+        {
+            const DasReadOnlyString key{binding.target_port_id.c_str()};
+            result = map.Get()->SetFloat(
+                key.Get(),
+                static_cast<double>(*pv->AsInt()));
+            if (DAS::IsFailed(result))
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Failed to materialise widened value for "
+                    "target_port_id = {}.",
+                    binding.target_port_id);
+                return result;
+            }
+            continue;
+        }
+        if (IsIntegerFamilyPortType(binding.target_type) && pv->IsFloat())
+        {
+            DAS_CORE_LOG_WARN(
+                "Float-to-integer materialisation refused: source = {}.{}, "
+                "target = {}.{}, target_type = {}. The target key stays "
+                "absent; the component falls back to its own default.",
+                binding.source_node_id,
+                binding.source_port_id,
+                binding.target_node_id,
+                binding.target_port_id,
+                binding.target_type);
             continue;
         }
 
