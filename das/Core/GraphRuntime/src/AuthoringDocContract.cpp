@@ -429,20 +429,31 @@ namespace Contract
         }
 
         /// Optional default-value channel for unconnected input ports: when
-        /// the node's settings carry a key matching an input data port's id,
-        /// the projected port exposes that raw value verbatim (no type
-        /// conversion) so the UI can render and edit the port's current
-        /// bound default. Every other port shape — signal inputs, outputs,
-        /// ports without a matching settings key — keeps the channel
-        /// disengaged; a null settings value reads as "no value" (the same
-        /// semantics the field projection gives nulls). The wire key is then
-        /// absent, never an explicit null.
+        /// the node's settings carry a key matching an input data port's id
+        /// and no document edge lands on that exact (node_id, port_id)
+        /// endpoint, the projected port exposes that raw value verbatim (no
+        /// type conversion) so the UI can render and edit the port's current
+        /// bound default. A connected port's live value rides the wire, so a
+        /// residual settings value must not resurface as an editable default
+        /// — the settings residual survives for the disconnected state
+        /// instead (reconnection default). Every other port shape — signal
+        /// inputs, outputs, ports without a matching settings key — keeps
+        /// the channel disengaged; a null settings value reads as "no value"
+        /// (the same semantics the field projection gives nulls). The wire
+        /// key is then absent, never an explicit null.
         void AttachPortValueFromSettings(
-            const yyjson::value& settings,
-            GraphNodePort&       projected)
+            const yyjson::value&                   settings,
+            const std::string&                     node_id,
+            const std::unordered_set<std::string>& connected_input_ports,
+            GraphNodePort&                         projected)
         {
             if (projected.direction != std::string_view(PORT_DIRECTION_INPUT)
                 || projected.category != std::string_view(PORT_CATEGORY_DATA))
+            {
+                return;
+            }
+            if (connected_input_ports.count(node_id + "::" + projected.port_id)
+                > 0)
             {
                 return;
             }
@@ -466,6 +477,18 @@ namespace Contract
             const std::optional<ActionCatalog>& action_catalog)
         {
             GraphView view;
+            // Connected input-port endpoints, keyed
+            // "target_node_id::target_port_id": the exact coordinate pair
+            // the value-channel gate matches on, so a connected port never
+            // also projects an editable settings default regardless of the
+            // edge type (the public connections projection drops edge_type,
+            // so the UI client gate applies the same type-agnostic rule).
+            std::unordered_set<std::string> connected_input_ports;
+            for (const auto& edge : doc.edges)
+            {
+                connected_input_ports.insert(
+                    edge.target_node_id + "::" + edge.target_port_id);
+            }
             view.nodes.reserve(doc.nodes.size());
             for (const auto& node : doc.nodes)
             {
@@ -512,7 +535,11 @@ namespace Contract
                     {
                         GraphNodePort projected = port;
                         projected.category = DerivePortCategory(port.port_type);
-                        AttachPortValueFromSettings(node.settings, projected);
+                        AttachPortValueFromSettings(
+                            node.settings,
+                            node.node_id,
+                            connected_input_ports,
+                            projected);
                         out.ports.push_back(std::move(projected));
                     }
                 }
