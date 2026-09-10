@@ -205,14 +205,17 @@ public:
     /// Result of signal-aware topological analysis. Carries the deterministic
     /// execution_order plus the signal_routes (every signal edge), the
     /// back_edges (every loop-closing edge, signal or data — the loop-carried
-    /// channels) and the loop_layers (cycle SCCs expanded with signal-less
-    /// producer closures; the runtime's per-head iteration reset sets).
+    /// channels), the loop_layers (cycle SCCs expanded with signal-less
+    /// producer closures; the runtime's per-head iteration reset sets) and
+    /// the carrying-check diagnostics (a data cycle layer with no signal
+    /// circuit — Compile() turns those into a rejected plan).
     struct TopologyResult
     {
-        std::vector<std::string>         execution_order;
-        std::vector<Dto::SignalRouteDto> signal_routes;
-        std::vector<Dto::BackEdgeDto>    back_edges;
-        std::vector<Dto::LoopLayerDto>   loop_layers;
+        std::vector<std::string>           execution_order;
+        std::vector<Dto::SignalRouteDto>   signal_routes;
+        std::vector<Dto::BackEdgeDto>      back_edges;
+        std::vector<Dto::LoopLayerDto>     loop_layers;
+        std::vector<CompileEdgeDiagnostic> diagnostics;
     };
 
     /// DFS back-edge classification + Tarjan SCC layering + deterministic

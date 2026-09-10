@@ -1006,6 +1006,36 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
 
     // Loop-layer records: members in document order, data back-edge source
     // sites deduplicated, ready for the runtime to consume as reset sets.
+    // Carrying check rides the same pass: a layer with loop-carried data
+    // edges but no signal circuit has no iteration boundary at all — a pure
+    // data cycle never starts (no first-pass origin) and a half loop runs
+    // once and silently stops; both are rejected with guidance instead.
+    for (std::size_t i = 0; i < layer_drafts.size(); ++i)
+    {
+        bool has_data_back_edge = false;
+        for (const auto* edge : back_edges_raw)
+        {
+            if (!edge_is_signal(edge)
+                && layer_drafts[i].expanded_members.count(edge->source_node_id)
+                       > 0)
+            {
+                has_data_back_edge = true;
+                break;
+            }
+        }
+        if (has_data_back_edge && !layer_drafts[i].has_signal_back_edge)
+        {
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::UnbackedDataCycle;
+            diagnostic.node_id = layer_drafts[i].head_node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "A data edge cycle has no signal circuit carrying it; carry "
+                "the loop with a while/for component, or wire the loop "
+                "body's completion signal back to the loop head (head = '{}')",
+                layer_drafts[i].head_node_id);
+            result.diagnostics.push_back(std::move(diagnostic));
+        }
+    }
     for (std::size_t i = 0; i < layer_drafts.size(); ++i)
     {
         Dto::LoopLayerDto layer;
@@ -1517,7 +1547,18 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     plan.signal_routes = std::move(topology.signal_routes);
     plan.back_edges = std::move(topology.back_edges);
     plan.loop_layers = std::move(topology.loop_layers);
-    if (plan.execution_order.empty() && !document.nodes.empty())
+    if (!topology.diagnostics.empty())
+    {
+        // Unbacked data cycles: fail-closed with guidance — the plan carries
+        // no executable order (the same rejection shape the Kahn fallback
+        // below uses, but a distinct diagnostic kind the UI can consume).
+        for (const auto& diagnostic : topology.diagnostics)
+        {
+            plan.diagnostics.push_back(DiagnosticToJson(diagnostic));
+        }
+        plan.execution_order.clear();
+    }
+    else if (plan.execution_order.empty() && !document.nodes.empty())
     {
         auto payload = Das::Utils::MakeYyjsonObject();
         auto obj = *payload.as_object();
