@@ -10,6 +10,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/TaskComponentPorts.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
@@ -25,6 +26,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -279,6 +281,34 @@ namespace
         return DAS::IsOk(map->GetFloat(port_id.Get(), &value));
     }
 
+    bool PortMapGetBool(
+        IDasReadOnlyPortMap* map,
+        const std::string&   key,
+        bool&                value)
+    {
+        auto port_id = DasReadOnlyString::FromUtf8(key.c_str(), nullptr);
+        return DAS::IsOk(map->GetBool(port_id.Get(), &value));
+    }
+
+    // 读字符串口（缺港/类型不符返回空串——常量/拼接链的输出观测通道）。
+    std::string PortMapGetString(
+        IDasReadOnlyPortMap* map,
+        const std::string&   key)
+    {
+        auto port_id = DasReadOnlyString::FromUtf8(key.c_str(), nullptr);
+        IDasReadOnlyString* p_str = nullptr;
+        if (DAS::IsFailed(map->GetString(port_id.Get(), &p_str))
+            || p_str == nullptr)
+        {
+            return {};
+        }
+        const char* utf8 = nullptr;
+        p_str->GetUtf8(&utf8);
+        std::string value(utf8 != nullptr ? utf8 : "");
+        p_str->Release();
+        return value;
+    }
+
     // 诊断 kind 在 plan.diagnostics 里序列化为枚举整数的字符串形式。
     size_t CountDiagnosticsOfKind(
         const CompiledGraphPlanDto& plan,
@@ -431,6 +461,26 @@ constexpr std::string_view ARITHMETIC_NUMBER_COMPONENT_GUID_TEXT =
 constexpr std::string_view ARITHMETIC_NUMBER_KIND_TEXT =
     "das.flow.arithmetic_number";
 
+// ---- 常量/拼接组件族（guid ↔ kind 与 manifest 登记一一对应） ----
+
+constexpr std::string_view CONSTANT_BOOL_COMPONENT_GUID_TEXT =
+    "68F10009-0000-4000-8000-000000000009";
+constexpr std::string_view CONSTANT_BOOL_KIND_TEXT = "das.flow.constant_bool";
+constexpr std::string_view CONSTANT_INT64_COMPONENT_GUID_TEXT =
+    "68F1000A-0000-4000-8000-00000000000A";
+constexpr std::string_view CONSTANT_INT64_KIND_TEXT = "das.flow.constant_int64";
+constexpr std::string_view CONSTANT_DOUBLE_COMPONENT_GUID_TEXT =
+    "68F1000B-0000-4000-8000-00000000000B";
+constexpr std::string_view CONSTANT_DOUBLE_KIND_TEXT =
+    "das.flow.constant_double";
+constexpr std::string_view CONSTANT_STRING_COMPONENT_GUID_TEXT =
+    "68F1000C-0000-4000-8000-00000000000C";
+constexpr std::string_view CONSTANT_STRING_KIND_TEXT =
+    "das.flow.constant_string";
+constexpr std::string_view CONCAT_STRING_COMPONENT_GUID_TEXT =
+    "68F10011-0000-4000-8000-000000000011";
+constexpr std::string_view CONCAT_STRING_KIND_TEXT = "das.flow.concat_string";
+
 // 执行侧观测装饰器：转发真实组件的 Do 并计数、捕获末次 result 浮点值
 // ——while+数据回边收敛断言（执行次数/终值）的唯一测量点。
 class CountingTaskComponent final
@@ -440,6 +490,7 @@ public:
     std::atomic<uint32_t> ref_count_{0};
     std::atomic<int>      do_count{0};
     double                last_result = 0.0;
+    std::string           last_string_result;
 
     explicit CountingTaskComponent(
         Das::DasPtr<Das::PluginInterface::IDasTaskComponent> inner)
@@ -505,6 +556,7 @@ public:
             {
                 last_result = value;
             }
+            last_string_result = PortMapGetString(*pp_out_port_map, "result");
         }
         return hr;
     }
@@ -550,6 +602,20 @@ public:
                 std::string{ARITHMETIC_NUMBER_COMPONENT_GUID_TEXT}))
         {
             kind = ARITHMETIC_NUMBER_KIND_TEXT;
+        }
+        else if (
+            component_guid
+            == Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{CONSTANT_STRING_COMPONENT_GUID_TEXT}))
+        {
+            kind = CONSTANT_STRING_KIND_TEXT;
+        }
+        else if (
+            component_guid
+            == Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{CONCAT_STRING_COMPONENT_GUID_TEXT}))
+        {
+            kind = CONCAT_STRING_KIND_TEXT;
         }
         else
         {
@@ -696,4 +762,152 @@ TEST_F(E2EGraphFlowTest, WhileLoopWithDataBackEdgeConverges)
     EXPECT_EQ(counting_host->counters[1]->last_result, 3.0);
     EXPECT_EQ(counting_host->counters[0]->do_count.load(), 4);
     EXPECT_EQ(counting_host->counters[2]->do_count.load(), 3);
+}
+
+// ---- 常量组件族 + 字符串拼接 ----
+
+// 经 GraphRuntime 的 {"settings": S} 包装形直投组件配置（与生产
+// ApplyNodeSettings 投递形状一致）。
+void ApplyComponentSettings(
+    Das::DasFlowControlTaskComponent* component,
+    const yyjson::value&              settings)
+{
+    auto change = Das::Utils::MakeYyjsonObject();
+    (*change.as_object())[std::string_view("settings")] =
+        Das::Utils::CloneYyjsonValue(settings);
+    auto json = Das::Utils::WrapJson(std::move(change));
+    ASSERT_NE(json.Get(), nullptr);
+    Das::DasPtr<Das::ExportInterface::IDasJson> result;
+    ASSERT_EQ(
+        component->ApplySettingsChange(json.Get(), result.Put()),
+        DAS_S_OK);
+}
+
+// 文本形态入口：解析后走共享投递路径（ASSERT 需 void 函数体，lambda
+// 返回非 void 不能内联断言）。
+void ApplyComponentSettingsText(
+    Das::DasFlowControlTaskComponent* component,
+    std::string_view                  settings_text)
+{
+    auto settings = Das::Utils::ParseYyjsonFromString(settings_text);
+    ASSERT_TRUE(settings.has_value());
+    ApplyComponentSettings(component, *settings);
+}
+
+// 常量→拼接真组件链：constant_string 产 "Hello"、concat 连线吃左值 +
+// 面板默认右值 → result == "Hello World"（值路由经帧、右值走 config
+// 缺省即语义）。
+TEST_F(E2EGraphFlowTest, ConstantsAndConcatChainProducesJoinedString)
+{
+    const std::string node_constant{"n_constant"};
+    const std::string node_concat{"n_concat"};
+
+    stub_mgr_->AddDefinition(
+        std::string{CONSTANT_STRING_COMPONENT_GUID_TEXT},
+        MakeDefinition({}, {{"value", "string"}}));
+    stub_mgr_->AddDefinition(
+        std::string{CONCAT_STRING_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"left", "string"}, {"right", "string"}},
+            {{"result", "string"}}));
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_constants_concat";
+    auto constant_node = MakeComponentNode(
+        node_constant,
+        std::string{CONSTANT_STRING_COMPONENT_GUID_TEXT});
+    auto constant_settings = Das::Utils::MakeYyjsonObject();
+    (*constant_settings.as_object())[std::string_view("value")] =
+        std::string("Hello");
+    constant_node.settings = constant_settings;
+    doc.nodes.push_back(std::move(constant_node));
+    auto concat_node = MakeComponentNode(
+        node_concat,
+        std::string{CONCAT_STRING_COMPONENT_GUID_TEXT});
+    auto concat_settings = Das::Utils::MakeYyjsonObject();
+    (*concat_settings.as_object())[std::string_view("right")] =
+        std::string(" World");
+    concat_node.settings = concat_settings;
+    doc.nodes.push_back(std::move(concat_node));
+
+    doc.edges.push_back(
+        MakeEdge("e_left", node_constant, "value", node_concat, "left"));
+
+    auto plan = CompileDocument(doc);
+    EXPECT_EQ(
+        CountDiagnosticsOfKind(plan, CompileDiagnosticKind::PortNotFound),
+        0);
+    ASSERT_EQ(plan.execution_order.size(), 2u);
+    EXPECT_EQ(plan.execution_order[0], node_constant);
+    EXPECT_EQ(plan.execution_order[1], node_concat);
+
+    auto  host = FlowControlCountingHost::Make();
+    auto* counting_host = static_cast<FlowControlCountingHost*>(host.Get());
+    GraphRuntime runtime;
+    const auto   hr =
+        runtime.RunWithHost(plan, "fp_constants", token_.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    ASSERT_EQ(counting_host->counters.size(), 2u);
+    EXPECT_EQ(counting_host->counters[0]->do_count.load(), 1);
+    EXPECT_EQ(counting_host->counters[0]->last_string_result, "Hello");
+    EXPECT_EQ(counting_host->counters[1]->do_count.load(), 1);
+    EXPECT_EQ(counting_host->counters[1]->last_string_result, "Hello World");
+}
+
+// 标量常量组件直驱：typed 输出口 + status/signal 三件套（bool/int64/
+// double 三型；config 缺 value 键回落各类型零值=缺省即语义）。
+TEST_F(E2EGraphFlowTest, ScalarConstantComponentsEmitTypedValue)
+{
+    const auto run_constant = [this](
+                                  std::string_view                kind,
+                                  std::optional<std::string_view> settings_text)
+        -> Das::DasPtr<Das::ExportInterface::IDasPortMap>
+    {
+        auto component = Das::DasPtr<Das::DasFlowControlTaskComponent>{
+            new Das::DasFlowControlTaskComponent(
+                kind,
+                Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>{})};
+        if (settings_text.has_value())
+        {
+            ApplyComponentSettingsText(component.Get(), *settings_text);
+        }
+        Das::DasPtr<Das::ExportInterface::IDasPortMap> out;
+        const auto do_hr = component->Do(token_.Get(), nullptr, out.Put());
+        EXPECT_EQ(do_hr, DAS_S_OK);
+        return out;
+    };
+
+    {
+        auto out = run_constant(CONSTANT_BOOL_KIND_TEXT, R"({"value": true})");
+        ASSERT_NE(out.Get(), nullptr);
+        bool value = false;
+        ASSERT_TRUE(PortMapGetBool(out.Get(), "value", value));
+        EXPECT_TRUE(value);
+        EXPECT_EQ(PortMapGetString(out.Get(), "status"), "completed");
+        EXPECT_NE(
+            PortMapGetString(out.Get(), "signals").find("signal_out"),
+            std::string::npos);
+    }
+    {
+        auto out = run_constant(CONSTANT_INT64_KIND_TEXT, R"({"value": 42})");
+        ASSERT_NE(out.Get(), nullptr);
+        EXPECT_EQ(PortMapGetInt(out.Get(), "value"), 42);
+        EXPECT_EQ(PortMapGetString(out.Get(), "status"), "completed");
+    }
+    {
+        auto out = run_constant(CONSTANT_DOUBLE_KIND_TEXT, R"({"value": 2.5})");
+        ASSERT_NE(out.Get(), nullptr);
+        double value = 0.0;
+        ASSERT_TRUE(PortMapGetDouble(out.Get(), "value", value));
+        EXPECT_DOUBLE_EQ(value, 2.5);
+        EXPECT_EQ(PortMapGetString(out.Get(), "status"), "completed");
+    }
+    {
+        // config 缺 value 键：各类型零值回落（缺省即语义，不报错）。
+        auto out = run_constant(CONSTANT_INT64_KIND_TEXT, std::nullopt);
+        ASSERT_NE(out.Get(), nullptr);
+        EXPECT_EQ(PortMapGetInt(out.Get(), "value"), 0);
+        EXPECT_EQ(PortMapGetString(out.Get(), "status"), "completed");
+    }
 }
