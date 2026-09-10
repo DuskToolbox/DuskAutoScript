@@ -389,9 +389,9 @@ namespace
     // and the shape the scheduler persists in `properties`) back onto the
     // authoritative GraphDocumentDto store. The formSequence branch accepts
     // both the current contract shape (formSequence.items[]) and the legacy
-    // pre-cutover shape (formSequence.sequence[]); also accepts a raw
-    // formSequence ({items}) or raw graph ({nodes,edges}) doc for direct
-    // callers/tests.
+    // pre-cutover shape (formSequence.sequence[]); graph seeds accept only the
+    // full GraphDocumentDto shape (SerializeSource / acceptedProperties —
+    // edges carry their declared edgeType), via the raw {nodes} fallback.
     void SeedFromDocValue(
         GraphAuthoringSessionState& s,
         const yyjson::value&        doc)
@@ -402,14 +402,13 @@ namespace
             return;
         }
 
-        // Resolve the kind. The contract doc carries {"kind": "formSequence" |
-        // "graph"}; a raw formSequence carries "items"; a raw graph "nodes".
+        // Resolve the kind. The contract doc carries {"kind": "formSequence"};
+        // a raw formSequence carries "items"; a raw graph doc "nodes".
         std::string kind;
         ReadStringField(*obj, std::string_view("kind"), kind);
 
         const bool has_form_seq =
             obj->contains(std::string_view("formSequence"));
-        const bool has_graph = obj->contains(std::string_view("graph"));
 
         if (kind == "formSequence" || has_form_seq)
         {
@@ -488,111 +487,6 @@ namespace
                 Das::Core::GraphRuntime::FormSequenceProjector::Project(seq);
             s.document.tags.emplace_back(
                 Das::Core::GraphRuntime::Contract::LINEAR_TAG);
-            return;
-        }
-
-        if (kind == "graph" || has_graph)
-        {
-            yyjson::value graph_src = doc;
-            if (has_graph)
-            {
-                graph_src = (*obj)[std::string_view("graph")];
-            }
-            if (auto gobj = graph_src.as_object())
-            {
-                ReadStringField(
-                    *obj,
-                    std::string_view("sourceFingerprint"),
-                    s.document.fingerprint);
-                // Contract docs carry the viewData partition at the root
-                // (same level as graph); preserve it verbatim.
-                if (obj->contains(std::string_view("viewData")))
-                {
-                    s.document.view_data = Das::Utils::CloneYyjsonValue(
-                        (*obj)[std::string_view("viewData")]);
-                }
-                if (gobj->contains(std::string_view("nodes")))
-                {
-                    if (auto arr =
-                            (*gobj)[std::string_view("nodes")].as_array())
-                    {
-                        for (const auto& nv : *arr)
-                        {
-                            auto no = nv.as_object();
-                            if (!no)
-                            {
-                                continue;
-                            }
-                            Das::Core::GraphRuntime::Dto::GraphNodeDto node;
-                            if (auto v =
-                                    (*no)[std::string_view("id")].as_string())
-                            {
-                                node.node_id = std::string(*v);
-                            }
-                            std::string guid;
-                            ReadStringField(
-                                *no,
-                                std::string_view("componentGuid"),
-                                guid);
-                            if (!guid.empty())
-                            {
-                                node.target.target_kind = "componentRef";
-                                node.target.component_ref = Das::Core::
-                                    GraphRuntime::Dto::ComponentRefDto{
-                                        "componentRef",
-                                        guid,
-                                        {}};
-                            }
-                            if (no->contains(std::string_view("settings")))
-                            {
-                                node.settings = Das::Utils::CloneYyjsonValue(
-                                    (*no)[std::string_view("settings")]);
-                            }
-                            s.document.nodes.push_back(std::move(node));
-                        }
-                    }
-                }
-                if (gobj->contains(std::string_view("connections")))
-                {
-                    if (auto arr =
-                            (*gobj)[std::string_view("connections")].as_array())
-                    {
-                        for (const auto& cv : *arr)
-                        {
-                            auto co = cv.as_object();
-                            if (!co)
-                            {
-                                continue;
-                            }
-                            Das::Core::GraphRuntime::Dto::GraphEdgeDto edge;
-                            std::string from_n, from_p, to_n, to_p;
-                            ReadStringField(
-                                *co,
-                                std::string_view("fromNodeId"),
-                                from_n);
-                            ReadStringField(
-                                *co,
-                                std::string_view("fromPortId"),
-                                from_p);
-                            ReadStringField(
-                                *co,
-                                std::string_view("toNodeId"),
-                                to_n);
-                            ReadStringField(
-                                *co,
-                                std::string_view("toPortId"),
-                                to_p);
-                            edge.edge_id = "edge::" + from_n + "::" + to_n;
-                            edge.source_node_id = from_n;
-                            edge.source_port_id = from_p;
-                            edge.target_node_id = to_n;
-                            edge.target_port_id = to_p;
-                            edge.edge_type = "data";
-                            s.document.edges.push_back(std::move(edge));
-                        }
-                    }
-                }
-            }
             return;
         }
 
