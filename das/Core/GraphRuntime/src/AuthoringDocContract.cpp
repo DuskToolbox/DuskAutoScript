@@ -1981,6 +1981,35 @@ namespace Contract
                                 == std::string_view(PORT_CATEGORY_EXECUTION)
                             ? "signal"
                             : "data";
+                    if (edge_type == "signal")
+                    {
+                        // Sequence outlets are out-degree 1: a second signal
+                        // edge from the same source port forks the unique
+                        // next-step, and the compiler has no ordering to
+                        // arbitrate the fork. Data fan-out (one outlet
+                        // feeding many consumers) and signal in-edge
+                        // merging stay legal — signal and data ports are
+                        // category-mutually-exclusive, so matching the
+                        // stored edge_type keeps a legacy data edge on an
+                        // execution port out of the count.
+                        for (const auto& edge : document.edges)
+                        {
+                            if (edge.source_node_id == conn.from_node_id
+                                && edge.source_port_id == conn.from_port_id
+                                && edge.edge_type == "signal")
+                            {
+                                return {
+                                    ChangeErrorKind::InvalidOp,
+                                    "connectGraphPorts execution outlet "
+                                    "allows a single out edge: node "
+                                        + conn.from_node_id + " port "
+                                        + conn.from_port_id
+                                        + " already has a signal edge",
+                                    {},
+                                    std::nullopt};
+                            }
+                        }
+                    }
                 }
                 ConnectPortsChange c;
                 c.edge.edge_id =

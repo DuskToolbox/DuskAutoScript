@@ -1629,6 +1629,105 @@ namespace
         EXPECT_EQ(doc.version, 0); // no revision bump on rejection
     }
 
+    // Sequence outlets are out-degree 1: a derived signal edge from a
+    // source port that already carries a signal edge rejects the change
+    // (InvalidOp, message naming the outlet) with zero mutation — the fork
+    // would give the unique next-step two successors the compiler cannot
+    // order. Data fan-out and signal in-edge merging stay legal (next two
+    // cases).
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_ConnectGraphPortsRejectsSecondSignalOutEdge)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.nodes.push_back(MakeNode("n3", "{g3}", 0.0));
+        doc.edges.push_back(MakeSignalEdge("e1", "n1", "n2"));
+
+        AuthoringChange conn;
+        conn.kind = "connectGraphPorts";
+        conn.connection = GraphConnection{
+            "n1",
+            std::string(FormSequenceProjector::SignalOutPort),
+            "n3",
+            std::string(FormSequenceProjector::SignalInPort)};
+        auto r = ApplyAuthoringChange(doc, conn);
+        ASSERT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp);
+        EXPECT_NE(
+            r.message.find(FormSequenceProjector::SignalOutPort),
+            std::string::npos);
+        EXPECT_NE(r.message.find("single out edge"), std::string::npos);
+        EXPECT_EQ(doc.edges.size(), 1u); // untouched
+        EXPECT_EQ(doc.version, 0);       // no revision bump on rejection
+    }
+
+    // Data fan-out — one outlet feeding many consumers — is legal: a
+    // second data edge from the same declared source port lands normally.
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_ConnectGraphPortsAllowsDataFanOutFromSameSource)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.nodes.push_back(MakeNode("n3", "{g3}", 0.0));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry source_entry;
+        source_entry.action_id = "{g1}";
+        source_entry.label = "{g1}";
+        source_entry.ports = {GraphNodePort{"o", "", "int", "output"}};
+        catalog.entries.push_back(source_entry);
+        ActionCatalogEntry sink_entry;
+        sink_entry.action_id = "{g2}";
+        sink_entry.label = "{g2}";
+        sink_entry.ports = {GraphNodePort{"i", "", "int", "input"}};
+        catalog.entries.push_back(sink_entry);
+        ActionCatalogEntry sink_entry3;
+        sink_entry3.action_id = "{g3}";
+        sink_entry3.label = "{g3}";
+        sink_entry3.ports = {GraphNodePort{"i", "", "int", "input"}};
+        catalog.entries.push_back(sink_entry3);
+
+        AuthoringChange conn;
+        conn.kind = "connectGraphPorts";
+        conn.connection = GraphConnection{"n1", "o", "n2", "i"};
+        ASSERT_TRUE(ApplyAuthoringChange(doc, conn, {}, catalog).Ok());
+        conn.connection = GraphConnection{"n1", "o", "n3", "i"};
+        auto r = ApplyAuthoringChange(doc, conn, {}, catalog);
+        ASSERT_TRUE(r.Ok()) << r.message;
+        ASSERT_EQ(doc.edges.size(), 2u);
+        EXPECT_EQ(doc.edges[1].source_port_id, "o");
+        EXPECT_EQ(doc.edges[1].edge_type, "data");
+    }
+
+    // Signal in-edge merging — many predecessors into one entry anchor —
+    // is legal: only the source side is out-degree-gated.
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_ConnectGraphPortsAllowsSignalInEdgeMerging)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.nodes.push_back(MakeNode("n3", "{g3}", 0.0));
+        doc.edges.push_back(MakeSignalEdge("e1", "n1", "n2"));
+
+        AuthoringChange conn;
+        conn.kind = "connectGraphPorts";
+        conn.connection = GraphConnection{
+            "n3",
+            std::string(FormSequenceProjector::SignalOutPort),
+            "n2",
+            std::string(FormSequenceProjector::SignalInPort)};
+        auto r = ApplyAuthoringChange(doc, conn);
+        ASSERT_TRUE(r.Ok()) << r.message;
+        ASSERT_EQ(doc.edges.size(), 2u);
+        EXPECT_EQ(doc.edges[1].edge_type, "signal");
+    }
+
     TEST(AuthoringDocContractTest, GraphChange_RemoveGraphNodeCascadesEdges)
     {
         GraphDocumentDto doc;
