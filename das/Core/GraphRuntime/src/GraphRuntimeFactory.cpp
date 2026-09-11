@@ -1063,10 +1063,69 @@ namespace
         return root;
     }
 
+    // Catalog 端口对象的锁形规则（单一来源）：必填 portId/portType/
+    // direction，可选 displayLabel/loopCarried；键集外任何键、空 id/type、
+    // direction 不在 {input,output}、非字符串 displayLabel、非布尔
+    // loopCarried 均为形状违规。会话目录注入入口与端口面构建段共用本
+    // 判定——两处曾各自手抄键清单，只改一份时带新键的目录被另一份
+    // 整体拒收（添加节点面板全空）；改键集/值域只改这里。
+    bool CatalogPortShapeValid(const yyjson::value& port_value)
+    {
+        auto port_obj = port_value.as_object();
+        if (!port_obj.has_value()
+            || !port_obj->contains(std::string_view("portId"))
+            || !port_obj->contains(std::string_view("portType"))
+            || !port_obj->contains(std::string_view("direction")))
+        {
+            return false;
+        }
+        for (const auto& [key, value] : *port_obj)
+        {
+            (void)value;
+            if (key != std::string_view("portId")
+                && key != std::string_view("portType")
+                && key != std::string_view("direction")
+                && key != std::string_view("displayLabel")
+                && key != std::string_view("loopCarried"))
+            {
+                return false;
+            }
+        }
+        const auto& port = *port_obj;
+        const auto  id = port[std::string_view("portId")].as_string();
+        if (!id.has_value() || id->empty())
+        {
+            return false;
+        }
+        const auto type = port[std::string_view("portType")].as_string();
+        if (!type.has_value() || type->empty())
+        {
+            return false;
+        }
+        const auto direction = port[std::string_view("direction")].as_string();
+        if (!direction.has_value()
+            || (*direction != std::string_view("input")
+                && *direction != std::string_view("output")))
+        {
+            return false;
+        }
+        if (port.contains(std::string_view("displayLabel"))
+            && !port[std::string_view("displayLabel")].as_string().has_value())
+        {
+            return false;
+        }
+        if (port.contains(std::string_view("loopCarried"))
+            && !port[std::string_view("loopCarried")].as_bool().has_value())
+        {
+            return false;
+        }
+        return true;
+    }
+
     // 边界推导 C ABI 的 catalog 端口面解析：只消费 actionId + ports 通道，
-    // 元素形状与 SetActionCatalog 同锁（四键端口元素、direction ∈
-    // {input,output}、id/type 非空），同 all-or-nothing 拒绝语义——畸形
-    // 输入整体拒绝（nullopt），不落半截结果。
+    // 元素形状与 SetActionCatalog 同锁（共享 CatalogPortShapeValid 单一
+    // 来源），同 all-or-nothing 拒绝语义——畸形输入整体拒绝（nullopt），
+    // 不落半截结果。
     std::optional<std::unordered_map<
         std::string,
         Das::Core::GraphRuntime::GraphCompiler::ComponentPortSurface>>
@@ -1109,23 +1168,9 @@ namespace
                 {
                     auto port_obj = port_value.as_object();
                     if (!port_obj.has_value()
-                        || !port_obj->contains(std::string_view("portId"))
-                        || !port_obj->contains(std::string_view("portType"))
-                        || !port_obj->contains(std::string_view("direction")))
+                        || !CatalogPortShapeValid(port_value))
                     {
                         return std::nullopt;
-                    }
-                    for (const auto& [key, value] : *port_obj)
-                    {
-                        (void)value;
-                        if (key != std::string_view("portId")
-                            && key != std::string_view("portType")
-                            && key != std::string_view("direction")
-                            && key != std::string_view("displayLabel")
-                            && key != std::string_view("loopCarried"))
-                        {
-                            return std::nullopt;
-                        }
                     }
                     Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto
                          definition;
@@ -1573,25 +1618,13 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                 for (const auto& port_val : *ports_val)
                 {
                     auto port_obj = port_val.as_object();
-                    if (!port_obj
-                        || !port_obj->contains(std::string_view("portId"))
-                        || !port_obj->contains(std::string_view("portType"))
-                        || !port_obj->contains(std::string_view("direction")))
+                    // 端口锁形规则单一来源：CatalogPortShapeValid（与端口
+                    // 面构建段共享——改键集/值域只改那里）。loopCarried 在
+                    // 此只验不存：wire 投影不携带它，端口面通道从目录原文
+                    // 重读。
+                    if (!port_obj || !CatalogPortShapeValid(port_val))
                     {
                         return DAS_E_INVALID_ARGUMENT;
-                    }
-                    // Exactly the four-key locked shape: any other key on a
-                    // port element is a shape violation.
-                    for (const auto& [key, value] : *port_obj)
-                    {
-                        (void)value;
-                        if (key != std::string_view("portId")
-                            && key != std::string_view("portType")
-                            && key != std::string_view("direction")
-                            && key != std::string_view("displayLabel"))
-                        {
-                            return DAS_E_INVALID_ARGUMENT;
-                        }
                     }
                     Das::Core::GraphRuntime::Contract::GraphNodePort port;
                     if (auto id =

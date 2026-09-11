@@ -530,6 +530,28 @@ namespace
             DAS_E_INVALID_ARGUMENT);
     }
 
+    // The loopCarried declaration is the one extra key a port element may
+    // carry: the scheduler emits it for loop-carried outputs (for.index) and
+    // this entry-point whitelist must admit it or the whole catalog is
+    // rejected — every Add-Node panel went empty when the validation side
+    // drifted from the port-surface side. A boolean value passes (stored or
+    // not is the wire's business — the surface channel re-reads the raw
+    // text); a non-boolean value is a shape violation like any other.
+    TEST(GraphAuthoringSessionTest, ActionCatalogAdmitsLoopCarriedPortKey)
+    {
+        const SessionHandle s{""};
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"json([{"actionId":"{g1}","ports":[{"portId":"index","portType":"int64","direction":"output","loopCarried":true}]}])json"),
+            DAS_S_OK);
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"json([{"actionId":"{g1}","ports":[{"portId":"index","portType":"int64","direction":"output","loopCarried":"yes"}]}])json"),
+            DAS_E_INVALID_ARGUMENT);
+    }
+
     // Five-key port projection end to end through the C ABI session: the
     // registry snapshot carries the channel form (with displayLabel, as the
     // scheduler produces since the label backfill), and GetDocument projects
