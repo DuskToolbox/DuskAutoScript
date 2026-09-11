@@ -14,6 +14,7 @@
 DAS_DISABLE_WARNING_BEGIN
 
 DAS_IGNORE_OPENCV_WARNING
+#include <das/Core/OrtWrapper/DasOpenCVCompat.h>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgproc.hpp>
 
