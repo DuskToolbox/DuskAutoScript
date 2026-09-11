@@ -349,13 +349,17 @@ if (DAS_USE_BUNDLED_OPENCV)
     _download_and_config_opencv()
 
 else ()
-    set(DAS_OPENCV_VERSION 4.8)
-    find_package(OpenCV ${DAS_OPENCV_VERSION})
-    if (OpenCV_FOUND)
-        target_link_libraries(Das3rdParty INTERFACE ${OpenCV_LIBS})
-    else ()
-        message(FATAL_ERROR "OpenCV not found. Please install it manually or set DAS_USE_BUNDLED_OPENCV=ON.")
+    # OpenCV 版本文件只认单一主版本（不实现 CMake 版本范围协议），只能逐级尝试；
+    # 5.x 起组件名有变：features2d 改名 features，计算几何独立为 geometry
+    find_package(OpenCV 5.0 QUIET COMPONENTS core imgproc imgcodecs features flann geometry)
+    if (NOT OpenCV_FOUND)
+        find_package(OpenCV 4.8 REQUIRED COMPONENTS core imgproc imgcodecs features2d flann)
     endif ()
+    if (NOT OpenCV_FOUND)
+        message(FATAL_ERROR "OpenCV 4.8+/5.x not found. Please install it manually or set DAS_USE_BUNDLED_OPENCV=ON.")
+    endif ()
+    message(STATUS "OpenCV: ${OpenCV_VERSION} (components: ${OpenCV_LIBS})")
+    target_link_libraries(Das3rdParty INTERFACE ${OpenCV_LIBS})
 endif ()
 
 function(_on_download_icu)
