@@ -349,9 +349,7 @@ if (DAS_USE_BUNDLED_OPENCV)
     _download_and_config_opencv()
 
 else ()
-    # OpenCV 版本文件只认单一主版本（不实现 CMake 版本范围协议），只能逐级尝试；
-    # 5.x 起组件名有变：features2d 改名 features，计算几何独立为 geometry
-    find_package(OpenCV 5.0 QUIET COMPONENTS core imgproc imgcodecs features flann geometry)
+    find_package(OpenCV 5.0 QUIET COMPONENTS core imgproc imgcodecs features flann geometry xfeatures2d)
     if (NOT OpenCV_FOUND)
         find_package(OpenCV 4.8 REQUIRED COMPONENTS core imgproc imgcodecs features2d flann)
     endif ()

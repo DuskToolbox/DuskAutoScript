@@ -1,5 +1,14 @@
 #include "FeatureDetectorFactory.h"
 
+DAS_DISABLE_WARNING_BEGIN
+
+DAS_IGNORE_OPENCV_WARNING
+#if CV_VERSION_MAJOR >= 5
+#include <opencv2/xfeatures2d.hpp>
+#endif
+
+DAS_DISABLE_WARNING_END
+
 DAS_CORE_OCVWRAPPER_NS_BEGIN
 
 namespace Details
@@ -18,10 +27,18 @@ namespace Details
             return cv::SIFT::create();
 
         case ExportInterface::DAS_DETECTOR_AKAZE:
+#if CV_VERSION_MAJOR >= 5
+            return cv::xfeatures2d::AKAZE::create();
+#else
             return cv::AKAZE::create();
+#endif
 
         case ExportInterface::DAS_DETECTOR_BRISK:
+#if CV_VERSION_MAJOR >= 5
+            return cv::xfeatures2d::BRISK::create();
+#else
             return cv::BRISK::create();
+#endif
 
         default:
             return nullptr;
