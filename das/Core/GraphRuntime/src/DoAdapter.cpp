@@ -26,6 +26,7 @@ namespace
     using Das::ExportInterface::DAS_VARIANT_TYPE_SIGNAL;
     using Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
 
+    using Das::ExportInterface::IDasImage;
     using IDasPortMap = Das::ExportInterface::IDasPortMap;
 
     DasResult PortValueToPortMap(
@@ -78,10 +79,14 @@ namespace
         }
         if (pv.IsImage())
         {
-            DAS_CORE_LOG_WARN(
-                "Image type not yet supported in DoAdapter for port_id = {}.",
-                port_id);
-            return DAS_E_NO_IMPLEMENTATION;
+            // SetImage 内部自持引用——传非拥有裸指针；空引用对齐 Base 分支
+            // 静默跳过，组件见缺键回落自身默认。
+            auto* raw = pv.AsImage()->ptr.Get();
+            if (raw != nullptr)
+            {
+                return map->SetImage(key_str.Get(), raw);
+            }
+            return DAS_S_OK;
         }
         if (pv.IsJson())
         {
@@ -198,10 +203,18 @@ namespace
         }
         case DAS_VARIANT_TYPE_IMAGE:
         {
-            DAS_CORE_LOG_WARN(
-                "Image extraction not yet supported for port_id = {}.",
-                port_id);
-            return DAS_S_OK;
+            // GetImage 返回已 AddRef 的拥有引用——一律 Put() 接管，引用随
+            // 帧槽位存活（零拷贝）。
+            DAS::DasPtr<IDasImage> image_ptr;
+            result = map->GetImage(key_str.Get(), image_ptr.Put());
+            if (DAS::IsOk(result))
+            {
+                frame.Set(
+                    node_id,
+                    port_id,
+                    PortValue(ImageData{std::move(image_ptr)}));
+            }
+            return result;
         }
         case DAS_VARIANT_TYPE_NULL:
         {
