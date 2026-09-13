@@ -492,9 +492,13 @@ namespace GraphRuntimeTestMock
     public:
         std::atomic<uint32_t> ref_count_{0};
 
+        // 裸指针成员自管引用：构造补一次拥有引用，析构对称释放。
         explicit ImageSourceComponent(IDasImage* image) : image_(image)
         {
-            image_->AddRef();
+            if (image_)
+            {
+                image_->AddRef();
+            }
         }
 
         uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
@@ -622,8 +626,9 @@ namespace GraphRuntimeTestMock
 
         void SetImage(IDasImage* image)
         {
+            // DasPtr::Attach 是静态接管原语：先补一次拥有引用再整体赋回。
             image->AddRef();
-            image_.Attach(image);
+            image_ = Das::DasPtr<IDasImage>::Attach(image);
         }
 
     private:
@@ -2111,8 +2116,8 @@ TEST(GraphRuntimeTest, ExecuteWithTypedIOOverridesSentinelDefault)
     DAS::DasPtr<IDasPortMap> graph_inputs;
     ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
     {
-        const DasReadOnlyString             key{"p2"};
-        DAS::DasPtr<IDasReadOnlyString>     value;
+        const DasReadOnlyString         key{"p2"};
+        DAS::DasPtr<IDasReadOnlyString> value;
         CreateIDasReadOnlyStringFromUtf8("typed", value.Put());
         ASSERT_EQ(graph_inputs->SetString(key.Get(), value.Get()), DAS_S_OK);
     }
@@ -2126,7 +2131,7 @@ TEST(GraphRuntimeTest, ExecuteWithTypedIOOverridesSentinelDefault)
 
     // 直传值经覆盖层进入组件（回显输出）并经类型化导出回到调用方。
     DAS::DasPtr<IDasReadOnlyString> exported;
-    const DasReadOnlyString    p2_key{"p2"};
+    const DasReadOnlyString         p2_key{"p2"};
     ASSERT_EQ(outputs->GetString(p2_key.Get(), exported.Put()), DAS_S_OK);
     ASSERT_NE(exported.Get(), nullptr);
     const char* exported_utf8 = nullptr;

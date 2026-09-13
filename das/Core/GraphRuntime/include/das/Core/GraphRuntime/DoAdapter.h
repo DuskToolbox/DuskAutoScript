@@ -43,10 +43,10 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 ///                     null keeps the default-only behaviour.
 /// @return DAS_S_OK on success.
 DasResult BuildInputPortMap(
-    const PortFrame&                                 frame,
-    const std::vector<Dto::PortBindingDto>&          bindings,
-    Das::ExportInterface::IDasPortMap**              out_map,
-    const Das::ExportInterface::IDasReadOnlyPortMap* graph_inputs = nullptr);
+    const PortFrame&                           frame,
+    const std::vector<Dto::PortBindingDto>&    bindings,
+    Das::ExportInterface::IDasPortMap**        out_map,
+    Das::ExportInterface::IDasReadOnlyPortMap* graph_inputs = nullptr);
 
 /// Read all entries from @p output_map (returned by Do()) and write them
 /// into @p frame under the given @p node_id.
@@ -59,6 +59,21 @@ DasResult ExtractOutputPortMap(
     Das::ExportInterface::IDasPortMap* output_map,
     const std::string&                 node_id,
     PortFrame&                         frame);
+
+/// Write a frame PortValue into @p map under @p port_id, dispatching on the
+/// variant kind. Object references (image/base/component) are written as
+/// references — the JSON-serialisable subset only skips null/empty values
+/// the way the JSON export channel does. Exposed for the typed boundary
+/// export next to GraphRuntime's execution tail.
+///
+/// @param pv       Frame value to write.
+/// @param port_id  Destination key.
+/// @param map      Destination PortMap.
+/// @return DAS_S_OK on success (skipped values also return DAS_S_OK).
+DasResult PortValueToPortMap(
+    const PortValue&                   pv,
+    const std::string&                 port_id,
+    Das::ExportInterface::IDasPortMap* map);
 
 DAS_CORE_GRAPHRUNTIME_NS_END
 

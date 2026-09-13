@@ -89,11 +89,27 @@ public:
     //
     // Internally calls Configure(), Prepare(), then executes nodes
     // using the pre-configured IDasTaskComponent instances.
+    //
+    // @p pp_out_typed_outputs, when non-null, receives a freshly created
+    // IDasPortMap holding the boundary output values exported as typed
+    // entries (object references included) — the typed counterpart of the
+    // JSON graphOutputs channel. Null keeps the legacy three-parameter
+    // behaviour untouched.
     DasResult RunWithHost(
         const Dto::CompiledGraphPlanDto&             plan,
         const std::string&                           current_fingerprint,
         Das::PluginInterface::IDasStopToken*         p_stop_token,
-        Das::PluginInterface::IDasTaskComponentHost* p_host);
+        Das::PluginInterface::IDasTaskComponentHost* p_host,
+        Das::ExportInterface::IDasPortMap** pp_out_typed_outputs = nullptr);
+
+    // Typed graph-level inputs consulted by the broadcast-binding overlay
+    // during execution (keys are boundary port ids). Non-owning: the caller
+    // (ExecuteWithTypedIO) keeps the PortMap alive across the call and
+    // clears the member on return. Null keeps the default-only behaviour.
+    void SetGraphInputs(Das::ExportInterface::IDasReadOnlyPortMap* graph_inputs)
+    {
+        graph_inputs_ = graph_inputs;
+    }
 
     // Set an IDasErrorLens for structured error message lookup.
     void SetErrorLens(Das::PluginInterface::IDasErrorLens* p_lens);
@@ -117,6 +133,10 @@ private:
 
     // True after Configure() has been called at least once.
     bool configured_ = false;
+
+    // Typed graph-level inputs for the current run (non-owning; see
+    // SetGraphInputs).
+    Das::ExportInterface::IDasReadOnlyPortMap* graph_inputs_ = nullptr;
 
     // Optional error lens for structured error propagation.
     Das::PluginInterface::IDasErrorLens* p_error_lens_ = nullptr;

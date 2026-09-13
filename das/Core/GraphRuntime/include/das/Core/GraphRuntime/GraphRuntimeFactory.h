@@ -39,6 +39,15 @@ public:
         Das::PluginInterface::IDasStopToken*       p_stop_token,
         Das::ExportInterface::IDasReadOnlyPortMap* p_graph_inputs,
         Das::ExportInterface::IDasPortMap**        pp_out_outputs);
+
+private:
+    // Shared artifact ingestion for the Execute entry points: read the
+    // {fingerprint, plan} shell text, verify the plan payload against the
+    // shell fingerprint (integrity gate), and cast it into @p plan. Writes
+    // last_error_ on failure.
+    DasResult ParseVerifiedPlan(
+        IDasReadOnlyString*        p_compiled_artifact_json,
+        Dto::CompiledGraphPlanDto& plan);
 };
 
 DAS_CORE_GRAPHRUNTIME_NS_END

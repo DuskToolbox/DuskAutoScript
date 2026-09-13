@@ -457,8 +457,11 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
 
     if (!input_bindings.empty())
     {
-        DasResult hr =
-            BuildInputPortMap(frame, input_bindings, input_portmap.Put());
+        DasResult hr = BuildInputPortMap(
+            frame,
+            input_bindings,
+            input_portmap.Put(),
+            graph_inputs_);
         if (DAS_S_OK != hr)
         {
             DAS_CORE_LOG_ERROR(
@@ -916,7 +919,8 @@ DasResult GraphRuntime::RunWithHost(
     const Dto::CompiledGraphPlanDto&             plan,
     const std::string&                           current_fingerprint,
     Das::PluginInterface::IDasStopToken*         p_stop_token,
-    Das::PluginInterface::IDasTaskComponentHost* p_host)
+    Das::PluginInterface::IDasTaskComponentHost* p_host,
+    Das::ExportInterface::IDasPortMap**          pp_out_typed_outputs)
 {
     last_error_.clear();
     last_graph_outputs_ = Das::Utils::MakeYyjsonObject();
@@ -1084,6 +1088,52 @@ DasResult GraphRuntime::RunWithHost(
                 }
             }
         }
+    }
+
+    // 类型化边界导出（D-21 单通道的输出半）：调用方请求时按同一份编译
+    // 产物边界清单把帧值以类型化条目直写——不可序列化对象引用（image/
+    // base/component）不再跳过，这是 JSON graphOutputs 通道过不了的半段。
+    // 同名多站点后写覆盖，与上方 JSON 导出的次序一致。
+    if (pp_out_typed_outputs != nullptr)
+    {
+        DAS::DasOutPtr<Das::ExportInterface::IDasPortMap> typed_map(
+            pp_out_typed_outputs);
+        DasResult typed_create_result = CreateIDasPortMap(typed_map.Put());
+        if (DAS_S_OK != typed_create_result)
+        {
+            SetError(
+                typed_create_result,
+                "Failed to create typed boundary output PortMap");
+            return typed_create_result;
+        }
+        for (const auto& boundary_output : plan.boundary_ports.outputs)
+        {
+            for (const auto& node_id : boundary_output.node_ids)
+            {
+                const PortValue* port_value =
+                    frame.Find(PortKey{node_id, boundary_output.port_id});
+                if (port_value == nullptr)
+                {
+                    continue;
+                }
+                const DasResult write_result = PortValueToPortMap(
+                    *port_value,
+                    boundary_output.port_id,
+                    typed_map.Get());
+                if (DAS_S_OK != write_result)
+                {
+                    SetError(
+                        write_result,
+                        DAS_FMT_NS::format(
+                            "Failed to export typed boundary output port = "
+                            "{} on node = {}",
+                            boundary_output.port_id,
+                            node_id));
+                    return write_result;
+                }
+            }
+        }
+        typed_map.Keep();
     }
 
     DAS_CORE_LOG_INFO(

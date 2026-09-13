@@ -36,6 +36,82 @@ DasResult GraphRuntimeImpl::GetErrorMessage(
         pp_out_error_message);
 }
 
+DasResult GraphRuntimeImpl::ParseVerifiedPlan(
+    IDasReadOnlyString*        p_compiled_artifact_json,
+    Dto::CompiledGraphPlanDto& plan)
+{
+    if (!p_compiled_artifact_json)
+    {
+        // 空指针不是「空图」：静默跑空计划会把调用方的装配缺漏吞成成
+        // 功，必须显性拒绝。
+        last_error_ = "Execute: compiled artifact is null";
+        DAS_CORE_LOG_ERROR("{}", last_error_);
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    const char*     utf8 = nullptr;
+    const DasResult hr = p_compiled_artifact_json->GetUtf8(&utf8);
+    if (DAS::IsFailed(hr) || !utf8)
+    {
+        last_error_ = "Execute: failed to read compiled artifact JSON";
+        DAS_CORE_LOG_ERROR("{}", last_error_);
+        return DAS_E_INVALID_POINTER;
+    }
+
+    std::string json_str(utf8);
+    if (json_str.empty())
+    {
+        last_error_ = "Execute: compiled artifact is empty";
+        DAS_CORE_LOG_ERROR("{}", last_error_);
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    try
+    {
+        // The wire artifact is a {"fingerprint","plan"} shell. Verify
+        // the plan payload against the shell fingerprint (re-serialize
+        // the subtree with the same standard serializer and compare)
+        // before executing: a mismatch means the artifact was modified
+        // or corrupted after compilation.
+        auto shell = yyjson::read(json_str);
+        auto shell_obj = shell.as_object();
+        if (!shell_obj || !shell_obj->contains(std::string_view("fingerprint"))
+            || !shell_obj->contains(std::string_view("plan")))
+        {
+            throw yyjson::bad_cast{
+                "compiled artifact is not a {fingerprint,plan} shell"};
+        }
+        auto fingerprint =
+            (*shell_obj)[std::string_view("fingerprint")].as_string();
+        if (!fingerprint || fingerprint->empty())
+        {
+            throw yyjson::bad_cast{
+                "compiled artifact shell carries no fingerprint"};
+        }
+
+        const auto&       plan_subtree = (*shell_obj)[std::string_view("plan")];
+        const std::string computed_fingerprint =
+            ComputeCompiledPlanFingerprint(plan_subtree);
+        if (computed_fingerprint.empty()
+            || computed_fingerprint != *fingerprint)
+        {
+            last_error_ = "Execute: compiled artifact fingerprint "
+                          "mismatch — the plan payload was modified "
+                          "or corrupted";
+            DAS_CORE_LOG_ERROR("{}", last_error_);
+            return DAS_E_FAIL;
+        }
+
+        plan = yyjson::cast<Dto::CompiledGraphPlanDto>(plan_subtree);
+    }
+    catch (const std::exception& exception)
+    {
+        last_error_ = std::string{"Execute: invalid compiled artifact JSON: "}
+                      + exception.what();
+        DAS_CORE_LOG_ERROR("{}", last_error_);
+        return DAS_E_INVALID_JSON;
+    }
+    return DAS_S_OK;
+}
+
 DasResult GraphRuntimeImpl::Execute(
     IDasReadOnlyString*                  p_compiled_artifact_json,
     Das::PluginInterface::IDasStopToken* p_stop_token,
@@ -49,80 +125,12 @@ DasResult GraphRuntimeImpl::Execute(
 
     // Parse compiled graph plan from JSON string.
     Dto::CompiledGraphPlanDto plan;
-    if (!p_compiled_artifact_json)
     {
-        // 空指针不是「空图」：静默跑空计划会把调用方的装配缺漏吞成成
-        // 功，必须显性拒绝。
-        last_error_ = "Execute: compiled artifact is null";
-        DAS_CORE_LOG_ERROR("{}", last_error_);
-        return DAS_E_INVALID_ARGUMENT;
-    }
-    {
-        const char*     utf8 = nullptr;
-        const DasResult hr = p_compiled_artifact_json->GetUtf8(&utf8);
-        if (DAS::IsFailed(hr) || !utf8)
+        const DasResult parse_result =
+            ParseVerifiedPlan(p_compiled_artifact_json, plan);
+        if (DAS::IsFailed(parse_result))
         {
-            last_error_ = "Execute: failed to read compiled artifact JSON";
-            DAS_CORE_LOG_ERROR("{}", last_error_);
-            return DAS_E_INVALID_POINTER;
-        }
-
-        std::string json_str(utf8);
-        if (json_str.empty())
-        {
-            last_error_ = "Execute: compiled artifact is empty";
-            DAS_CORE_LOG_ERROR("{}", last_error_);
-            return DAS_E_INVALID_ARGUMENT;
-        }
-        {
-            try
-            {
-                // The wire artifact is a {"fingerprint","plan"} shell. Verify
-                // the plan payload against the shell fingerprint (re-serialize
-                // the subtree with the same standard serializer and compare)
-                // before executing: a mismatch means the artifact was modified
-                // or corrupted after compilation.
-                auto shell = yyjson::read(json_str);
-                auto shell_obj = shell.as_object();
-                if (!shell_obj
-                    || !shell_obj->contains(std::string_view("fingerprint"))
-                    || !shell_obj->contains(std::string_view("plan")))
-                {
-                    throw yyjson::bad_cast{
-                        "compiled artifact is not a {fingerprint,plan} shell"};
-                }
-                auto fingerprint =
-                    (*shell_obj)[std::string_view("fingerprint")].as_string();
-                if (!fingerprint || fingerprint->empty())
-                {
-                    throw yyjson::bad_cast{
-                        "compiled artifact shell carries no fingerprint"};
-                }
-
-                const auto& plan_subtree =
-                    (*shell_obj)[std::string_view("plan")];
-                const std::string computed_fingerprint =
-                    ComputeCompiledPlanFingerprint(plan_subtree);
-                if (computed_fingerprint.empty()
-                    || computed_fingerprint != *fingerprint)
-                {
-                    last_error_ = "Execute: compiled artifact fingerprint "
-                                  "mismatch — the plan payload was modified "
-                                  "or corrupted";
-                    DAS_CORE_LOG_ERROR("{}", last_error_);
-                    return DAS_E_FAIL;
-                }
-
-                plan = yyjson::cast<Dto::CompiledGraphPlanDto>(plan_subtree);
-            }
-            catch (const std::exception& exception)
-            {
-                last_error_ =
-                    std::string{"Execute: invalid compiled artifact JSON: "}
-                    + exception.what();
-                DAS_CORE_LOG_ERROR("{}", last_error_);
-                return DAS_E_INVALID_JSON;
-            }
+            return parse_result;
         }
     }
 
@@ -168,16 +176,43 @@ DasResult GraphRuntimeImpl::ExecuteWithTypedIO(
     Das::ExportInterface::IDasReadOnlyPortMap* p_graph_inputs,
     Das::ExportInterface::IDasPortMap**        pp_out_outputs)
 {
-    (void)p_compiled_artifact_json;
-    (void)p_stop_token;
-    (void)p_graph_inputs;
     if (!pp_out_outputs)
     {
         return DAS_E_INVALID_POINTER;
     }
     *pp_out_outputs = nullptr;
 
-    return DAS_E_NO_IMPLEMENTATION;
+    Dto::CompiledGraphPlanDto plan;
+    const DasResult           parse_result =
+        ParseVerifiedPlan(p_compiled_artifact_json, plan);
+    if (DAS::IsFailed(parse_result))
+    {
+        return parse_result;
+    }
+
+    // graph_inputs 的生命周期=本调用栈：进引擎前挂载、返回前摘除，旧
+    // Execute 路径恒见空（默认物化兜底不受染）。
+    engine_.SetGraphInputs(p_graph_inputs);
+    const DasResult result = engine_.RunWithHost(
+        plan,
+        plan.source_fingerprint,
+        p_stop_token,
+        host_.Get(),
+        pp_out_outputs);
+    engine_.SetGraphInputs(nullptr);
+
+    if (DAS::IsFailed(result))
+    {
+        last_error_ = engine_.GetLastErrorMessage();
+        if (last_error_.empty())
+        {
+            last_error_ = "Graph execution failed";
+        }
+        DAS_CORE_LOG_ERROR("{}", last_error_);
+        return result;
+    }
+
+    return DAS_S_OK;
 }
 
 DAS_CORE_GRAPHRUNTIME_NS_END

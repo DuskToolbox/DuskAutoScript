@@ -29,88 +29,6 @@ namespace
     using Das::ExportInterface::IDasImage;
     using IDasPortMap = Das::ExportInterface::IDasPortMap;
 
-    DasResult PortValueToPortMap(
-        const PortValue&   pv,
-        const std::string& port_id,
-        IDasPortMap*       map)
-    {
-        // Create a DasReadOnlyString for the port_id key.
-        const DasReadOnlyString key_str{port_id.c_str()};
-
-        if (pv.IsNull())
-        {
-            return DAS_S_OK;
-        }
-        if (pv.IsInt())
-        {
-            return map->SetInt(key_str.Get(), *pv.AsInt());
-        }
-        if (pv.IsFloat())
-        {
-            return map->SetFloat(key_str.Get(), *pv.AsFloat());
-        }
-        if (pv.IsString())
-        {
-            const auto&             s = *pv.AsString();
-            const DasReadOnlyString val_str{s.c_str()};
-            return map->SetString(key_str.Get(), val_str.Get());
-        }
-        if (pv.IsBool())
-        {
-            return map->SetBool(key_str.Get(), *pv.AsBool());
-        }
-        if (pv.IsBase())
-        {
-            auto* raw = pv.AsBase()->ptr.Get();
-            if (raw != nullptr)
-            {
-                return map->SetBase(key_str.Get(), DAS_IID_BASE, raw);
-            }
-            return DAS_S_OK;
-        }
-        if (pv.IsComponent())
-        {
-            auto* raw = pv.AsComponent()->ptr.Get();
-            if (raw != nullptr)
-            {
-                return map->SetComponent(key_str.Get(), DAS_IID_BASE, raw);
-            }
-            return DAS_S_OK;
-        }
-        if (pv.IsImage())
-        {
-            // SetImage 内部自持引用——传非拥有裸指针；空引用对齐 Base 分支
-            // 静默跳过，组件见缺键回落自身默认。
-            auto* raw = pv.AsImage()->ptr.Get();
-            if (raw != nullptr)
-            {
-                return map->SetImage(key_str.Get(), raw);
-            }
-            return DAS_S_OK;
-        }
-        if (pv.IsJson())
-        {
-            // JSON serialised as string — GetJson returns IDasReadOnlyString
-            // in the PortMap contract.
-            DAS_CORE_LOG_WARN(
-                "Json type not yet supported in DoAdapter for port_id = {}.",
-                port_id);
-            return DAS_E_NO_IMPLEMENTATION;
-        }
-        if (pv.IsSignal())
-        {
-            // Signals are control-flow markers — no data payload.
-            return DAS_S_OK;
-        }
-
-        DAS_CORE_LOG_ERROR(
-            "Unhandled PortValue type = {} for port_id = {}. "
-            "Skipping binding.",
-            static_cast<int>(pv.GetType()),
-            port_id);
-        return DAS_S_OK;
-    }
-
     DasResult PortMapEntryToPortValue(
         IDasPortMap*       map,
         const std::string& port_id,
@@ -355,6 +273,148 @@ namespace
         return DAS_S_OK;
     }
 
+    /// Whether @p graph_inputs holds a typed entry under @p port_id.
+    bool HasTypedPort(
+        Das::ExportInterface::IDasReadOnlyPortMap* graph_inputs,
+        const std::string&                         port_id)
+    {
+        if (graph_inputs == nullptr)
+        {
+            return false;
+        }
+        const DasReadOnlyString key{port_id.c_str()};
+        bool                    has = false;
+        if (DAS::IsFailed(graph_inputs->Has(key.Get(), &has)))
+        {
+            return false;
+        }
+        return has;
+    }
+
+    /// Transfer the typed graph-level input stored under @p port_id from
+    /// @p graph_inputs into @p map under the same key, dispatching on the
+    /// runtime variant kind. Object references ride their AddRef/Put()
+    /// pairing end to end; json/signal kinds are not call-site inputs and
+    /// are skipped silently.
+    DasResult TransferTypedPortValue(
+        Das::ExportInterface::IDasReadOnlyPortMap* graph_inputs,
+        IDasPortMap*                               map,
+        const std::string&                         port_id)
+    {
+        const DasReadOnlyString key{port_id.c_str()};
+
+        DasVariantType kind = DAS_VARIANT_TYPE_NULL;
+        DasResult      result = graph_inputs->GetType(key.Get(), &kind);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        switch (kind)
+        {
+        case DAS_VARIANT_TYPE_INT:
+        {
+            int64_t value = 0;
+            result = graph_inputs->GetInt(key.Get(), &value);
+            if (DAS::IsOk(result))
+            {
+                result = map->SetInt(key.Get(), value);
+            }
+            return result;
+        }
+        case DAS_VARIANT_TYPE_FLOAT:
+        {
+            double value = 0.0;
+            result = graph_inputs->GetFloat(key.Get(), &value);
+            if (DAS::IsOk(result))
+            {
+                result = map->SetFloat(key.Get(), value);
+            }
+            return result;
+        }
+        case DAS_VARIANT_TYPE_BOOL:
+        {
+            bool value = false;
+            result = graph_inputs->GetBool(key.Get(), &value);
+            if (DAS::IsOk(result))
+            {
+                result = map->SetBool(key.Get(), value);
+            }
+            return result;
+        }
+        case DAS_VARIANT_TYPE_STRING:
+        {
+            IDasReadOnlyString* value_string = nullptr;
+            result = graph_inputs->GetString(key.Get(), &value_string);
+            if (DAS::IsOk(result) && value_string != nullptr)
+            {
+                result = map->SetString(key.Get(), value_string);
+                value_string->Release();
+            }
+            return result;
+        }
+        case DAS_VARIANT_TYPE_IMAGE:
+        {
+            // GetImage 返回已 AddRef 的拥有引用——Put() 接管，SetImage
+            // 自持引用后本地引用析构释放，恰好一次配对。
+            DAS::DasPtr<IDasImage> image_ptr;
+            result = graph_inputs->GetImage(key.Get(), image_ptr.Put());
+            if (DAS::IsOk(result))
+            {
+                result = map->SetImage(key.Get(), image_ptr.Get());
+            }
+            return result;
+        }
+        case DAS_VARIANT_TYPE_BASE:
+        {
+            DAS::DasPtr<IDasBase> base_ptr;
+            result =
+                graph_inputs->GetBase(key.Get(), DAS_IID_BASE, base_ptr.Put());
+            if (DAS::IsOk(result))
+            {
+                result = map->SetBase(key.Get(), DAS_IID_BASE, base_ptr.Get());
+            }
+            return result;
+        }
+        case DAS_VARIANT_TYPE_COMPONENT:
+        {
+            DAS::DasPtr<IDasBase> component_ptr;
+            result = graph_inputs->GetComponent(
+                key.Get(),
+                DAS_IID_BASE,
+                component_ptr.Put());
+            if (DAS::IsOk(result))
+            {
+                result = map->SetComponent(
+                    key.Get(),
+                    DAS_IID_BASE,
+                    component_ptr.Get());
+            }
+            return result;
+        }
+        case DAS_VARIANT_TYPE_NULL:
+        case DAS_VARIANT_TYPE_JSON:
+        case DAS_VARIANT_TYPE_SIGNAL:
+        {
+            DAS_CORE_LOG_TRACE(
+                "Graph-input pass-through skipped non-transferable kind = {} "
+                "for port_id = {}.",
+                static_cast<int>(kind),
+                port_id);
+            return DAS_S_OK;
+        }
+        default:
+        {
+            DAS_CORE_LOG_WARN(
+                "Graph-input pass-through saw unknown kind = {} for port_id "
+                "= {}.",
+                static_cast<int>(kind),
+                port_id);
+            return DAS_S_OK;
+        }
+        }
+    }
+
     // 数字等价族判定与 GraphCompiler::IsTypeCompatible 的整数/浮点族划
     // 分同源（同一张等价表）——读值侧物化只关心目标口属于哪个族。
     bool IsIntegerFamilyPortType(const std::string& port_type)
@@ -370,20 +430,105 @@ namespace
 } // namespace
 
 // ===========================================================================
+// PortValueToPortMap
+// ===========================================================================
+
+DasResult PortValueToPortMap(
+    const PortValue&                   pv,
+    const std::string&                 port_id,
+    Das::ExportInterface::IDasPortMap* map)
+{
+    // Create a DasReadOnlyString for the port_id key.
+    const DasReadOnlyString key_str{port_id.c_str()};
+
+    if (pv.IsNull())
+    {
+        return DAS_S_OK;
+    }
+    if (pv.IsInt())
+    {
+        return map->SetInt(key_str.Get(), *pv.AsInt());
+    }
+    if (pv.IsFloat())
+    {
+        return map->SetFloat(key_str.Get(), *pv.AsFloat());
+    }
+    if (pv.IsString())
+    {
+        const auto&             s = *pv.AsString();
+        const DasReadOnlyString val_str{s.c_str()};
+        return map->SetString(key_str.Get(), val_str.Get());
+    }
+    if (pv.IsBool())
+    {
+        return map->SetBool(key_str.Get(), *pv.AsBool());
+    }
+    if (pv.IsBase())
+    {
+        auto* raw = pv.AsBase()->ptr.Get();
+        if (raw != nullptr)
+        {
+            return map->SetBase(key_str.Get(), DAS_IID_BASE, raw);
+        }
+        return DAS_S_OK;
+    }
+    if (pv.IsComponent())
+    {
+        auto* raw = pv.AsComponent()->ptr.Get();
+        if (raw != nullptr)
+        {
+            return map->SetComponent(key_str.Get(), DAS_IID_BASE, raw);
+        }
+        return DAS_S_OK;
+    }
+    if (pv.IsImage())
+    {
+        // SetImage 内部自持引用——传非拥有裸指针；空引用对齐 Base 分支
+        // 静默跳过，组件见缺键回落自身默认。
+        auto* raw = pv.AsImage()->ptr.Get();
+        if (raw != nullptr)
+        {
+            return map->SetImage(key_str.Get(), raw);
+        }
+        return DAS_S_OK;
+    }
+    if (pv.IsJson())
+    {
+        // JSON serialised as string — GetJson returns IDasReadOnlyString
+        // in the PortMap contract.
+        DAS_CORE_LOG_WARN(
+            "Json type not yet supported in DoAdapter for port_id = {}.",
+            port_id);
+        return DAS_E_NO_IMPLEMENTATION;
+    }
+    if (pv.IsSignal())
+    {
+        // Signals are control-flow markers — no data payload.
+        return DAS_S_OK;
+    }
+
+    DAS_CORE_LOG_ERROR(
+        "Unhandled PortValue type = {} for port_id = {}. "
+        "Skipping binding.",
+        static_cast<int>(pv.GetType()),
+        port_id);
+    return DAS_S_OK;
+}
+
+// ===========================================================================
 // BuildInputPortMap
 // ===========================================================================
 
 DasResult BuildInputPortMap(
-    const PortFrame&                                 frame,
-    const std::vector<Dto::PortBindingDto>&          bindings,
-    Das::ExportInterface::IDasPortMap**              out_map,
-    const Das::ExportInterface::IDasReadOnlyPortMap* graph_inputs)
+    const PortFrame&                           frame,
+    const std::vector<Dto::PortBindingDto>&    bindings,
+    Das::ExportInterface::IDasPortMap**        out_map,
+    Das::ExportInterface::IDasReadOnlyPortMap* graph_inputs)
 {
     if (out_map == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
-    (void)graph_inputs;
 
     // Create a fresh IDasPortMap via the C API factory, bound to out_map.
     DAS::DasOutPtr<Das::ExportInterface::IDasPortMap> map(out_map);
@@ -396,11 +541,32 @@ DasResult BuildInputPortMap(
 
     for (const auto& binding : bindings)
     {
-        // Broadcast (graph-level input) binding: materialise from its
-        // declared default_value — the sentinel source marks no real upstream
-        // node, so there is no frame entry to read.
+        // Broadcast (graph-level input) binding: the typed call-site value
+        // (graph_inputs) wins over the declared default — the sentinel
+        // source marks no real upstream node, so there is no frame entry to
+        // read either way.
         if (binding.source_node_id == std::string{BROADCAST_SOURCE})
         {
+            if (HasTypedPort(graph_inputs, binding.target_port_id))
+            {
+                const DasResult transfer_result = TransferTypedPortValue(
+                    graph_inputs,
+                    map.Get(),
+                    binding.target_port_id);
+                if (DAS::IsFailed(transfer_result))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to transfer typed graph-level input for "
+                        "target_port_id = {}.",
+                        binding.target_port_id);
+                    return transfer_result;
+                }
+                DAS_CORE_LOG_TRACE(
+                    "Graph-level input for target_port_id = {} taken from "
+                    "typed call-site value (default not materialised).",
+                    binding.target_port_id);
+                continue;
+            }
             const DasResult r = SetDefaultFromYyjson(
                 map.Get(),
                 binding.target_port_id,
