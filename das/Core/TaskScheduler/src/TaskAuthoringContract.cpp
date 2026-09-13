@@ -36,7 +36,10 @@ namespace Das::Core::TaskScheduler
             "moveGraphNode",
             "removeGraphNodes",
             "moveGraphNodes",
-            "renameGraphNode"};
+            "renameGraphNode",
+            "addNodePort",
+            "removeNodePort",
+            "renameNodePort"};
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 
@@ -1316,7 +1319,8 @@ namespace Das::Core::TaskScheduler
                      "direction",
                      "category",
                      "value",
-                     "connectedFrom"}))
+                     "connectedFrom",
+                     "dynamic"}))
             {
                 return Fail(
                     "unknownField",
@@ -1333,6 +1337,15 @@ namespace Das::Core::TaskScheduler
                 return Fail(
                     "invalidPortConnectedFrom",
                     "GraphNode port.connectedFrom must be a non-empty string");
+            }
+            // Optional dynamic-port marker (begin/end dynamic port merges):
+            // engaged-only on the wire, so a present value must be a boolean
+            // (the projection never emits an explicit false).
+            if (obj.contains("dynamic") && !obj["dynamic"].is_bool())
+            {
+                return Fail(
+                    "invalidPortDynamic",
+                    "GraphNode port.dynamic must be a boolean");
             }
             return Pass();
         }
@@ -2408,6 +2421,194 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
+        // begin/end 动态口 value_type 白名单（九词）：与 schema
+        // AddNodePort.valueType enum、Core 分派层三处 lockstep（D-20 全类
+        // 型域）。白名单外拒绝，不借道未知词宽容。
+        constexpr std::array<std::string_view, 9> NODE_PORT_VALUE_TYPES{
+            "bool",
+            "int",
+            "int64",
+            "float",
+            "double",
+            "string",
+            "image",
+            "base",
+            "component"};
+
+        constexpr std::size_t MAX_NODE_PORT_NAME_UTF8_BYTES = 100;
+
+        // addNodePort payload：{nodeId, name, direction, valueType}——方向
+        // 语义=签名方向（input=子图入参长在 begin、output=子图出参长在
+        // end）；角色门（仅 begin/end 可持动态口）在 Core 分派层。
+        AuthoringValidationResult ValidateAddNodePortPayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (!OnlyKeys(obj, {"nodeId", "name", "direction", "valueType"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "addNodePort rejects unknown field");
+            }
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "nodeId",
+                    "invalidNodeId",
+                    "addNodePort.nodeId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "name",
+                    "invalidPayload",
+                    "addNodePort.name required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            const auto name = obj["name"].as_string().value();
+            if (name.size() > MAX_NODE_PORT_NAME_UTF8_BYTES)
+            {
+                return Fail(
+                    "invalidPayload",
+                    "addNodePort.name must be at most 100 UTF-8 bytes");
+            }
+            if (!HasStringField(obj, "direction")
+                || obj["direction"].as_string().value().empty())
+            {
+                return Fail(
+                    "missingField",
+                    "addNodePort.direction required and non-empty");
+            }
+            const auto direction = obj["direction"].as_string().value();
+            if (direction != std::string_view("input")
+                && direction != std::string_view("output"))
+            {
+                return Fail(
+                    "invalidPayload",
+                    "addNodePort.direction must be input|output");
+            }
+            if (!HasStringField(obj, "valueType")
+                || obj["valueType"].as_string().value().empty())
+            {
+                return Fail(
+                    "missingField",
+                    "addNodePort.valueType required and non-empty");
+            }
+            const auto value_type = obj["valueType"].as_string().value();
+            if (std::find(
+                    NODE_PORT_VALUE_TYPES.begin(),
+                    NODE_PORT_VALUE_TYPES.end(),
+                    value_type)
+                == NODE_PORT_VALUE_TYPES.end())
+            {
+                return Fail(
+                    "invalidPayload",
+                    "addNodePort.valueType must be one of bool/int/int64/"
+                    "float/double/string/image/base/component");
+            }
+            return Pass();
+        }
+
+        // removeNodePort payload：{nodeId, portId}——按稳定口 id 寻址分区
+        // 项（静态 manifest 口在 Core 分派层拒）。
+        AuthoringValidationResult ValidateRemoveNodePortPayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (!OnlyKeys(obj, {"nodeId", "portId"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "removeNodePort rejects unknown field");
+            }
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "nodeId",
+                    "invalidNodeId",
+                    "removeNodePort.nodeId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "portId",
+                    "invalidPayload",
+                    "removeNodePort.portId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            return Pass();
+        }
+
+        // renameNodePort payload：{nodeId, portId, name}——name 规则与
+        // addNodePort 同源；保留前缀（"$"）的查禁在 Core 分派层。
+        AuthoringValidationResult ValidateRenameNodePortPayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (!OnlyKeys(obj, {"nodeId", "portId", "name"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "renameNodePort rejects unknown field");
+            }
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "nodeId",
+                    "invalidNodeId",
+                    "renameNodePort.nodeId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "portId",
+                    "invalidPayload",
+                    "renameNodePort.portId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "name",
+                    "invalidPayload",
+                    "renameNodePort.name required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            const auto name = obj["name"].as_string().value();
+            if (name.size() > MAX_NODE_PORT_NAME_UTF8_BYTES)
+            {
+                return Fail(
+                    "invalidPayload",
+                    "renameNodePort.name must be at most 100 UTF-8 bytes");
+            }
+            return Pass();
+        }
+
         AuthoringValidationResult ValidateChangePayload(
             std::string_view     kind,
             const yyjson::value& payload)
@@ -2469,6 +2670,18 @@ namespace Das::Core::TaskScheduler
             if (kind == std::string_view("renameGraphNode"))
             {
                 return ValidateRenameGraphNodePayload(payload);
+            }
+            if (kind == std::string_view("addNodePort"))
+            {
+                return ValidateAddNodePortPayload(payload);
+            }
+            if (kind == std::string_view("removeNodePort"))
+            {
+                return ValidateRemoveNodePortPayload(payload);
+            }
+            if (kind == std::string_view("renameNodePort"))
+            {
+                return ValidateRenameNodePortPayload(payload);
             }
             // Unknown kinds are rejected by the caller before dispatch.
             return Pass();

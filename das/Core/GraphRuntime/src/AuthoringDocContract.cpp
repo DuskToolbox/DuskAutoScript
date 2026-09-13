@@ -1,7 +1,9 @@
 #include <das/Core/GraphRuntime/AuthoringDocContract.h>
 
 #include <algorithm>
+#include <array>
 #include <cassert>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -11,6 +13,7 @@
 
 #include <das/Core/GraphRuntime/FormSequenceProjector.h>
 #include <das/Core/GraphRuntime/GraphAuthoring.h>
+#include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/Utils/DasJsonCore.h>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -441,8 +444,87 @@ namespace Contract
 
         constexpr std::string_view PORT_DIRECTION_INPUT = "input";
 
+        constexpr std::string_view PORT_DIRECTION_OUTPUT = "output";
+
         constexpr std::string_view PORT_CATEGORY_EXECUTION = "execution";
         constexpr std::string_view PORT_CATEGORY_DATA = "data";
+
+        // begin/end 动态口 value_type 白名单（九词）：签名类型域=全部类型
+        // （D-20），词表与 schema AddNodePort.valueType enum、TaskScheduler
+        // validator 三处 lockstep——白名单外一律拒绝，不借道未知词宽容。
+        constexpr std::array<std::string_view, 9> NODE_PORT_VALUE_TYPES{
+            "bool",
+            "int",
+            "int64",
+            "float",
+            "double",
+            "string",
+            "image",
+            "base",
+            "component"};
+
+        constexpr std::size_t MAX_NODE_PORT_NAME_UTF8_BYTES = 100;
+
+        /// begin/end 组件判定——动态口分区的角色门判据（fail-closed：其
+        /// 它组件节点不可持动态口）。
+        bool IsBoundaryComponent(std::string_view component_guid)
+        {
+            return component_guid == GRAPH_BEGIN_COMPONENT_GUID
+                   || component_guid == GRAPH_END_COMPONENT_GUID;
+        }
+
+        /// node 作用域稳定口 id 分配（照 AllocateStableNodeId 模式）：
+        /// "p_" 前缀计数器 + 现有 id 扫描防撞，首口 p_1。口 id 是连线坐
+        /// 标与后续 remove/rename 的寻址键，节点内必须唯一。
+        std::string AllocateNodePortId(const Dto::GraphNodeDto& node)
+        {
+            std::unordered_set<std::string> existing;
+            for (const auto& port : node.ports)
+            {
+                existing.insert(port.id);
+            }
+            std::size_t counter = existing.size() + 1;
+            std::string candidate;
+            do
+            {
+                candidate = "p_" + std::to_string(counter);
+                ++counter;
+            } while (existing.count(candidate) != 0);
+            return candidate;
+        }
+
+        /// 口名规则（add/rename 共用）：非空、UTF-8 字节数 ≤100、不以
+        /// "$" 开头（哨兵源命名空间保留——伪造 $ 前缀口名会污染绑定计
+        /// 划的 source 判定）。返回违规描述，nullopt = 合法。
+        std::optional<std::string> NodePortNameViolation(std::string_view name)
+        {
+            if (name.empty())
+            {
+                return std::string("port name required");
+            }
+            if (name.size() > MAX_NODE_PORT_NAME_UTF8_BYTES)
+            {
+                return std::string("port name must be at most 100 UTF-8 bytes");
+            }
+            if (name.front() == '$')
+            {
+                return std::string(
+                    "port name must not start with '$' (reserved)");
+            }
+            return std::nullopt;
+        }
+
+        bool NodePortValueTypeIsAllowed(std::string_view value_type)
+        {
+            for (const auto allowed : NODE_PORT_VALUE_TYPES)
+            {
+                if (value_type == allowed)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
 
         /// The single point where the execution/data port category is
         /// derived. The rule recognizes exactly one Core-owned protocol
@@ -620,6 +702,39 @@ namespace Contract
                     {
                         GraphNodePort projected = port;
                         projected.category = DerivePortCategory(port.port_type);
+                        AttachPortValueFromSettings(
+                            node.settings,
+                            node.node_id,
+                            connected_input_sources,
+                            projected);
+                        out.ports.push_back(std::move(projected));
+                    }
+                }
+
+                // begin/end 动态口 merge（D-16 受控例外）：存储分区按 wire
+                // 投影键形并入 ports 数组——方向按组件角色翻转（存储的
+                // direction 是签名方向：begin 的入参口长在右侧 output 锚
+                // 供图内连线、end 的出参口长在左侧 input 锚收图内连线），
+                // category 走单一派生点（九词白名单不含 signal，恒为
+                // data），dynamic 键只在动态口上 engaged（UI 弹窗据此区
+                // 分可删/固定口）。
+                if (IsBoundaryComponent(out.component_guid))
+                {
+                    const std::string_view anchor_direction =
+                        out.component_guid
+                                == std::string_view(GRAPH_BEGIN_COMPONENT_GUID)
+                            ? PORT_DIRECTION_OUTPUT
+                            : PORT_DIRECTION_INPUT;
+                    for (const auto& declared : node.ports)
+                    {
+                        GraphNodePort projected;
+                        projected.port_id = declared.id;
+                        projected.display_label = declared.name;
+                        projected.port_type = declared.value_type;
+                        projected.direction = std::string(anchor_direction);
+                        projected.category =
+                            DerivePortCategory(declared.value_type);
+                        projected.dynamic_port = true;
                         AttachPortValueFromSettings(
                             node.settings,
                             node.node_id,
@@ -910,6 +1025,13 @@ namespace Contract
                     po["connectedFrom"] = std::make_pair(
                         std::string_view(port.connected_from),
                         yyjson::copy_string);
+                }
+                // Optional, engaged-only dynamic-port marker (D-16 merge):
+                // emitted only on projected dynamic ports — a static manifest
+                // port carries no key, never an explicit false.
+                if (port.dynamic_port)
+                {
+                    po["dynamic"] = true;
                 }
                 arr.emplace_back(std::move(p_v));
             }
@@ -1214,7 +1336,40 @@ namespace Contract
         // fed to compilation/execution). copy_string deep-copies every string
         // payload into the document arena so the returned value is
         // self-contained and safe to hand across the boundary.
-        return yyjson::object(document, yyjson::copy_string);
+        // 显式以 value 接住（auto 会推导成 object 句柄，宿主 document 临
+        // 时在语句尾析构——句柄即悬空）。转换发生在完整表达式内，value
+        // 自持 arena。
+        yyjson::value serialized =
+            yyjson::object(document, yyjson::copy_string);
+        // 动态口分区 engaged-only：无分区的节点不落 ports 键——键的出现
+        // 即语义（该节点持 begin/end 动态口声明）。聚合反射对空 vector
+        // 会出 "ports":[]，把「无分区」与「空分区」混为一谈，故反射后
+        // 就地擦除空键。
+        auto source_object = serialized.as_object();
+        if (source_object.has_value()
+            && source_object->contains(std::string_view("nodes")))
+        {
+            auto nodes = (*source_object)[std::string_view("nodes")].as_array();
+            if (nodes.has_value())
+            {
+                for (auto node_value : *nodes)
+                {
+                    auto node_object = node_value.as_object();
+                    if (!node_object.has_value()
+                        || !node_object->contains(std::string_view("ports")))
+                    {
+                        continue;
+                    }
+                    auto ports =
+                        (*node_object)[std::string_view("ports")].as_array();
+                    if (ports.has_value() && ports->empty())
+                    {
+                        node_object->erase(std::string_view("ports"));
+                    }
+                }
+            }
+        }
+        return serialized;
     }
 
     // -------------------------------------------------------------------
@@ -2283,6 +2438,312 @@ namespace Contract
                         {},
                         std::nullopt};
                 }
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
+            else if (change.kind == "addNodePort")
+            {
+                if (!change.item_or_node_id.has_value()
+                    || change.item_or_node_id->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "addNodePort.nodeId required",
+                        {},
+                        std::nullopt};
+                }
+                if (!change.node_port_name.has_value())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "addNodePort.name required",
+                        {},
+                        std::nullopt};
+                }
+                const auto& direction = change.node_port_direction;
+                if (!direction.has_value()
+                    || (*direction != std::string_view(PORT_DIRECTION_INPUT)
+                        && *direction
+                               != std::string_view(PORT_DIRECTION_OUTPUT)))
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "addNodePort.direction must be input|output",
+                        {},
+                        std::nullopt};
+                }
+                const auto& value_type = change.node_port_value_type;
+                if (!value_type.has_value()
+                    || !NodePortValueTypeIsAllowed(*value_type))
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "addNodePort.valueType must be one of bool/int/int64/"
+                        "float/double/string/image/base/component",
+                        {},
+                        std::nullopt};
+                }
+                // 校验全部前置后才找节点：任何拒绝都零突变。
+                Dto::GraphNodeDto* target_node = nullptr;
+                for (auto& node : document.nodes)
+                {
+                    if (node.node_id == *change.item_or_node_id)
+                    {
+                        target_node = &node;
+                        break;
+                    }
+                }
+                if (target_node == nullptr)
+                {
+                    return {
+                        ChangeErrorKind::NodeNotFound,
+                        "addNodePort node not found: "
+                            + *change.item_or_node_id,
+                        {},
+                        std::nullopt};
+                }
+                // 角色门 fail-closed：动态口分区仅 begin/end 可持。
+                const std::string target_component_guid =
+                    ComponentGuidOf(*target_node);
+                if (!IsBoundaryComponent(target_component_guid))
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "addNodePort target must be a Begin or End node; "
+                        "dynamic ports are only supported on boundary "
+                        "components",
+                        {},
+                        std::nullopt};
+                }
+                // 方向角色门：direction 是签名方向——begin 只收入参口、
+                // end 只收出参口。
+                const bool direction_mirrors_role =
+                    (*direction == std::string_view(PORT_DIRECTION_INPUT))
+                    == (target_component_guid
+                        == std::string_view(GRAPH_BEGIN_COMPONENT_GUID));
+                if (!direction_mirrors_role)
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "addNodePort.direction mismatch: Begin accepts input "
+                        "ports, End accepts output ports",
+                        {},
+                        std::nullopt};
+                }
+                if (const auto name_violation =
+                        NodePortNameViolation(*change.node_port_name);
+                    name_violation.has_value())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "addNodePort.name " + *name_violation,
+                        {},
+                        std::nullopt};
+                }
+                for (const auto& existing_port : target_node->ports)
+                {
+                    if (existing_port.name == *change.node_port_name)
+                    {
+                        return {
+                            ChangeErrorKind::InvalidOp,
+                            "addNodePort.name duplicates an existing port "
+                            "name on the node: "
+                                + *change.node_port_name,
+                            {},
+                            std::nullopt};
+                    }
+                }
+                const auto allocated_id = AllocateNodePortId(*target_node);
+                target_node->ports.push_back(
+                    Dto::GraphNodePortDeclarationDto{
+                        allocated_id,
+                        *change.node_port_name,
+                        *direction,
+                        *value_type});
+                return {
+                    ChangeErrorKind::None,
+                    "",
+                    {},
+                    std::optional<std::string>{allocated_id}};
+            }
+            else if (change.kind == "removeNodePort")
+            {
+                if (!change.item_or_node_id.has_value()
+                    || change.item_or_node_id->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "removeNodePort.nodeId required",
+                        {},
+                        std::nullopt};
+                }
+                if (!change.node_port_id.has_value()
+                    || change.node_port_id->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "removeNodePort.portId required",
+                        {},
+                        std::nullopt};
+                }
+                Dto::GraphNodeDto* target_node = nullptr;
+                for (auto& node : document.nodes)
+                {
+                    if (node.node_id == *change.item_or_node_id)
+                    {
+                        target_node = &node;
+                        break;
+                    }
+                }
+                if (target_node == nullptr)
+                {
+                    return {
+                        ChangeErrorKind::NodeNotFound,
+                        "removeNodePort node not found: "
+                            + *change.item_or_node_id,
+                        {},
+                        std::nullopt};
+                }
+                // 静态 manifest 口不在存储分区（如 end 的「值」）——remove
+                // 只删分区项，拒绝而非静默误删声明面。
+                bool partition_hit = false;
+                for (const auto& declared : target_node->ports)
+                {
+                    if (declared.id == *change.node_port_id)
+                    {
+                        partition_hit = true;
+                        break;
+                    }
+                }
+                if (!partition_hit)
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "removeNodePort port is not in the dynamic port "
+                        "partition: "
+                            + *change.node_port_id,
+                        {},
+                        std::nullopt};
+                }
+                target_node->ports.erase(
+                    std::remove_if(
+                        target_node->ports.begin(),
+                        target_node->ports.end(),
+                        [&](const Dto::GraphNodePortDeclarationDto& declared)
+                        { return declared.id == *change.node_port_id; }),
+                    target_node->ports.end());
+                // 级联删线：引用该口 id 的连线（源侧或目标侧）在同一
+                // change 内原子删除——与 removeGraphNodes 的级联同语义。
+                const auto& removed_port_id = *change.node_port_id;
+                document.edges.erase(
+                    std::remove_if(
+                        document.edges.begin(),
+                        document.edges.end(),
+                        [&](const Dto::GraphEdgeDto& edge)
+                        {
+                            return (edge.source_node_id
+                                        == *change.item_or_node_id
+                                    && edge.source_port_id == removed_port_id)
+                                   || (edge.target_node_id
+                                           == *change.item_or_node_id
+                                       && edge.target_port_id
+                                              == removed_port_id);
+                        }),
+                    document.edges.end());
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
+            else if (change.kind == "renameNodePort")
+            {
+                if (!change.item_or_node_id.has_value()
+                    || change.item_or_node_id->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "renameNodePort.nodeId required",
+                        {},
+                        std::nullopt};
+                }
+                if (!change.node_port_id.has_value()
+                    || change.node_port_id->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "renameNodePort.portId required",
+                        {},
+                        std::nullopt};
+                }
+                if (!change.node_port_name.has_value())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "renameNodePort.name required",
+                        {},
+                        std::nullopt};
+                }
+                if (const auto name_violation =
+                        NodePortNameViolation(*change.node_port_name);
+                    name_violation.has_value())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "renameNodePort.name " + *name_violation,
+                        {},
+                        std::nullopt};
+                }
+                Dto::GraphNodeDto* target_node = nullptr;
+                for (auto& node : document.nodes)
+                {
+                    if (node.node_id == *change.item_or_node_id)
+                    {
+                        target_node = &node;
+                        break;
+                    }
+                }
+                if (target_node == nullptr)
+                {
+                    return {
+                        ChangeErrorKind::NodeNotFound,
+                        "renameNodePort node not found: "
+                            + *change.item_or_node_id,
+                        {},
+                        std::nullopt};
+                }
+                Dto::GraphNodePortDeclarationDto* target_port = nullptr;
+                for (auto& declared : target_node->ports)
+                {
+                    if (declared.id == *change.node_port_id)
+                    {
+                        target_port = &declared;
+                        break;
+                    }
+                }
+                if (target_port == nullptr)
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "renameNodePort port is not in the dynamic port "
+                        "partition: "
+                            + *change.node_port_id,
+                        {},
+                        std::nullopt};
+                }
+                // 重名门排除自身：改成同名是幂等 no-op 语义（仍是成功、
+                // revision 照常 bump——与 renameGraphNode 同惯例）。
+                for (const auto& declared : target_node->ports)
+                {
+                    if (&declared != target_port
+                        && declared.name == *change.node_port_name)
+                    {
+                        return {
+                            ChangeErrorKind::InvalidOp,
+                            "renameNodePort.name duplicates an existing port "
+                            "name on the node: "
+                                + *change.node_port_name,
+                            {},
+                            std::nullopt};
+                    }
+                }
+                // 只改 name：口 id 与连线坐标不动（寻址面零扰动）。
+                target_port->name = *change.node_port_name;
                 return {ChangeErrorKind::None, "", {}, std::nullopt};
             }
             else if (change.kind == "convertView")

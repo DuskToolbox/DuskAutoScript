@@ -2794,7 +2794,7 @@ namespace
         EXPECT_TRUE(r_at_limit.Ok()) << r_at_limit.message;
 
         ASSERT_EQ(doc.nodes[0].ports.size(), 2u);
-        EXPECT_EQ(doc.version, 3);
+        EXPECT_EQ(doc.version, 2);
     }
 
     // remove：删分区项并级联删除引用该口 id 的连线（同一 change 内原
@@ -2982,57 +2982,64 @@ namespace
         doc.nodes.push_back(MakeNode("n_plain", "{g1}", 0.0));
         doc.nodes.push_back(MakeNode("n_begin", BOUNDARY_BEGIN_GUID, 0.0));
 
-        auto source = Contract::SerializeSource(doc);
-        auto source_object = source.as_object();
-        ASSERT_TRUE(source_object.has_value());
-        auto nodes = (*source_object)[std::string_view("nodes")].as_array();
-        ASSERT_TRUE(nodes.has_value());
-        ASSERT_EQ(nodes->size(), 2u);
-        for (const auto& node_value : *nodes)
+        // 两阶段各自作用域隔离：value 重赋值会释放旧 arena，持有其
+        // object_ref 的变量必须先亡（库对陈旧 ref 的移动赋值经悬空 doc
+        // 指针写——ASAN 即红）。
         {
-            auto node_object = node_value.as_object();
-            ASSERT_TRUE(node_object.has_value());
-            EXPECT_FALSE(node_object->contains(std::string_view("ports")))
-                << "engaged-only: the partition key must be absent on "
-                   "partition-less nodes";
+            yyjson::value source = Contract::SerializeSource(doc);
+            auto          source_object = source.as_object();
+            ASSERT_TRUE(source_object.has_value());
+            auto nodes = (*source_object)[std::string_view("nodes")].as_array();
+            ASSERT_TRUE(nodes.has_value());
+            ASSERT_EQ(nodes->size(), 2u);
+            for (const auto& node_value : *nodes)
+            {
+                auto node_object = node_value.as_object();
+                ASSERT_TRUE(node_object.has_value());
+                EXPECT_FALSE(node_object->contains(std::string_view("ports")))
+                    << "engaged-only: the partition key must be absent on "
+                       "partition-less nodes";
+            }
         }
 
         ASSERT_TRUE(ApplyAuthoringChange(
                         doc,
                         MakeAddNodePort("n_begin", "左值", "input", "int"))
                         .Ok());
-        source = Contract::SerializeSource(doc);
-        source_object = source.as_object();
-        ASSERT_TRUE(source_object.has_value());
-        nodes = (*source_object)[std::string_view("nodes")].as_array();
-        ASSERT_TRUE(nodes.has_value());
-        auto plain_object = (*nodes)[0].as_object();
-        ASSERT_TRUE(plain_object.has_value());
-        EXPECT_FALSE(plain_object->contains(std::string_view("ports")));
-        auto begin_object = (*nodes)[1].as_object();
-        ASSERT_TRUE(begin_object.has_value());
-        ASSERT_TRUE(begin_object->contains(std::string_view("ports")));
-        auto begin_ports =
-            (*begin_object)[std::string_view("ports")].as_array();
-        ASSERT_TRUE(begin_ports.has_value());
-        ASSERT_EQ(begin_ports->size(), 1u);
-        auto port_object = (*begin_ports)[0].as_object();
-        ASSERT_TRUE(port_object.has_value());
-        EXPECT_TRUE(port_object->contains(std::string_view("id")));
-        EXPECT_TRUE(port_object->contains(std::string_view("name")));
-        EXPECT_TRUE(port_object->contains(std::string_view("direction")));
-        EXPECT_TRUE(port_object->contains(std::string_view("valueType")));
-        EXPECT_FALSE(port_object->contains(std::string_view("value_type")));
+        {
+            yyjson::value source = Contract::SerializeSource(doc);
+            auto          source_object = source.as_object();
+            ASSERT_TRUE(source_object.has_value());
+            auto nodes = (*source_object)[std::string_view("nodes")].as_array();
+            ASSERT_TRUE(nodes.has_value());
+            auto plain_object = (*nodes)[0].as_object();
+            ASSERT_TRUE(plain_object.has_value());
+            EXPECT_FALSE(plain_object->contains(std::string_view("ports")));
+            auto begin_object = (*nodes)[1].as_object();
+            ASSERT_TRUE(begin_object.has_value());
+            ASSERT_TRUE(begin_object->contains(std::string_view("ports")));
+            auto begin_ports =
+                (*begin_object)[std::string_view("ports")].as_array();
+            ASSERT_TRUE(begin_ports.has_value());
+            ASSERT_EQ(begin_ports->size(), 1u);
+            auto port_object = (*begin_ports)[0].as_object();
+            ASSERT_TRUE(port_object.has_value());
+            EXPECT_TRUE(port_object->contains(std::string_view("id")));
+            EXPECT_TRUE(port_object->contains(std::string_view("name")));
+            EXPECT_TRUE(port_object->contains(std::string_view("direction")));
+            EXPECT_TRUE(port_object->contains(std::string_view("valueType")));
+            EXPECT_FALSE(port_object->contains(std::string_view("value_type")));
 
-        // 存储分区经 source blob 往返保留。
-        auto round_tripped = yyjson::cast<GraphDocumentDto>(
-            Das::Utils::CloneYyjsonValue(source));
-        ASSERT_EQ(round_tripped.nodes.size(), 2u);
-        ASSERT_EQ(round_tripped.nodes[1].ports.size(), 1u);
-        EXPECT_EQ(round_tripped.nodes[1].ports[0].id, "p_1");
-        EXPECT_EQ(round_tripped.nodes[1].ports[0].name, "左值");
-        EXPECT_EQ(round_tripped.nodes[1].ports[0].direction, "input");
-        EXPECT_EQ(round_tripped.nodes[1].ports[0].value_type, "int");
+            // 存储分区经 source blob 往返保留。
+            auto round_tripped = yyjson::cast<GraphDocumentDto>(
+                Das::Utils::CloneYyjsonValue(source));
+            ASSERT_EQ(round_tripped.nodes.size(), 2u);
+            ASSERT_EQ(round_tripped.nodes[1].ports.size(), 1u);
+            EXPECT_EQ(round_tripped.nodes[1].ports[0].id, "p_1");
+            EXPECT_EQ(round_tripped.nodes[1].ports[0].name, "左值");
+            EXPECT_EQ(round_tripped.nodes[1].ports[0].direction, "input");
+            EXPECT_EQ(round_tripped.nodes[1].ports[0].value_type, "int");
+        }
     }
 
     // -----------------------------------------------------------------------

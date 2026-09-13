@@ -2585,7 +2585,7 @@ TEST(TaskAuthoringContractTest, SchemaJsonNodePortDefsLocked)
     ASSERT_TRUE(dynamic_definition.has_value());
     EXPECT_EQ(
         (*dynamic_definition)[std::string_view("type")].as_string().value(),
-        "bool");
+        "boolean");
 
     // payload oneOf 分支集含三个 $ref。
     auto payload_definition =
