@@ -2428,6 +2428,73 @@ TEST(BoundaryPortDerivationTest, EndOutPortsStillExported)
     EXPECT_EQ(boundary.outputs[0].node_ids[0], "n_end");
 }
 
+// end 输入口导出排除（D-14 输入侧镜像）：end 的口语义是「从图内收值」，
+// 悬空（无入边）的 end 口永不构成图级入参——否则调用方图输入会经广播
+// 绑定写进 end 转写输出，回声进出参面。begin/end 动态口 id 是节点内计
+// 数器（首口恒 p_1），by-name 合并下系统性地撞成同一条边界口——排除后
+// 撞名面随之消失（动态口分区仅 begin/end 可持）。
+TEST(BoundaryPortDerivationTest, EndInPortsExcludedFromBoundaryInputs)
+{
+    std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces;
+    // begin/end 动态口对形态（provider 展开后 in/out 同键，首口同 id p_1）。
+    surfaces[std::string(BOUNDARY_BEGIN_COMPONENT_GUID)] = {
+        {{"p_1", "int"}},
+        {{"p_1", "int"}}};
+    surfaces[std::string(BOUNDARY_END_COMPONENT_GUID)] = {
+        {{"p_1", "int"}},
+        {{"p_1", "int"}}};
+    surfaces["BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"] = {
+        {{"eat", "int"}},
+        {{"result", "string"}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeComponentNode(
+        "n_begin",
+        std::string(BOUNDARY_BEGIN_COMPONENT_GUID)));
+    doc.nodes.push_back(
+        MakeComponentNode("n_end", std::string(BOUNDARY_END_COMPONENT_GUID)));
+    doc.nodes.push_back(
+        MakeComponentNode("n_work", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+
+    auto boundary = compiler.DeriveBoundaryPorts(doc);
+
+    // 输入侧：end 的悬空口排除；begin 的悬空 in 口照常推导；p_1 不得把
+    // begin/end 合并成一条（node_ids 只含 begin）。
+    ASSERT_EQ(boundary.inputs.size(), 2u);
+    const Dto::BoundaryPortDto* begin_p1 = nullptr;
+    for (const auto& boundary_input : boundary.inputs)
+    {
+        if (boundary_input.port_id == "p_1")
+        {
+            begin_p1 = &boundary_input;
+        }
+    }
+    ASSERT_NE(begin_p1, nullptr);
+    ASSERT_EQ(begin_p1->node_ids.size(), 1u);
+    EXPECT_EQ(begin_p1->node_ids[0], "n_begin");
+
+    // 输出侧镜像不变：end 的 p_1 照常导出（出参面），begin 的排除。
+    bool end_output_found = false;
+    for (const auto& boundary_output : boundary.outputs)
+    {
+        ASSERT_NE(boundary_output.node_ids[0], "n_begin");
+        if (boundary_output.port_id == "p_1")
+        {
+            end_output_found = true;
+            EXPECT_EQ(boundary_output.node_ids[0], "n_end");
+        }
+    }
+    EXPECT_TRUE(end_output_found);
+}
+
 // ===================================================================
 // 注入端口面的绑定类型解析：无 factory manager 时 expected_type 从会话
 // catalog 注入的声明面解析（生产 authoring 编译路径形态）。

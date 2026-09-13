@@ -1456,6 +1456,126 @@ TEST(DasGraphTaskTest, PreservedBeginEndGraphExecutesAndReturnsEndValue)
     EXPECT_EQ(exported_value, 42);
 }
 
+// 图输入回声防护：begin/end 首口同为 p_1（节点内 id 计数器），end 的悬空
+// 口不得被推导为图级入参——否则调用方传 p_1 会经广播绑定写进 end 转写输
+// 出，原值回声进出参面（图什么都没做）；end 静态「值」同理，任务返回码
+// 会被图输入直接注入。
+TEST(DasGraphTaskTest, TypedGraphInputDoesNotEchoThroughUnconnectedEndPorts)
+{
+    GraphAuthoringSessionState* state = nullptr;
+    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
+    ASSERT_NE(state, nullptr);
+
+    const std::string action_catalog =
+        std::string(R"([{"actionId":")")
+        + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)" + R"({"actionId":")"
+        + std::string(END_COMPONENT_GUID_TEXT)
+        + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])";
+    {
+        DasPtr<IDasReadOnlyString> catalog_string;
+        ASSERT_EQ(
+            CreateIDasReadOnlyStringFromUtf8(
+                action_catalog.c_str(),
+                catalog_string.Put()),
+            DAS_S_OK);
+        ASSERT_EQ(
+            GraphAuthoringSessionSetActionCatalog(state, catalog_string.Get()),
+            DAS_S_OK);
+    }
+
+    // begin 长入参口「阈值」/end 长出参口「评分」——两节点首口同 id p_1，
+    // 全部悬空（零连线）。
+    {
+        DasPtr<Das::ExportInterface::IDasJson> apply_result;
+        const std::string grow_begin_port = WrapAuthoringChange(
+            "addNodePort",
+            R"({"nodeId":"n_0","name":"阈值","direction":"input","valueType":"int"})");
+        DasPtr<IDasReadOnlyString> grow_begin_port_string;
+        CreateIDasReadOnlyStringFromUtf8(
+            grow_begin_port.c_str(),
+            grow_begin_port_string.Put());
+        ASSERT_EQ(
+            GraphAuthoringSessionApplyChange(
+                state,
+                grow_begin_port_string.Get(),
+                apply_result.Put()),
+            DAS_S_OK);
+        ASSERT_TRUE(ResponseDiagnosticsEmpty(JsonTextOf(apply_result.Get())));
+    }
+    {
+        DasPtr<Das::ExportInterface::IDasJson> apply_result;
+        const std::string grow_end_port = WrapAuthoringChange(
+            "addNodePort",
+            R"({"nodeId":"n_1","name":"评分","direction":"output","valueType":"int"})");
+        DasPtr<IDasReadOnlyString> grow_end_port_string;
+        CreateIDasReadOnlyStringFromUtf8(
+            grow_end_port.c_str(),
+            grow_end_port_string.Put());
+        ASSERT_EQ(
+            GraphAuthoringSessionApplyChange(
+                state,
+                grow_end_port_string.Get(),
+                apply_result.Put()),
+            DAS_S_OK);
+        ASSERT_TRUE(ResponseDiagnosticsEmpty(JsonTextOf(apply_result.Get())));
+    }
+
+    std::string shell_text;
+    {
+        DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(state, nullptr, compiled.Put()),
+            DAS_S_OK);
+        ASSERT_TRUE(ResponseDiagnosticsEmpty(JsonTextOf(compiled.Get())));
+        auto root = yyjson::read(JsonTextOf(compiled.Get()));
+        auto root_obj = root.as_object();
+        ASSERT_TRUE(root_obj.has_value());
+        auto compile_section =
+            (*root_obj)[std::string_view("compile")].as_object();
+        ASSERT_TRUE(compile_section.has_value());
+        const auto shell = Das::Utils::SerializeYyjsonValue(
+            (*compile_section)[std::string_view("executionInput")]);
+        ASSERT_TRUE(shell.has_value());
+        shell_text = *shell;
+    }
+    ASSERT_FALSE(shell_text.empty());
+    DestroyGraphAuthoringSession(state);
+
+    // 执行：graph_inputs 携带 p_1=42 与 值=5（调用方图输入 + 返回码注入
+    // 探针）——end 悬空口不得回声其中任何一个。
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new BoundaryDispatchHost());
+    auto task = DasGraphTaskImpl::Make(host.Get());
+    ASSERT_NE(task.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    {
+        const DasReadOnlyString execution_input_key{"executionInput"};
+        const DasReadOnlyString execution_input_value{shell_text.c_str()};
+        ASSERT_EQ(
+            input_map->SetString(
+                execution_input_key.Get(),
+                execution_input_value.Get()),
+            DAS_S_OK);
+        const DasReadOnlyString p1_key{"p_1"};
+        ASSERT_EQ(input_map->SetInt(p1_key.Get(), int64_t{42}), DAS_S_OK);
+        const DasReadOnlyString value_key{"值"};
+        ASSERT_EQ(input_map->SetInt(value_key.Get(), int64_t{5}), DAS_S_OK);
+    }
+
+    DasPtr<Das::ExportInterface::IDasPortMap> output;
+    const DasResult hr = task->Do(nullptr, input_map.Get(), output.Put());
+    EXPECT_EQ(hr, DAS_S_OK);
+
+    // 无回声：outputs 不携带 p_1（end 悬空口未收图输入，帧上无值）。
+    ASSERT_NE(output.Get(), nullptr);
+    bool                    has_echo_port = true;
+    const DasReadOnlyString p1_key{"p_1"};
+    ASSERT_EQ(output->Has(p1_key.Get(), &has_echo_port), DAS_S_OK);
+    EXPECT_FALSE(has_echo_port);
+}
+
 // formSequence 上下文（LINEAR 文档）不预置 begin/end。
 TEST(DasGraphTaskTest, FormSequenceContextDoesNotPresetBoundaryNodes)
 {

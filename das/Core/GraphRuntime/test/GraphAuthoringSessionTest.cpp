@@ -2629,6 +2629,52 @@ namespace
         EXPECT_TRUE(boundary_dynamic_found);
     }
 
+    // 预置空图（begin/end 零连线）的编译签名：end 的悬空口（静态「值」与
+    // 动态口）不得被推导为图级入参——否则每个新建空图都携带幻影输入
+    // 「值」，调用方传值经广播绑定写进 end 转写输出，原值回声进出参面
+    // （任务返回码可被图输入直接注入）。
+    TEST(
+        GraphAuthoringSessionTest,
+        CompileEmptyPresetGraphHasNoPhantomBoundaryInputs)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
+                    + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
+                    + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
+            DAS_S_OK);
+
+        // end 长出参口「评分」（悬空），与静态「值」同为幻影入参候选。
+        ApplyChangeExpectOk(
+            s.p,
+            "addNodePort",
+            R"({"nodeId":"n_1","name":"评分","direction":"output","valueType":"int"})");
+
+        DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(s.p, nullptr, compiled.Put()),
+            DAS_S_OK);
+        auto root = yyjson::read(JsonToUtf8(compiled.Get())).as_object();
+        ASSERT_TRUE(root.has_value());
+        auto compile_section = (*root)[std::string_view("compile")].as_object();
+        ASSERT_TRUE(compile_section.has_value());
+        auto shell =
+            (*compile_section)[std::string_view("executionInput")].as_object();
+        ASSERT_TRUE(shell.has_value());
+        auto plan_object = (*shell)[std::string_view("plan")].as_object();
+        ASSERT_TRUE(plan_object.has_value());
+        auto boundary_ports =
+            (*plan_object)[std::string_view("boundaryPorts")].as_object();
+        ASSERT_TRUE(boundary_ports.has_value());
+        auto boundary_inputs =
+            (*boundary_ports)[std::string_view("inputs")].as_array();
+        ASSERT_TRUE(boundary_inputs.has_value());
+        EXPECT_TRUE(boundary_inputs->empty())
+            << "preset empty graph must not derive phantom boundary inputs";
+    }
+
     // 会话级 Get 投影：动态口 merge 进呈现面（方向翻转 + dynamic 键），
     // 且整份文档过严格 wire 校验（validator 词表含 dynamic）。
     TEST(
