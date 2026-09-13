@@ -933,6 +933,82 @@ namespace
             }
             return true;
         }
+        // addNodePort payload: {nodeId, name, direction, valueType}. The
+        // nodeId rides the shared item_or_node_id slot; the port fields feed
+        // the begin/end dynamic port partition dispatch.
+        if (out.kind == "addNodePort")
+        {
+            std::string node_id;
+            if (ReadStringField(*payload, std::string_view("nodeId"), node_id)
+                && !node_id.empty())
+            {
+                out.item_or_node_id = std::move(node_id);
+            }
+            std::string port_name;
+            if (ReadStringField(*payload, std::string_view("name"), port_name)
+                && !port_name.empty())
+            {
+                out.node_port_name = std::move(port_name);
+            }
+            std::string direction;
+            if (ReadStringField(
+                    *payload,
+                    std::string_view("direction"),
+                    direction))
+            {
+                out.node_port_direction = std::move(direction);
+            }
+            std::string value_type;
+            if (ReadStringField(
+                    *payload,
+                    std::string_view("valueType"),
+                    value_type))
+            {
+                out.node_port_value_type = std::move(value_type);
+            }
+            return true;
+        }
+        // removeNodePort payload: {nodeId, portId} — the stable partition id
+        // addresses the declaration.
+        if (out.kind == "removeNodePort")
+        {
+            std::string node_id;
+            if (ReadStringField(*payload, std::string_view("nodeId"), node_id)
+                && !node_id.empty())
+            {
+                out.item_or_node_id = std::move(node_id);
+            }
+            std::string port_id;
+            if (ReadStringField(*payload, std::string_view("portId"), port_id)
+                && !port_id.empty())
+            {
+                out.node_port_id = std::move(port_id);
+            }
+            return true;
+        }
+        // renameNodePort payload: {nodeId, portId, name}.
+        if (out.kind == "renameNodePort")
+        {
+            std::string node_id;
+            if (ReadStringField(*payload, std::string_view("nodeId"), node_id)
+                && !node_id.empty())
+            {
+                out.item_or_node_id = std::move(node_id);
+            }
+            std::string port_id;
+            if (ReadStringField(*payload, std::string_view("portId"), port_id)
+                && !port_id.empty())
+            {
+                out.node_port_id = std::move(port_id);
+            }
+            std::string port_name;
+            if (ReadStringField(*payload, std::string_view("name"), port_name)
+                && !port_name.empty())
+            {
+                out.node_port_name = std::move(port_name);
+            }
+            return true;
+        }
         // removeFormSequenceItem / removeGraphNode payload:
         // {formSequenceItemId} or {nodeId}. Both are surfaced via
         // item_or_node_id.
@@ -1464,14 +1540,18 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         // 端口面注入（与 required 清单同范式）：catalog 声明的静态端口面
         // （direction 由 inputs/outputs 声明携带）喂给编译器，使无 factory
         // manager 的 authoring 编译路径也能做端口校验与边界端口推导——
-        // 生产执行输入正是这条编译路径的产物。
+        // 生产执行输入正是这条编译路径的产物。begin/end 命中时在静态基
+        // 面之上按当前文档的节点动态口分区展开同名 in/out 口对（D-17 方
+        // 案 A：口 id=稳定分区 id——连线与哨兵绑定的寻址坐标，显示名=
+        // 口名），动态口因此进编译声明面参与边校验与边界推导。闭包捕
+        // 获会话指针 p：编译同步完成，p 在编译期内有效（与既有
+        // action_entries 引用捕获同生命周期前提）。
         compiler.SetPortSurfaceProvider(
-            [&action_entries =
-                 p->action_entries](const std::string& component_guid)
+            [p](const std::string& component_guid)
                 -> std::optional<Das::Core::GraphRuntime::GraphCompiler::
                                      ComponentPortSurface>
             {
-                for (const auto& entry : action_entries)
+                for (const auto& entry : p->action_entries)
                 {
                     if (entry.action_id != component_guid)
                     {
@@ -1493,6 +1573,35 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
                         else
                         {
                             surface.outputs.push_back(std::move(definition));
+                        }
+                    }
+                    if (component_guid
+                            == Das::Core::GraphRuntime::
+                                GRAPH_BEGIN_COMPONENT_GUID
+                        || component_guid
+                               == Das::Core::GraphRuntime::
+                                   GRAPH_END_COMPONENT_GUID)
+                    {
+                        for (const auto& node : p->document.nodes)
+                        {
+                            const bool node_matches_guid =
+                                node.target.component_ref.has_value()
+                                && node.target.component_ref->component_guid
+                                       == component_guid;
+                            if (!node_matches_guid)
+                            {
+                                continue;
+                            }
+                            for (const auto& declared : node.ports)
+                            {
+                                Das::Core::GraphRuntime::Dto::
+                                    GraphPortDefinitionDto definition;
+                                definition.port_id = declared.id;
+                                definition.display_label = declared.name;
+                                definition.port_type = declared.value_type;
+                                surface.inputs.push_back(definition);
+                                surface.outputs.push_back(definition);
+                            }
                         }
                     }
                     return surface;

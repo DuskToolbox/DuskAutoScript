@@ -568,15 +568,24 @@ namespace Contract
                 }
                 const ActionCatalogEntry* entry =
                     FindCatalogEntry(action_catalog, ComponentGuidOf(node));
-                if (entry == nullptr)
+                if (entry != nullptr)
                 {
-                    return std::nullopt;
-                }
-                for (const auto& port : entry->ports)
-                {
-                    if (port.port_id == port_id)
+                    for (const auto& port : entry->ports)
                     {
-                        return DerivePortCategory(port.port_type);
+                        if (port.port_id == port_id)
+                        {
+                            return DerivePortCategory(port.port_type);
+                        }
+                    }
+                }
+                // 动态口分区（begin/end）：九词白名单不含 signal，category
+                // 恒为 data——分区口不在 catalog 静态面里，connectGraphPorts
+                // 的边型推导据此解析，未声明的动态口端点照旧拒绝。
+                for (const auto& declared : node.ports)
+                {
+                    if (declared.id == port_id)
+                    {
+                        return std::string(PORT_CATEGORY_DATA);
                     }
                 }
                 return std::nullopt;
