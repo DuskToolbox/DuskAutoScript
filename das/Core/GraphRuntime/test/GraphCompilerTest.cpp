@@ -2283,6 +2283,71 @@ TEST(BoundaryPortDerivationTest, DeclaredManifestPortsDeriveWhenDangling)
     EXPECT_EQ(boundary.outputs[0].port_id, "declared_out");
 }
 
+// ---------------------------------------------------------------------
+// begin 输出口导出排除（D-14）：begin 的同名 out 口是图内值边源，导出会
+// 造成入参回显污染出参面——输出侧跳过 begin 节点的口；输入侧推导零改动
+// （begin 的悬空 in 口照常是边界入参）。GUID 钉值独立于
+// GraphBoundaryComponents.h 常量。
+// ---------------------------------------------------------------------
+constexpr std::string_view BOUNDARY_BEGIN_COMPONENT_GUID =
+    "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E";
+constexpr std::string_view BOUNDARY_END_COMPONENT_GUID =
+    "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D";
+
+TEST(BoundaryPortDerivationTest, BeginOutPortsExcludedFromBoundaryOutputs)
+{
+    std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces;
+    // begin 的动态口对形态（provider 展开后）：in/out 同键。
+    surfaces[std::string(BOUNDARY_BEGIN_COMPONENT_GUID)] = {
+        {{"左值", "int"}},
+        {{"左值", "int"}}};
+    surfaces["BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"] = {
+        {{"eat", "int"}},
+        {{"result", "string"}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeComponentNode(
+        "n_begin",
+        std::string(BOUNDARY_BEGIN_COMPONENT_GUID)));
+    doc.nodes.push_back(
+        MakeComponentNode("n_work", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+
+    auto boundary = compiler.DeriveBoundaryPorts(doc);
+
+    // 输出侧：begin 的 out 口排除，仅普通节点的 result 导出。
+    ASSERT_EQ(boundary.outputs.size(), 1u);
+    EXPECT_EQ(boundary.outputs[0].port_id, "result");
+    EXPECT_EQ(boundary.outputs[0].node_ids[0], "n_work");
+
+    // 输入侧零改动：begin 的悬空 in 口与普通节点的悬空输入都照常推导。
+    ASSERT_EQ(boundary.inputs.size(), 2u);
+    bool begin_input_found = false;
+    bool work_input_found = false;
+    for (const auto& boundary_input : boundary.inputs)
+    {
+        if (boundary_input.node_ids[0] == "n_begin")
+        {
+            begin_input_found = true;
+            EXPECT_EQ(boundary_input.port_id, "左值");
+        }
+        if (boundary_input.node_ids[0] == "n_work")
+        {
+            work_input_found = true;
+            EXPECT_EQ(boundary_input.port_id, "eat");
+        }
+    }
+    EXPECT_TRUE(begin_input_found);
+    EXPECT_TRUE(work_input_found);
+}
+
 // ===================================================================
 // 注入端口面的绑定类型解析：无 factory manager 时 expected_type 从会话
 // catalog 注入的声明面解析（生产 authoring 编译路径形态）。
