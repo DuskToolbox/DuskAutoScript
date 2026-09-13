@@ -593,6 +593,66 @@ namespace Contract
             return std::nullopt;
         }
 
+        /// begin/end 动态口方向门：begin 的动态口只可作连线源（口对的值
+        /// 来源是调用方图输入——图内入边占据它会把该图级输入从边界清单
+        /// 顶掉，调用方传值被静默丢弃），end 的动态口只可作连线目标（out
+        /// 侧是图输出坐标，不向图内发值）。返回违规描述，nullopt = 方向
+        /// 合法（含非边界组件节点与静态目录口——静态口方向由目录声明携
+        /// 带，ValidateEdgePorts 已按声明的 inputs/outputs 面校验）。
+        std::optional<std::string> BoundaryDynamicPortDirectionViolation(
+            const Dto::GraphDocumentDto& document,
+            const std::string&           node_id,
+            const std::string&           port_id,
+            bool                         endpoint_is_source)
+        {
+            for (const auto& node : document.nodes)
+            {
+                if (node.node_id != node_id
+                    || !node.target.component_ref.has_value())
+                {
+                    continue;
+                }
+                const std::string& component_guid =
+                    node.target.component_ref->component_guid;
+                const bool is_begin =
+                    component_guid
+                    == std::string_view(GRAPH_BEGIN_COMPONENT_GUID);
+                const bool is_end =
+                    component_guid
+                    == std::string_view(GRAPH_END_COMPONENT_GUID);
+                if (!is_begin && !is_end)
+                {
+                    return std::nullopt;
+                }
+                const auto declared = std::find_if(
+                    node.ports.begin(),
+                    node.ports.end(),
+                    [&](const Dto::GraphNodePortDeclarationDto& candidate)
+                    { return candidate.id == port_id; });
+                if (declared == node.ports.end())
+                {
+                    return std::nullopt; // 静态目录口，门不管。
+                }
+                if ((is_begin && !endpoint_is_source)
+                    || (is_end && endpoint_is_source))
+                {
+                    const char* component_label = is_begin ? "Begin" : "End";
+                    const char* allowed_side = is_begin ? "source" : "target";
+                    const char* value_origin =
+                        is_begin ? "caller graph input" : "graph output";
+                    return std::string(
+                               "connectGraphPorts endpoint direction "
+                               "violation: dynamic port '")
+                           + port_id + "' on " + component_label + " node '"
+                           + node_id + "' is " + allowed_side
+                           + "-only (the port pair's value source is the "
+                           + value_origin + " side)";
+                }
+                return std::nullopt;
+            }
+            return std::nullopt;
+        }
+
         /// The two engaged-only channels of an input data port, decided by
         /// the connected state. Unconnected: the default-value channel —
         /// when the node's settings carry a key matching the port id, the
@@ -2097,6 +2157,36 @@ namespace Contract
                 if (NodeExists(document, conn.from_node_id)
                     && NodeExists(document, conn.to_node_id))
                 {
+                    // 方向门先于类别推导：错向端点（图内边指向 begin 动态
+                    // 口/从 end 动态口发出）静默废掉图级输入，必须显性拒绝。
+                    if (const auto source_violation =
+                            BoundaryDynamicPortDirectionViolation(
+                                document,
+                                conn.from_node_id,
+                                conn.from_port_id,
+                                /*endpoint_is_source=*/true);
+                        source_violation.has_value())
+                    {
+                        return {
+                            ChangeErrorKind::InvalidOp,
+                            *source_violation,
+                            {},
+                            std::nullopt};
+                    }
+                    if (const auto target_violation =
+                            BoundaryDynamicPortDirectionViolation(
+                                document,
+                                conn.to_node_id,
+                                conn.to_port_id,
+                                /*endpoint_is_source=*/false);
+                        target_violation.has_value())
+                    {
+                        return {
+                            ChangeErrorKind::InvalidOp,
+                            *target_violation,
+                            {},
+                            std::nullopt};
+                    }
                     const auto source_category = ResolveEndpointPortCategory(
                         document,
                         action_catalog,
