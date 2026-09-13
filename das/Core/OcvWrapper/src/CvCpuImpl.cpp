@@ -735,12 +735,11 @@ DasResult CvCpuImpl::ConvertColor(
     }
 
     // Create a new CpuImageImpl with the target format
-    auto* p_result = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
+    auto p_result = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
         std::move(dst_mat),
         target_format);
     DAS::DasOutPtr<ExportInterface::IDasImage> result(pp_out_image);
-    result.Set(p_result);
-    p_result->Release();
+    result.Set(p_result.Get());
     result.Keep();
     return DAS_S_OK;
 }
@@ -820,12 +819,11 @@ DasResult CvCpuImpl::ColorFilter(
     }
 
     // Create a new CpuImageImpl for the mask (GRAY format, single channel)
-    auto* p_result = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
+    auto p_result = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
         std::move(mask_mat),
         ExportInterface::DAS_PIXEL_FORMAT_GRAY);
     DAS::DasOutPtr<ExportInterface::IDasImage> result(pp_out_mask);
-    result.Set(p_result);
-    p_result->Release();
+    result.Set(p_result.Get());
     result.Keep();
     return DAS_S_OK;
 }

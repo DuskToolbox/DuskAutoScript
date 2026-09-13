@@ -150,12 +150,11 @@ namespace Das::Core::Debug::Test
                 1);
             templ.copyTo(image(cv::Rect{10, 10, 8, 8}));
 
-            auto* raw =
-                OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
-                    MakeFromCpuMat(
-                        image,
-                        Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            return Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(raw);
+            return OcvWrapper::CpuImageImpl<
+                OcvWrapper::Storage::OwningStorage>::
+                MakeFromCpuMat(
+                    image,
+                    Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
         }
 
         auto MakePatternTemplate()
@@ -168,12 +167,11 @@ namespace Das::Core::Debug::Test
                 cv::Point{7, 7},
                 cv::Scalar{200, 120, 60},
                 1);
-            auto* raw =
-                OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
-                    MakeFromCpuMat(
-                        templ,
-                        Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            return Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(raw);
+            return OcvWrapper::CpuImageImpl<
+                OcvWrapper::Storage::OwningStorage>::
+                MakeFromCpuMat(
+                    templ,
+                    Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
         }
 
         auto MakeOcrImage() -> Das::DasPtr<Das::ExportInterface::IDasImage>
@@ -184,12 +182,11 @@ namespace Das::Core::Debug::Test
                 cv::Rect{4, 4, 16, 8},
                 cv::Scalar{220, 220, 220},
                 cv::FILLED);
-            auto* raw =
-                OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
-                    MakeFromCpuMat(
-                        image,
-                        Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            return Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(raw);
+            return OcvWrapper::CpuImageImpl<
+                OcvWrapper::Storage::OwningStorage>::
+                MakeFromCpuMat(
+                    image,
+                    Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
         }
 
         class FakeTensorBuffer final

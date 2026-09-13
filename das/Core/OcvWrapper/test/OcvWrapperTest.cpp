@@ -53,7 +53,7 @@ namespace Das
                 int                                       w,
                 DAS::ExportInterface::DasImagePixelFormat fmt =
                     DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR)
-                -> CpuImageImpl<Storage::OwningStorage>*
+                -> DAS::DasPtr<CpuImageImpl<Storage::OwningStorage>>
             {
                 return CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
                     MakeTestImage(h, w, 128, 64, 32),
@@ -66,7 +66,7 @@ namespace Das
 
         TEST(ImageBackendTest, CpuImageImpl_QI_Returns_IImageBackend)
         {
-            auto* img = MakeTestCpuImage(64, 64);
+            auto img = MakeTestCpuImage(64, 64);
             EXPECT_NE(img->GetCpuMat().data, nullptr);
 
             void* p_backend = nullptr;
@@ -76,12 +76,11 @@ namespace Das
             EXPECT_EQ(result, DAS_S_OK);
             EXPECT_NE(p_backend, nullptr);
             static_cast<IImageBackend*>(p_backend)->Release();
-            img->Release();
         }
 
         TEST(ImageBackendTest, CpuImageImpl_QI_Returns_IDasImage)
         {
-            auto* img = MakeTestCpuImage(64, 64);
+            auto  img = MakeTestCpuImage(64, 64);
             void* p_image = nullptr;
             auto  result = img->QueryInterface(
                 DasIidOf<DAS::ExportInterface::IDasImage>(),
@@ -89,30 +88,27 @@ namespace Das
             EXPECT_EQ(result, DAS_S_OK);
             EXPECT_NE(p_image, nullptr);
             static_cast<DAS::ExportInterface::IDasImage*>(p_image)->Release();
-            img->Release();
         }
 
         // ==================== GetPixelFormat ====================
 
         TEST(PixelFormatTest, BGR_default)
         {
-            auto* img = MakeTestCpuImage(32, 32);
+            auto img = MakeTestCpuImage(32, 32);
             DAS::ExportInterface::DasImagePixelFormat fmt{};
             ASSERT_EQ(img->GetPixelFormat(&fmt), DAS_S_OK);
             EXPECT_EQ(fmt, DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            img->Release();
         }
 
         TEST(PixelFormatTest, RGBA_explicit)
         {
-            auto* img = MakeTestCpuImage(
+            auto img = MakeTestCpuImage(
                 32,
                 32,
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_RGBA);
             DAS::ExportInterface::DasImagePixelFormat fmt{};
             ASSERT_EQ(img->GetPixelFormat(&fmt), DAS_S_OK);
             EXPECT_EQ(fmt, DAS::ExportInterface::DAS_PIXEL_FORMAT_RGBA);
-            img->Release();
         }
 
         // ==================== ConvertColor Routing ====================
@@ -135,69 +131,65 @@ namespace Das
 
         TEST_F(ConvertColorTest, known_pair_BGR_to_RGB_ok)
         {
-            auto* src = MakeTestCpuImage(
+            auto src = MakeTestCpuImage(
                 32,
                 32,
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR);
             DAS::ExportInterface::IDasImage* out = nullptr;
             auto                             result = impl_->ConvertColor(
-                src,
+                src.Get(),
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_RGB,
                 &out);
             EXPECT_EQ(result, DAS_S_OK);
             EXPECT_NE(out, nullptr);
             out->Release();
-            src->Release();
         }
 
         TEST_F(ConvertColorTest, known_pair_BGR_to_GRAY_ok)
         {
-            auto* src = MakeTestCpuImage(
+            auto src = MakeTestCpuImage(
                 32,
                 32,
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR);
             DAS::ExportInterface::IDasImage* out = nullptr;
             auto                             result = impl_->ConvertColor(
-                src,
+                src.Get(),
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_GRAY,
                 &out);
             EXPECT_EQ(result, DAS_S_OK);
             EXPECT_NE(out, nullptr);
             out->Release();
-            src->Release();
         }
 
         TEST_F(ConvertColorTest, same_format_returns_invalid_argument)
         {
-            auto* src = MakeTestCpuImage(
+            auto src = MakeTestCpuImage(
                 32,
                 32,
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR);
             DAS::ExportInterface::IDasImage* out = nullptr;
             auto                             result = impl_->ConvertColor(
-                src,
+                src.Get(),
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR,
                 &out);
             EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
             EXPECT_EQ(out, nullptr);
-            src->Release();
         }
 
         TEST_F(ConvertColorTest, unsupported_pair_returns_invalid_argument)
         {
             // HSV→GRAY is not in the routing table
-            auto* src = MakeTestCpuImage(
+            auto src = MakeTestCpuImage(
                 32,
                 32,
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_HSV);
             DAS::ExportInterface::IDasImage* out = nullptr;
             auto                             result = impl_->ConvertColor(
-                src,
+                src.Get(),
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_GRAY,
                 &out);
             EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
             EXPECT_EQ(out, nullptr);
-            src->Release();
         }
 
         // ==================== ColorFilter Mask ====================
@@ -220,7 +212,7 @@ namespace Das
 
         TEST_F(ColorFilterTest, output_is_single_channel)
         {
-            auto* src = MakeTestCpuImage(
+            auto src = MakeTestCpuImage(
                 32,
                 32,
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR);
@@ -228,7 +220,7 @@ namespace Das
                 {0, 0, 0, 0},
                 {255, 255, 255, 255}};
             DAS::ExportInterface::IDasImage* out = nullptr;
-            auto result = impl_->ColorFilter(src, &range, &out);
+            auto result = impl_->ColorFilter(src.Get(), &range, &out);
             EXPECT_EQ(result, DAS_S_OK);
             EXPECT_NE(out, nullptr);
 
@@ -236,7 +228,6 @@ namespace Das
             out->GetChannelCount(&channels);
             EXPECT_EQ(channels, 1);
             out->Release();
-            src->Release();
         }
 
         TEST_F(ColorFilterTest, null_source_returns_invalid_pointer)
@@ -266,31 +257,29 @@ namespace Das
 
         TEST_F(TemplateMatchAllTest, template_larger_than_source_returns_error)
         {
-            auto* src = MakeTestCpuImage(32, 32);
-            auto* tmpl = MakeTestCpuImage(64, 64);
+            auto src = MakeTestCpuImage(32, 32);
+            auto tmpl = MakeTestCpuImage(64, 64);
             DAS::ExportInterface::IDasTemplateMatchResults* results = nullptr;
             auto result = impl_->TemplateMatchAll(
-                src,
-                tmpl,
+                src.Get(),
+                tmpl.Get(),
                 DAS::ExportInterface::DAS_TEMPLATE_MATCH_TYPE_CCOEFF_NORMED,
                 0.5f,
                 1,
                 &results);
             EXPECT_EQ(result, DAS_E_INVALID_SIZE);
             EXPECT_EQ(results, nullptr);
-            src->Release();
-            tmpl->Release();
         }
 
         TEST_F(TemplateMatchAllTest, max_count_zero_unlimited)
         {
             // 8×8 template over 16×16 image → 9×9=81 candidates
-            auto* src = MakeTestCpuImage(16, 16);
-            auto* tmpl = MakeTestCpuImage(8, 8);
+            auto src = MakeTestCpuImage(16, 16);
+            auto tmpl = MakeTestCpuImage(8, 8);
             DAS::ExportInterface::IDasTemplateMatchResults* results = nullptr;
             auto result = impl_->TemplateMatchAll(
-                src,
-                tmpl,
+                src.Get(),
+                tmpl.Get(),
                 DAS::ExportInterface::DAS_TEMPLATE_MATCH_TYPE_CCOEFF_NORMED,
                 0.0f,
                 0, // unlimited
@@ -300,19 +289,17 @@ namespace Das
             results->GetCount(&count);
             EXPECT_GT(count, 0);
             results->Release();
-            src->Release();
-            tmpl->Release();
         }
 
         TEST_F(TemplateMatchAllTest, threshold_filters_candidates)
         {
-            auto* src = MakeTestCpuImage(16, 16);
-            auto* tmpl = MakeTestCpuImage(8, 8);
+            auto src = MakeTestCpuImage(16, 16);
+            auto tmpl = MakeTestCpuImage(8, 8);
             DAS::ExportInterface::IDasTemplateMatchResults* results = nullptr;
             // High threshold should filter everything out
             auto result = impl_->TemplateMatchAll(
-                src,
-                tmpl,
+                src.Get(),
+                tmpl.Get(),
                 DAS::ExportInterface::DAS_TEMPLATE_MATCH_TYPE_CCOEFF_NORMED,
                 0.99f,
                 10,
@@ -325,18 +312,16 @@ namespace Das
             results->GetRawMatchCount(&raw);
             EXPECT_GE(raw, count);
             results->Release();
-            src->Release();
-            tmpl->Release();
         }
 
         TEST_F(TemplateMatchAllTest, max_count_truncates)
         {
-            auto* src = MakeTestCpuImage(16, 16);
-            auto* tmpl = MakeTestCpuImage(8, 8);
+            auto src = MakeTestCpuImage(16, 16);
+            auto tmpl = MakeTestCpuImage(8, 8);
             DAS::ExportInterface::IDasTemplateMatchResults* results = nullptr;
             auto result = impl_->TemplateMatchAll(
-                src,
-                tmpl,
+                src.Get(),
+                tmpl.Get(),
                 DAS::ExportInterface::DAS_TEMPLATE_MATCH_TYPE_CCOEFF_NORMED,
                 0.0f,
                 3, // only 3 results
@@ -346,18 +331,16 @@ namespace Das
             results->GetCount(&count);
             EXPECT_LE(count, 3);
             results->Release();
-            src->Release();
-            tmpl->Release();
         }
 
         TEST_F(TemplateMatchAllTest, GetAt_out_of_range)
         {
-            auto* src = MakeTestCpuImage(16, 16);
-            auto* tmpl = MakeTestCpuImage(8, 8);
+            auto src = MakeTestCpuImage(16, 16);
+            auto tmpl = MakeTestCpuImage(8, 8);
             DAS::ExportInterface::IDasTemplateMatchResults* results = nullptr;
             auto result = impl_->TemplateMatchAll(
-                src,
-                tmpl,
+                src.Get(),
+                tmpl.Get(),
                 DAS::ExportInterface::DAS_TEMPLATE_MATCH_TYPE_CCOEFF_NORMED,
                 0.0f,
                 5,
@@ -371,24 +354,20 @@ namespace Das
             EXPECT_EQ(get_result, DAS_E_OUT_OF_RANGE);
             EXPECT_EQ(match, nullptr);
             results->Release();
-            src->Release();
-            tmpl->Release();
         }
 
         TEST_F(TemplateMatchAllTest, null_out_pointer)
         {
-            auto* src = MakeTestCpuImage(16, 16);
-            auto* tmpl = MakeTestCpuImage(8, 8);
-            auto  result = impl_->TemplateMatchAll(
-                src,
-                tmpl,
+            auto src = MakeTestCpuImage(16, 16);
+            auto tmpl = MakeTestCpuImage(8, 8);
+            auto result = impl_->TemplateMatchAll(
+                src.Get(),
+                tmpl.Get(),
                 DAS::ExportInterface::DAS_TEMPLATE_MATCH_TYPE_CCOEFF_NORMED,
                 0.0f,
                 5,
                 nullptr);
             EXPECT_EQ(result, DAS_E_INVALID_POINTER);
-            src->Release();
-            tmpl->Release();
         }
 
         // ==================== IDasTemplateMatchResults ====================
@@ -409,7 +388,7 @@ namespace Das
 
         TEST(CrossDeviceTest, CpuImageImpl_has_cpu_mat)
         {
-            auto* img = MakeTestCpuImage(64, 64);
+            auto  img = MakeTestCpuImage(64, 64);
             void* p_backend = nullptr;
             ASSERT_EQ(
                 img->QueryInterface(DasIidOf<IImageBackend>(), &p_backend),
@@ -418,12 +397,11 @@ namespace Das
             EXPECT_TRUE(backend->HasCpuMat());
             EXPECT_FALSE(backend->HasGpuMat());
             backend->Release();
-            img->Release();
         }
 
         TEST(CrossDeviceTest, GetCpuMat_returns_valid_data)
         {
-            auto* img = MakeTestCpuImage(64, 64);
+            auto  img = MakeTestCpuImage(64, 64);
             void* p_backend = nullptr;
             ASSERT_EQ(
                 img->QueryInterface(DasIidOf<IImageBackend>(), &p_backend),
@@ -434,7 +412,6 @@ namespace Das
             EXPECT_EQ(mat.rows, 64);
             EXPECT_EQ(mat.cols, 64);
             backend->Release();
-            img->Release();
         }
 
         // ==================== Factory Migration Tests ====================
@@ -1470,10 +1447,9 @@ namespace Das
         TEST(CpuImageBinaryBufferTest, QI_Returns_IDasBinaryBuffer)
         {
             const cv::Mat mat = cv::Mat::zeros(10, 20, CV_8UC3);
-            auto* img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
+            auto img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
                 mat,
                 ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            const auto guard = DAS::DasPtr<IImageBackend>::Attach(img);
 
             void* ptr = nullptr;
             auto  result = img->QueryInterface(
@@ -1491,10 +1467,9 @@ namespace Das
         {
             cv::Mat mat = cv::Mat::zeros(10, 20, CV_8UC3);
             mat.at<cv::Vec3b>(5, 10) = cv::Vec3b(100, 150, 200);
-            auto* img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
+            auto img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
                 mat.clone(),
                 ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            const auto guard = DAS::DasPtr<IImageBackend>::Attach(img);
 
             DAS::DasPtr<ExportInterface::IDasBinaryBuffer> buffer_guard;
             auto result = img->GetBinaryBuffer(buffer_guard.Put());

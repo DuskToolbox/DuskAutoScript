@@ -315,13 +315,12 @@ public:
 
             const auto clipped_mat =
                 storage_.GetCpuMat()(DAS::Core::OcvWrapper::ToMat(rect));
-            auto* const p_result =
+            auto p_result =
                 CpuImageImpl<DAS::Core::OcvWrapper::Storage::OwningStorage>::
                     MakeFromCpuMat(clipped_mat.clone(), pixel_format_);
             DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(
                 pp_out_image);
-            result.Set(p_result);
-            p_result->Release();
+            result.Set(p_result.Get());
             result.Keep();
             return DAS_S_OK;
         }
@@ -424,14 +423,13 @@ public:
 
     // ---- Factory ----
 
-    static CpuImageImpl* MakeFromCpuMat(
+    static DAS::DasPtr<CpuImageImpl> MakeFromCpuMat(
         cv::Mat                              mat,
         ExportInterface::DasImagePixelFormat format =
             ExportInterface::DAS_PIXEL_FORMAT_BGR)
     {
-        auto* p = new CpuImageImpl{format, std::move(mat)};
-        p->AddRef();
-        return p;
+        return DAS::DasPtr<CpuImageImpl>(
+            new CpuImageImpl{format, std::move(mat)});
     }
 };
 

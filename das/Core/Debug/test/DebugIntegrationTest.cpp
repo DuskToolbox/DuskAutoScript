@@ -226,12 +226,10 @@ namespace Das::Core::Debug::Test
         {
             cv::Mat mat = cv::Mat::zeros(40, 60, CV_8UC3);
             mat.setTo(cv::Scalar{20, 40, 80});
-            auto* image =
+            auto image =
                 OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
                     MakeFromCpuMat(mat, ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            const DasPtr<ExportInterface::IDasImage> image_guard =
-                DasPtr<ExportInterface::IDasImage>::Attach(image);
-            return CaptureImageSnapshot(image);
+            return CaptureImageSnapshot(image.Get());
         }
 
         auto FindSourceRoot() -> std::filesystem::path
@@ -282,13 +280,16 @@ namespace Das::Core::Debug::Test
                 {
                     return DAS_E_INVALID_POINTER;
                 }
+                DAS::DasOutPtr<DAS::ExportInterface::IDasImage> out{
+                    pp_out_image};
 
                 cv::Mat mat = cv::Mat::zeros(32, 48, CV_8UC3);
                 mat.setTo(cv::Scalar{30, 60, 90});
-                auto* image = OcvWrapper::CpuImageImpl<
+                auto image = OcvWrapper::CpuImageImpl<
                     OcvWrapper::Storage::OwningStorage>::
                     MakeFromCpuMat(mat, ExportInterface::DAS_PIXEL_FORMAT_BGR);
-                *pp_out_image = image;
+                out.Set(image.Get());
+                out.Keep();
                 ++capture_count;
                 return DAS_S_OK;
             }

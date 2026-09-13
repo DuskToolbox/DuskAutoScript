@@ -245,11 +245,10 @@ DasResult CreateIDasImageFromEncodedData(
 
             DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(
                 pp_out_image);
-            auto* p_result = DAS::Core::OcvWrapper::CpuImageImpl<
+            auto p_result = DAS::Core::OcvWrapper::CpuImageImpl<
                 DAS::Core::OcvWrapper::Storage::OwningStorage>::
                 MakeFromCpuMat(std::move(normalized_mat), pixel_format);
-            result.Set(p_result);
-            p_result->Release();
+            result.Set(p_result.Get());
             result.Keep();
             return DAS_S_OK;
         }
@@ -340,11 +339,10 @@ DasResult CreateIDasImageFromDecodedData(
         auto owned_image = input_image.clone();
 
         DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(pp_out_image);
-        auto* p_result = DAS::Core::OcvWrapper::CpuImageImpl<
+        auto p_result = DAS::Core::OcvWrapper::CpuImageImpl<
             DAS::Core::OcvWrapper::Storage::OwningStorage>::
             MakeFromCpuMat(std::move(owned_image), expected_format.value());
-        result.Set(p_result);
-        p_result->Release();
+        result.Set(p_result.Get());
         result.Keep();
     }
     catch (const std::bad_alloc&)
@@ -554,13 +552,12 @@ DasResult DasPluginLoadImageFromResource(
         cv::Mat rgb_mat{};
         cv::cvtColor(mat, rgb_mat, cv::COLOR_BGR2RGB);
 
-        auto* p_result = DAS::Core::OcvWrapper::CpuImageImpl<
+        auto p_result = DAS::Core::OcvWrapper::CpuImageImpl<
             DAS::Core::OcvWrapper::Storage::OwningStorage>::
             MakeFromCpuMat(
                 std::move(rgb_mat),
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_RGB);
-        result.Set(p_result);
-        p_result->Release();
+        result.Set(p_result.Get());
         result.Keep();
         return DAS_S_OK;
     }

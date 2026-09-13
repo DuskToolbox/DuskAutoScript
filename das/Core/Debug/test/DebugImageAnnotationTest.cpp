@@ -76,12 +76,9 @@ namespace Das::Core::Debug::Test
             -> Das::DasPtr<Das::ExportInterface::IDasImage>
         {
             const cv::Mat mat = cv::Mat::zeros(height, width, CV_8UC3);
-            auto*         image =
-                OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
-                    MakeFromCpuMat(
-                        mat,
-                        Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            return Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(image);
+            return OcvWrapper::CpuImageImpl<
+                OcvWrapper::Storage::OwningStorage>::
+                MakeFromCpuMat(mat, Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
         }
 
         void ExpectBgrPixel(

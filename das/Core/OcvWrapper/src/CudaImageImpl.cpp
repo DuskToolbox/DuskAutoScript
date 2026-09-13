@@ -120,14 +120,12 @@ DasResult CudaImageImpl::Clip(
             return DAS_E_INVALID_SIZE;
         }
 
-        const auto  clipped_mat = cpu_mat(DAS::Core::OcvWrapper::ToMat(rect));
-        auto* const p_result =
-            CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
-                clipped_mat.clone(),
-                pixel_format_);
+        const auto clipped_mat = cpu_mat(DAS::Core::OcvWrapper::ToMat(rect));
+        auto p_result = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
+            clipped_mat.clone(),
+            pixel_format_);
         DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(pp_out_image);
-        result.Set(p_result);
-        p_result->Release();
+        result.Set(p_result.Get());
         result.Keep();
         return DAS_S_OK;
     }

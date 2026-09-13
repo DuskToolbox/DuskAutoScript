@@ -144,23 +144,21 @@ namespace Das::Core::Debug::Test
                 cv::Rect{10, 8, 12, 10},
                 cv::Scalar{210, 180, 80},
                 cv::FILLED);
-            auto* raw =
-                OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
-                    MakeFromCpuMat(
-                        image,
-                        Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            return Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(raw);
+            return OcvWrapper::CpuImageImpl<
+                OcvWrapper::Storage::OwningStorage>::
+                MakeFromCpuMat(
+                    image,
+                    Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
         }
 
         auto MakeTemplate() -> Das::DasPtr<Das::ExportInterface::IDasImage>
         {
             const cv::Mat templ(10, 12, CV_8UC3, cv::Scalar{210, 180, 80});
-            auto*         raw =
-                OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
-                    MakeFromCpuMat(
-                        templ,
-                        Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            return Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(raw);
+            return OcvWrapper::CpuImageImpl<
+                OcvWrapper::Storage::OwningStorage>::
+                MakeFromCpuMat(
+                    templ,
+                    Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
         }
 
         class FakeCapture final
@@ -192,9 +190,10 @@ namespace Das::Core::Debug::Test
                 {
                     return DAS_E_INVALID_POINTER;
                 }
-                auto image = MakeImage();
-                *pp_out_image = image.Get();
-                (*pp_out_image)->AddRef();
+                DAS::DasOutPtr<Das::ExportInterface::IDasImage> out{
+                    pp_out_image};
+                out.Set(MakeImage().Get());
+                out.Keep();
                 return DAS_S_OK;
             }
         };

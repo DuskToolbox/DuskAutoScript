@@ -93,11 +93,10 @@ namespace Das::Core::Debug::Test
         {
             cv::Mat mat = cv::Mat::zeros(32, 48, CV_8UC3);
             mat.setTo(cv::Scalar{32, 64, 128});
-            auto* image =
+            auto image =
                 OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
                     MakeFromCpuMat(mat, ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            const DasPtr<ExportInterface::IDasImage> image_guard(image);
-            return CaptureImageSnapshot(image);
+            return CaptureImageSnapshot(image.Get());
         }
 
         void InitializeEnabledRuntime(const std::filesystem::path& dir)
