@@ -1,6 +1,7 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 #include <das/Core/GraphRuntime/FormSequenceProjector.h>
+#include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/DasJsonCore.h>
@@ -1786,15 +1787,26 @@ Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
             }
         };
 
+        // begin 的输出口导出排除（D-14）：begin 的同名 out 口是图内值边
+        // 源，导出会造成入参回显污染出参面——输出侧跳过 begin 节点；end
+        // 不排除（其口就是出参面）。输入侧推导零改动。
+        const bool node_is_begin = node.target.target_kind == "componentRef"
+                                   && node.target.component_ref.has_value()
+                                   && node.target.component_ref->component_guid
+                                          == GRAPH_BEGIN_COMPONENT_GUID;
+
         if (surface.has_value())
         {
             for (const auto& port : surface->inputs)
             {
                 add_boundary_input(port);
             }
-            for (const auto& port : surface->outputs)
+            if (!node_is_begin)
             {
-                add_boundary_output(port);
+                for (const auto& port : surface->outputs)
+                {
+                    add_boundary_output(port);
+                }
             }
         }
     }

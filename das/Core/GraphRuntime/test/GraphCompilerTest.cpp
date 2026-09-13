@@ -711,6 +711,57 @@ TEST(PortTypeCompatibilityTest, NumericEquivalenceMatrix)
 }
 
 // ---------------------------------------------------------------------
+// 全类型词汇矩阵（D-20）：image/base/component 三词同词等价（族内仅自
+// 身）、与既有九词及彼此跨族一律拒、未知词维持 permissive+warning——
+// begin/end 签名类型域=全部类型的 Core 侧判定面。
+// ---------------------------------------------------------------------
+TEST(PortTypeCompatibilityTest, FullTypeVocabularyMatrix)
+{
+    struct MatrixEntry
+    {
+        const char* source_type;
+        const char* target_type;
+        bool        expected_compatible;
+    };
+    const MatrixEntry matrix[] = {
+        // 同词等价
+        {"image", "image", true},
+        {"base", "base", true},
+        {"component", "component", true},
+        // 三词与标量词跨族互拒
+        {"image", "string", false},
+        {"string", "image", false},
+        {"int", "image", false},
+        {"image", "int", false},
+        {"image", "bool", false},
+        {"base", "int", false},
+        {"int", "base", false},
+        {"base", "bool", false},
+        {"component", "string", false},
+        // 三词彼此互拒（QI 互认与身份互通已按 UI 侧规则删除）
+        {"base", "component", false},
+        {"component", "base", false},
+        {"image", "base", false},
+        {"base", "image", false},
+        {"image", "component", false},
+        {"component", "image", false},
+        // 未知词维持 permissive（UnknownPortType warning 路径不借道）
+        {"custom_word", "int", true},
+        {"int", "custom_word", true}};
+
+    for (const auto& entry : matrix)
+    {
+        SCOPED_TRACE(
+            std::string(entry.source_type) + " -> " + entry.target_type);
+        EXPECT_EQ(
+            GraphCompiler::IsTypeCompatible(
+                entry.source_type,
+                entry.target_type),
+            entry.expected_compatible);
+    }
+}
+
+// ---------------------------------------------------------------------
 // 边校验间接测矩阵方向性：整数→浮点连线零诊断；浮点→整数连线
 // TypeMismatch（expected=目标声明类型，actual=源类型）。
 // ---------------------------------------------------------------------
@@ -2346,6 +2397,35 @@ TEST(BoundaryPortDerivationTest, BeginOutPortsExcludedFromBoundaryOutputs)
     }
     EXPECT_TRUE(begin_input_found);
     EXPECT_TRUE(work_input_found);
+}
+
+// 防误伤对称断言：end 的输出口照常导出——排除规则只作用于 begin 节点
+// GUID，end 的口就是子图出参面。
+TEST(BoundaryPortDerivationTest, EndOutPortsStillExported)
+{
+    std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces;
+    surfaces[std::string(BOUNDARY_END_COMPONENT_GUID)] = {
+        {{"值", "int"}},
+        {{"值", "int"}, {"右值", "string"}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("n_end", std::string(BOUNDARY_END_COMPONENT_GUID)));
+
+    auto boundary = compiler.DeriveBoundaryPorts(doc);
+
+    ASSERT_EQ(boundary.outputs.size(), 2u);
+    EXPECT_EQ(boundary.outputs[0].port_id, "值");
+    EXPECT_EQ(boundary.outputs[1].port_id, "右值");
+    EXPECT_EQ(boundary.outputs[0].node_ids[0], "n_end");
 }
 
 // ===================================================================
