@@ -76,10 +76,6 @@ namespace
     // 范式注册）。
     constexpr std::string_view SCHEDULER_SERVICE_NAME = "das.scheduler";
 
-    // broadcast 绑定哨兵源（与 GraphCompiler/GraphRuntime 的同名常量同
-    // 值）：source 为该哨兵的绑定是边界输入的运行时通道。
-    constexpr std::string_view GRAPH_INPUT_BROADCAST_SOURCE = "$graph_input";
-
     // execution 编译请求体（与 RepositoryInvoke 编译链的请求一致）。
     constexpr std::string_view EXECUTION_COMPILE_REQUEST =
         R"({"purpose":"execution"})";
@@ -92,17 +88,19 @@ namespace
         return outcome;
     }
 
-    // 调用节点边界输入转发：父图连到调用节点边界输入口的值（本组件 input
-    // portmap 键 = 边界口名）覆盖子执行快照内同名 broadcast 绑定
-    // （source=$graph_input 哨兵）的默认值，值按端口类型序列化。改写后经
-    // ComputeCompiledPlanFingerprint 重算并重建外壳指纹——完整性门防的是
-    // 编译后被篡改，调用期参数注入是合法生产路径，重算即自洽。未命中任何
-    // broadcast 的键容错跳过（父图可能连了非边界口）。
-    void ForwardBoundaryInputsIntoChildSnapshot(
-        ExportInterface::IDasReadOnlyPortMap*           parent_inputs,
-        RepositoryInvokeDto::ChildExecutionSnapshotDto& snapshot)
+    // 边界输出投影（子图→父图半，D-21① 单通道）：按子执行快照编译产物
+    // 的 boundaryPorts.outputs 清单把 child_output 的类型化口逐口直写父组
+    // 件输出（口名=边界口 id，父图数据边直连）——清单是编译期声明的合法
+    // 边界口集，保留口（status/outputs/result 等）天然不在其内。快照
+    // execution_input 无 {fingerprint, plan} 外壳（maapi/envelope 形态子组
+    // 件）时零投影——与 JSON 桥时代行为等同（业务中立）。
+    void ProjectChildTypedBoundaryOutputs(
+        const RepositoryInvokeDto::ChildExecutionSnapshotDto& snapshot,
+        ExportInterface::IDasReadOnlyPortMap*                 child_output,
+        ExportInterface::IDasPortMap*                         output_map)
     {
-        if (parent_inputs == nullptr || snapshot.execution_input.is_null())
+        if (child_output == nullptr || output_map == nullptr
+            || snapshot.execution_input.is_null())
         {
             return;
         }
@@ -112,166 +110,46 @@ namespace
         {
             return;
         }
-        // 可变文档的嵌套取值返回临时视图（mutable_value_base 的引用变
-        // 体）——按值拷贝会退化成 owned 深拷贝，就地改写必须经 auto&& 保
-        // 持视图身份，改写才传播回文档。
-        auto&& plan_value = (*shell_object)[std::string_view("plan")];
-        auto   plan_object = plan_value.as_object();
+        auto plan_object =
+            (*shell_object)[std::string_view("plan")].as_object();
         if (!plan_object.has_value()
-            || !plan_object->contains(std::string_view("bindingPlan")))
+            || !plan_object->contains(std::string_view("boundaryPorts")))
         {
             return;
         }
-        auto&& binding_plan_value =
-            (*plan_object)[std::string_view("bindingPlan")];
-        auto binding_plan_object = binding_plan_value.as_object();
-        if (!binding_plan_object.has_value()
-            || !binding_plan_object->contains(std::string_view("bindings")))
+        auto boundary_ports =
+            (*plan_object)[std::string_view("boundaryPorts")].as_object();
+        if (!boundary_ports.has_value()
+            || !boundary_ports->contains(std::string_view("outputs")))
         {
             return;
         }
-        // 数组改写通道必须经 object 槽位临时取 as_array——对命名视图直接
-        // as_array 得到的是拷贝语义数组，元素改写不回传文档。
-        auto bindings_array =
-            (*binding_plan_object)[std::string_view("bindings")].as_array();
-        if (!bindings_array.has_value())
+        auto outputs_array =
+            (*boundary_ports)[std::string_view("outputs")].as_array();
+        if (!outputs_array.has_value())
         {
             return;
         }
-
-        DasPtr<ExportInterface::IDasStringVector> parent_keys;
-        if (DAS::IsFailed(parent_inputs->GetKeys(parent_keys.Put()))
-            || !parent_keys)
+        for (const auto& output_entry : *outputs_array)
         {
-            return;
-        }
-        uint64_t key_count = 0;
-        if (DAS::IsFailed(parent_keys->Size(&key_count)))
-        {
-            return;
-        }
-
-        using DasVariantType = Das::ExportInterface::DasVariantType;
-        using Das::ExportInterface::DAS_VARIANT_TYPE_BOOL;
-        using Das::ExportInterface::DAS_VARIANT_TYPE_FLOAT;
-        using Das::ExportInterface::DAS_VARIANT_TYPE_INT;
-        using Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
-
-        bool patched = false;
-        for (uint64_t key_index = 0; key_index < key_count; ++key_index)
-        {
-            IDasReadOnlyString* key_string = nullptr;
-            if (DAS::IsFailed(parent_keys->At(key_index, &key_string))
-                || key_string == nullptr)
+            auto output_object = output_entry.as_object();
+            if (!output_object.has_value())
             {
                 continue;
             }
-
-            // 按端口类型读值（PortMap 分型存储，跨型读取恒失败）。
-            std::optional<yyjson::value> parent_value;
-            DasVariantType               value_kind{};
-            if (DAS::IsOk(parent_inputs->GetType(key_string, &value_kind)))
-            {
-                switch (value_kind)
-                {
-                case DAS_VARIANT_TYPE_INT:
-                {
-                    int64_t value = 0;
-                    if (DAS::IsOk(parent_inputs->GetInt(key_string, &value)))
-                    {
-                        parent_value = yyjson::value(value);
-                    }
-                    break;
-                }
-                case DAS_VARIANT_TYPE_FLOAT:
-                {
-                    double value = 0;
-                    if (DAS::IsOk(parent_inputs->GetFloat(key_string, &value)))
-                    {
-                        parent_value = yyjson::value(value);
-                    }
-                    break;
-                }
-                case DAS_VARIANT_TYPE_BOOL:
-                {
-                    bool value = false;
-                    if (DAS::IsOk(parent_inputs->GetBool(key_string, &value)))
-                    {
-                        parent_value = yyjson::value(value);
-                    }
-                    break;
-                }
-                case DAS_VARIANT_TYPE_STRING:
-                {
-                    IDasReadOnlyString* value_string = nullptr;
-                    if (DAS::IsOk(
-                            parent_inputs->GetString(key_string, &value_string))
-                        && value_string != nullptr)
-                    {
-                        const char* value_utf8 = nullptr;
-                        value_string->GetUtf8(&value_utf8);
-                        if (value_utf8 != nullptr)
-                        {
-                            parent_value = Das::Utils::JsonString(value_utf8);
-                        }
-                        value_string->Release();
-                    }
-                    break;
-                }
-                default:
-                    // object/image/base 等类型不经 broadcast 默认值通道转发。
-                    break;
-                }
-            }
-
-            const char* key_utf8 = nullptr;
-            key_string->GetUtf8(&key_utf8);
-            const std::string port_name(key_utf8 != nullptr ? key_utf8 : "");
-            key_string->Release();
-
-            if (!parent_value.has_value() || port_name.empty())
+            const auto port_id =
+                (*output_object)[std::string_view("portId")].as_string();
+            if (!port_id.has_value() || port_id->empty())
             {
                 continue;
             }
-
-            for (auto&& binding_value : *bindings_array)
-            {
-                auto binding_object = binding_value.as_object();
-                if (!binding_object.has_value())
-                {
-                    continue;
-                }
-                const auto source_node =
-                    (*binding_object)[std::string_view("sourceNodeId")]
-                        .as_string()
-                        .value_or("");
-                const auto target_port =
-                    (*binding_object)[std::string_view("targetPortId")]
-                        .as_string()
-                        .value_or("");
-                if (source_node != GRAPH_INPUT_BROADCAST_SOURCE
-                    || target_port != port_name)
-                {
-                    continue;
-                }
-                (*binding_object)[std::string_view("defaultValue")] =
-                    Das::Utils::CloneJson(*parent_value);
-                patched = true;
-            }
-        }
-
-        if (patched)
-        {
-            const std::string recomputed_fingerprint =
-                Das::Core::GraphRuntime::ComputeCompiledPlanFingerprint(
-                    plan_value);
-            if (!recomputed_fingerprint.empty())
-            {
-                (*shell_object)[std::string_view("fingerprint")] =
-                    std::make_pair(
-                        std::string_view(recomputed_fingerprint),
-                        yyjson::copy_string);
-            }
+            // 缺键/不可转写类型静默跳过——子图未产出该边界值与 JSON 桥时
+            // 代的缺键口径同构。
+            Das::Utils::CopyPortMapEntry(
+                child_output,
+                *port_id,
+                output_map,
+                *port_id);
         }
     }
 
@@ -616,6 +494,7 @@ namespace
     // TaskComponentPorts.h）——本文件不再持有本地拷贝。
     using Das::Utils::BuildResultPortMap;
     using Das::Utils::CloneJson;
+    using Das::Utils::CopyPortMapEntry;
     using Das::Utils::CopyTypedPort;
     using Das::Utils::EmitSignal;
     using Das::Utils::GetPortBool;
@@ -1271,10 +1150,6 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
         return Plugins::DasFlowControl::DAS_E_FLOW_INVOKE_CHILD_CREATE_FAILED;
     }
 
-    // 边界输入转发（调用节点运行时值流的父图→子图半）：父图传入值覆盖
-    // 子图 broadcast 默认值，外壳指纹随补丁重算。
-    ForwardBoundaryInputsIntoChildSnapshot(p_input_port_map, snapshot);
-
     // Build child input PortMap from snapshot execution_input
     DAS::DasPtr<ExportInterface::IDasPortMap> child_input;
     DasResult hr = CreateIDasPortMap(child_input.Put());
@@ -1293,6 +1168,47 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
                 child_input.Get(),
                 "executionInput",
                 *input_serialized);
+        }
+    }
+
+    // 边界输入类型化直塞（调用节点值流的父图→子图半，D-21② 单通道）：
+    // 父图 input map 全部条目原键拷贝进子输入（键=边界口稳定 id）——
+    // child 侧经 GraphRuntime 直传覆盖层物化，plan 根本不被改动（完整性
+    // 门自洽，无 patch 无指纹重算）。executionInput 是本段刚写的装配串
+    // 口，跳过防覆盖。
+    if (p_input_port_map != nullptr)
+    {
+        DasPtr<ExportInterface::IDasStringVector> parent_keys;
+        if (DAS::IsOk(p_input_port_map->GetKeys(parent_keys.Put()))
+            && parent_keys)
+        {
+            uint64_t parent_key_count = 0;
+            if (DAS::IsOk(parent_keys->Size(&parent_key_count)))
+            {
+                for (uint64_t key_index = 0; key_index < parent_key_count;
+                     ++key_index)
+                {
+                    IDasReadOnlyString* key_string = nullptr;
+                    if (DAS::IsOk(parent_keys->At(key_index, &key_string))
+                        && key_string != nullptr)
+                    {
+                        const char* key_utf8 = nullptr;
+                        key_string->GetUtf8(&key_utf8);
+                        const std::string port_name(
+                            key_utf8 != nullptr ? key_utf8 : "");
+                        key_string->Release();
+                        if (port_name.empty() || port_name == "executionInput")
+                        {
+                            continue;
+                        }
+                        CopyPortMapEntry(
+                            p_input_port_map,
+                            port_name,
+                            child_input.Get(),
+                            port_name);
+                    }
+                }
+            }
         }
     }
 
@@ -1343,36 +1259,13 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     SetPortString(output_map.Get(), "childStatus", child_status);
     SetPortJson(output_map.Get(), "childOutputs", *child_outputs_json);
 
-    // 边界输出投影（子图→父图半）：GraphTask 形态子组件把执行结果 JSON
-    // 放在 result 口，其 graphOutputs 段（子图悬空输出口值）逐键投影到自
-    // 身输出 portmap（口名=边界口名，父图数据边直接可连）。段缺席零投影
-    // ——maapi 等其他形态子组件不受影响（业务中立）。
-    const std::string child_result_text =
-        GetPortString(child_output.Get(), "result", "");
-    if (!child_result_text.empty())
-    {
-        auto child_result =
-            Das::Utils::ParseYyjsonFromString(child_result_text);
-        if (child_result.has_value() && child_result->is_object())
-        {
-            auto child_result_object = child_result->as_object();
-            if (child_result_object.has_value()
-                && child_result_object->contains(
-                    std::string_view("graphOutputs")))
-            {
-                auto graph_outputs =
-                    (*child_result_object)[std::string_view("graphOutputs")]
-                        .as_object();
-                if (graph_outputs.has_value())
-                {
-                    for (const auto& [port_name, port_value] : *graph_outputs)
-                    {
-                        SetPortJson(output_map.Get(), port_name, port_value);
-                    }
-                }
-            }
-        }
-    }
+    // 边界输出投影（子图→父图半，D-21① 单通道）：child 的类型化边界口按
+    // 快照编译产物清单逐口直写自身输出（口名=边界口 id，父图数据边直
+    // 连；对象引用直达——JSON 桥的 graphOutputs 解析段已退役）。
+    ProjectChildTypedBoundaryOutputs(
+        snapshot,
+        child_output.Get(),
+        output_map.Get());
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();

@@ -1869,8 +1869,9 @@ TEST_F(E2EGraphFlowTest, RepositoryInvokeProjectsImageReferenceOntoParentEdge)
         snapshot.component_guid = TYPED_ECHO_CHILD_GUID;
         snapshot.execution_input =
             BuildCompiledPlanShell(yyjson::object(child_plan));
-        const auto serialized =
-            Das::Utils::SerializeYyjsonValue(snapshot.execution_input);
+        // compiledSnapshot 口契约=完整快照 DTO 的序列化（非裸 shell）。
+        const auto serialized = Das::Utils::SerializeYyjsonValue(
+            Das::Utils::CloneYyjsonValue(yyjson::object(snapshot)));
         ASSERT_TRUE(serialized.has_value());
         snapshot_json = *serialized;
     }
