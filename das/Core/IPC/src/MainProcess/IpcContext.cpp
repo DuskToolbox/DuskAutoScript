@@ -1299,14 +1299,15 @@ namespace Core
                         stdexec::schedule(schedule_on_business_thread(*this)),
                         [this, iid]()
                         {
-                            IDasBase* obj = nullptr;
-                            auto      hr =
-                                ResolveMainProcessInterfaceImpl(iid, &obj);
-                            // DasPtr(obj) AddRefs; when the pair is
-                            // destructed it Releases, leaving the caller's
-                            // AddRef from LookupObject intact.
+                            // Receive the LookupObject-owned reference
+                            // directly; the post-wait AddRef below then hands
+                            // the caller a second reference and this one is
+                            // Released when the pair dies.
+                            DasPtr<IDasBase> obj;
+                            const auto       hr =
+                                ResolveMainProcessInterfaceImpl(iid, obj.Put());
                             return stdexec::just(
-                                std::make_pair(hr, DasPtr<IDasBase>(obj)));
+                                std::make_pair(hr, std::move(obj)));
                         }));
 
                 if (!result.has_value())
@@ -1503,12 +1504,15 @@ namespace Core
                         stdexec::schedule(schedule_on_business_thread(*this)),
                         [this, name_str]() mutable
                         {
-                            IDasBase* obj = nullptr;
-                            auto hr = ResolveMainProcessInterfaceByNameImpl(
-                                name_str,
-                                &obj);
+                            // Receive the lookup-owned reference directly;
+                            // mirrors ResolveMainProcessInterface above.
+                            DasPtr<IDasBase> obj;
+                            const auto       hr =
+                                ResolveMainProcessInterfaceByNameImpl(
+                                    name_str,
+                                    obj.Put());
                             return stdexec::just(
-                                std::make_pair(hr, DasPtr<IDasBase>(obj)));
+                                std::make_pair(hr, std::move(obj)));
                         }));
 
                 if (!result.has_value())

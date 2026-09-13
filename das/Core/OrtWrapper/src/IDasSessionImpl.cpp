@@ -2,6 +2,7 @@
 #include "IDasTensorImpl.h"
 
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
@@ -177,19 +178,19 @@ DasResult IDasSessionImpl::Run(
         auto outputs = io_binding.GetOutputValues();
 
         // Wrap outputs into IDasTensorVector
-        auto* result_vector = new IDasTensorVectorImpl{};
-        result_vector->AddRef();
+        auto result_vector = IDasTensorVectorImpl::MakeImpl();
         result_vector->Reserve(outputs.size());
 
         for (auto& output : outputs)
         {
-            auto* tensor_impl = new IDasTensorImpl(std::move(output));
-            tensor_impl->AddRef();
-            result_vector->AddTensor(tensor_impl);
-            tensor_impl->Release();
+            auto tensor_impl = IDasTensorImpl::Make(std::move(output));
+            result_vector->AddTensor(tensor_impl.Get());
         }
 
-        *pp_outputs = result_vector;
+        // AddRef for the caller's reference; the local DasPtr releases its
+        // own on scope exit. Error paths destroy the local DasPtr instead.
+        *pp_outputs = result_vector.Get();
+        (*pp_outputs)->AddRef();
         return DAS_S_OK;
     }
     catch (const Ort::Exception& e)

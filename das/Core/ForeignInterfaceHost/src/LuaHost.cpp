@@ -389,13 +389,13 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         return tl::make_unexpected(DAS_E_FAIL);
     }
 
-    // Call AddRef since we're taking ownership via DasPtr
-    base_ptr->AddRef();
-
     DAS_CORE_LOG_INFO(
         "[LuaRuntime::LoadPlugin] Successfully loaded Lua plugin: {}",
         plugin_name);
 
+    // The DasPtr constructor takes the C++-side reference; the Lua-side
+    // birth reference stays with the userdata and is Released by the sol2
+    // garbage_collect hook.
     return DasPtr<IDasBase>(base_ptr);
 }
 

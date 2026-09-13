@@ -561,26 +561,19 @@ static DasResult RunSession(
     DAS::ExportInterface::IDasTensorVector** pp_outputs)
 {
     // Build input names vector
-    auto input_names = new IDasReadOnlyStringVectorImpl(input_name_strs);
-    input_names->AddRef();
-    const DAS::DasPtr<DAS::ExportInterface::IDasReadOnlyStringVector>
-        input_names_ptr(input_names);
+    const auto input_names =
+        IDasReadOnlyStringVectorImpl::Make(input_name_strs);
 
-    // Build inputs vector
-    auto inputs = new IDasTensorVectorImpl();
-    inputs->AddRef();
+    // AddTensor lives on the impl type, so keep the concrete DasPtr
+    const auto inputs = IDasTensorVectorImpl::MakeImpl();
     inputs->AddTensor(input_tensor);
-    const DAS::DasPtr<DAS::ExportInterface::IDasTensorVector> inputs_ptr(
-        inputs);
 
     // Build output names vector
-    auto output_names = new IDasReadOnlyStringVectorImpl(output_name_strs);
-    output_names->AddRef();
-    const DAS::DasPtr<DAS::ExportInterface::IDasReadOnlyStringVector>
-        output_names_ptr(output_names);
+    const auto output_names =
+        IDasReadOnlyStringVectorImpl::Make(output_name_strs);
 
-    auto result = session->Run(input_names, inputs, output_names, pp_outputs);
-    return result;
+    return session
+        ->Run(input_names.Get(), inputs.Get(), output_names.Get(), pp_outputs);
 }
 
 // ===== Helper: run recognition on a single text crop =====
@@ -1211,8 +1204,7 @@ DasResult PaddleOcrImpl::Recognize(
         }
 
         // ====== Recognition phase ======
-        auto* result_vector = new IDasOcrResultVectorImpl{};
-        result_vector->AddRef();
+        auto result_vector = IDasOcrResultVectorImpl::MakeImpl();
         result_vector->Reserve(detected_boxes.size());
 
         for (auto& det_box : detected_boxes)
@@ -1368,18 +1360,20 @@ DasResult PaddleOcrImpl::Recognize(
             line_box.width = det_box.rect.width;
             line_box.height = det_box.rect.height;
 
-            auto* ocr_result = new IDasOcrResultImpl(
+            auto ocr_result = IDasOcrResultImpl::Make(
                 std::move(ctc_result.text),
                 line_box,
                 ctc_result.score,
                 std::move(char_boxes),
                 std::move(ctc_result.char_scores));
-            ocr_result->AddRef();
-            result_vector->AddResult(ocr_result);
-            ocr_result->Release();
+            result_vector->AddResult(ocr_result.Get());
         }
 
-        *pp_results = result_vector;
+        // Transfer to caller: AddRef for the caller's reference; the local
+        // DasPtr releases its own on scope exit. Error paths (including
+        // exceptions) destroy the local DasPtr and free everything.
+        *pp_results = result_vector.Get();
+        (*pp_results)->AddRef();
         return DAS_S_OK;
     }
     catch (const Ort::Exception& e)
