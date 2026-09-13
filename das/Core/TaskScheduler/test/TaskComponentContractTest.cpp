@@ -566,7 +566,13 @@ namespace
         std::string                          last_environment_json;
         std::string                          last_settings_json;
         std::string                          last_input_json;
-        std::string                          result_json = R"json({
+        // 直传观测：Do 收到的非 executionInput 整型键（invokeRepository
+        // 类型化直塞的到达面）。
+        std::map<std::string, int64_t> last_typed_int_inputs;
+        // 类型化出口面（模拟 GraphTask 形态子组件的 typed outputs）：
+        // Do 把这些键作为 int 口写进输出 map。
+        std::map<std::string, int64_t> typed_int_outputs;
+        std::string                    result_json = R"json({
             "status": "completed",
             "outputs": {"value": 5},
             "diagnostics": [],
@@ -675,6 +681,46 @@ namespace
                 state_->last_input_json = Das::Utils::GetPortString(
                     p_input_port_map,
                     "executionInput");
+                // 直传观测：非 executionInput 的 int 键逐一记录（类型化直
+                // 塞的到达断言面）。
+                state_->last_typed_int_inputs.clear();
+                DAS::DasPtr<Das::ExportInterface::IDasStringVector> keys;
+                if (DAS::IsOk(p_input_port_map->GetKeys(keys.Put())) && keys)
+                {
+                    uint64_t key_count = 0;
+                    if (DAS::IsOk(keys->Size(&key_count)))
+                    {
+                        for (uint64_t key_index = 0; key_index < key_count;
+                             ++key_index)
+                        {
+                            IDasReadOnlyString* key_string = nullptr;
+                            if (DAS::IsOk(keys->At(key_index, &key_string))
+                                && key_string != nullptr)
+                            {
+                                const char* key_utf8 = nullptr;
+                                key_string->GetUtf8(&key_utf8);
+                                const std::string port_name(
+                                    key_utf8 != nullptr ? key_utf8 : "");
+                                key_string->Release();
+                                if (port_name.empty()
+                                    || port_name == "executionInput")
+                                {
+                                    continue;
+                                }
+                                int64_t                 value = 0;
+                                const DasReadOnlyString port_key{
+                                    port_name.c_str()};
+                                if (DAS::IsOk(p_input_port_map->GetInt(
+                                        port_key.Get(),
+                                        &value)))
+                                {
+                                    state_->last_typed_int_inputs[port_name] =
+                                        value;
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             if (DAS::IsFailed(state_->do_result))
@@ -732,6 +778,13 @@ namespace
                     output_map.Get(),
                     "result",
                     state_->result_port_json);
+            }
+
+            // 类型化出口面（GraphTask 形态的 typed outputs 模拟）。
+            for (const auto& [port_name, port_value] :
+                 state_->typed_int_outputs)
+            {
+                Das::Utils::SetPortInt(output_map.Get(), port_name, port_value);
             }
 
             *pp_out_port_map = output_map.Get();
@@ -2386,7 +2439,8 @@ namespace
 {
     // 携带边界 broadcast 绑定的子执行快照：executionInput 是
     // {fingerprint, plan} 外壳，plan 内 p1 口的 $graph_input 绑定声明默认
-    // 9（父图传入值 77 时应被覆盖）。
+    // 9（直传优先级：调用入参 > 口默认 > 组件默认）；boundaryPorts.outputs
+    // 携带 p2 出口清单（父投影的正向枚举面）。
     ChildExecutionSnapshotDto MakeBoundaryChildSnapshot()
     {
         Das::Core::GraphRuntime::Dto::CompiledGraphPlanDto child_plan;
@@ -2411,6 +2465,12 @@ namespace
         child_plan.binding_plan.bindings.push_back(
             std::move(boundary_broadcast));
 
+        Das::Core::GraphRuntime::Dto::BoundaryPortDto boundary_output;
+        boundary_output.port_id = "p2";
+        boundary_output.port_type = "int";
+        boundary_output.node_ids = {"n_1"};
+        child_plan.boundary_ports.outputs.push_back(std::move(boundary_output));
+
         ChildExecutionSnapshotDto snapshot;
         snapshot.version = 1;
         snapshot.source_entry_id = 42;
@@ -2422,10 +2482,11 @@ namespace
     }
 } // namespace
 
-// 父图连到调用节点边界输入口的值（input portmap 键 = 边界口名）覆盖子执行
-// 快照内 broadcast 绑定的 default_value；改写后外壳指纹重算——子侧 Execute
-// 的完整性门仍通过（重算指纹 == 外壳指纹）；无 broadcast 命中的额外键容
-// 错跳过（不进子输入）。
+// 父图连到调用节点边界输入口的值（input portmap 键 = 边界口 id）以类型
+// 化条目直塞子输入（D-21②：ForwardBoundaryInputs 的 patch 通道整体退役，
+// plan 根本不被改动——executionInput 逐字节原样、defaultValue 仍是声明默
+// 认 9、外壳指纹零重算；完整性门从「patch 后重算自洽」升级为「plan 零改
+// 动」）；无 broadcast 命中的额外键容错跳过（不进子输入的 typed 面）。
 TEST_F(
     TaskComponentContractTest,
     RepositoryInvokeForwardsBoundaryInputsIntoChildBroadcastDefaults)
@@ -2433,6 +2494,11 @@ TEST_F(
     auto state = std::make_shared<RecordingChildState>();
     auto host = RecordingChildComponentHost::Make(state);
     auto component = MakeInvokeRepositoryComponent(host.Get());
+
+    const ChildExecutionSnapshotDto snapshot = MakeBoundaryChildSnapshot();
+    const auto                      original_shell =
+        Das::Utils::SerializeYyjsonValue(snapshot.execution_input);
+    ASSERT_TRUE(original_shell.has_value());
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
@@ -2449,6 +2515,14 @@ TEST_F(
         DAS_S_OK);
     EXPECT_EQ(state->do_call_count, 1);
 
+    // 直传到达：p1=77 以类型化条目出现在子输入（调用入参直传 > 口默认
+    // > 组件默认的第一级）；未命中键不进 typed 面。
+    ASSERT_EQ(state->last_typed_int_inputs.size(), 1u);
+    EXPECT_EQ(state->last_typed_int_inputs.at("p1"), 77);
+
+    // plan 零改动：executionInput 原文逐字节相等、哨兵 defaultValue 仍
+    // 是声明默认 9（patch 退役实证）、指纹即原始构造值（零重算）。
+    EXPECT_EQ(state->last_input_json, *original_shell);
     auto received = ParseJson(state->last_input_json);
     auto shell_obj = received.as_object();
     ASSERT_TRUE(shell_obj.has_value());
@@ -2466,27 +2540,24 @@ TEST_F(
     ASSERT_TRUE(first_binding.has_value());
     EXPECT_EQ(
         (*first_binding)[std::string_view("defaultValue")].as_int().value_or(0),
-        77);
-
-    // 外壳指纹随补丁重算：与改写后的 plan 子树指纹一致（子侧完整性门
-    // 通过）；与原始默认值版本的指纹不同（证明确实重算）。
-    const auto recomputed =
+        9);
+    const auto original_fingerprint =
         Das::Core::GraphRuntime::ComputeCompiledPlanFingerprint(plan_value);
-    ASSERT_FALSE(recomputed.empty());
+    ASSERT_FALSE(original_fingerprint.empty());
     EXPECT_EQ(
         (*shell_obj)[std::string_view("fingerprint")].as_string().value_or(""),
-        std::string_view(recomputed));
+        std::string_view(original_fingerprint));
 }
 
-// 子图 graphOutputs 回投：GraphTask 形态子组件的 result 口携带
-// {graphOutputs:{p2:...}} 时，逐键投影到调用节点自身输出 portmap（口名
-// =边界口名）；result 段无 graphOutputs 时零投影（业务中立）。
+// 子图边界输出投影（D-21① 单通道）：child 的类型化边界口按快照编译产物
+// 的 boundaryPorts.outputs 清单逐口直写调用节点输出（口名=边界口 id，
+// 父图数据边直连）；result 串口的 graphOutputs JSON 解析段已退役。
 TEST_F(
     TaskComponentContractTest,
     RepositoryInvokeProjectsChildGraphOutputsOntoOutputPorts)
 {
     auto state = std::make_shared<RecordingChildState>();
-    state->result_port_json = R"json({"graphOutputs":{"p2":5}})json";
+    state->typed_int_outputs = {{"p2", 5}};
     auto host = RecordingChildComponentHost::Make(state);
     auto component = MakeInvokeRepositoryComponent(host.Get());
 
@@ -2495,19 +2566,28 @@ TEST_F(
     Das::Utils::SetPortJson(
         input_map.Get(),
         "compiledSnapshot",
-        yyjson::object(MakeResolvedChildSnapshot()));
+        yyjson::object(MakeBoundaryChildSnapshot()));
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
         component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto projected_p2 = Das::Utils::GetPortJson(result_map.Get(), "p2");
-    ASSERT_TRUE(projected_p2.has_value());
-    EXPECT_EQ(projected_p2->as_int().value_or(0), 5);
+    // 清单口 p2 以类型化条目直写；status 照旧。
+    EXPECT_EQ(Das::Utils::GetPortInt(result_map.Get(), "p2"), 5);
     EXPECT_EQ(
         Das::Utils::GetPortString(result_map.Get(), "status"),
         "completed");
+    // 保留口不透传为边界口（child 的 result/outputs 载荷在清单之外，
+    // 聚合走 childOutputs 口——独立语义）。
+    bool                    has_result_key = true;
+    const DasReadOnlyString result_key{"result"};
+    ASSERT_EQ(result_map->Has(result_key.Get(), &has_result_key), DAS_S_OK);
+    EXPECT_FALSE(has_result_key);
+    bool                    has_outputs_key = true;
+    const DasReadOnlyString outputs_key{"outputs"};
+    ASSERT_EQ(result_map->Has(outputs_key.Get(), &has_outputs_key), DAS_S_OK);
+    EXPECT_FALSE(has_outputs_key);
 }
 
 TEST_F(
@@ -2515,9 +2595,9 @@ TEST_F(
     RepositoryInvokeWithoutGraphOutputsProjectsNoExtraPorts)
 {
     auto state = std::make_shared<RecordingChildState>();
-    // result 口在场但无 graphOutputs 段：零投影（maapi 形态子组件不受影
-    // 响——其 result/outputs 载荷不透传为端口）。
-    state->result_port_json = R"json({"something":"else"})json";
+    // child 有类型化口但快照无 {fingerprint, plan} 外壳（maapi/envelope
+    // 形态子组件）：零投影——行为与 JSON 桥时代等同（业务中立）。
+    state->typed_int_outputs = {{"something", 1}};
     auto host = RecordingChildComponentHost::Make(state);
     auto component = MakeInvokeRepositoryComponent(host.Get());
 
@@ -2533,9 +2613,11 @@ TEST_F(
         component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    EXPECT_FALSE(Das::Utils::GetPortJson(result_map.Get(), "p2").has_value());
-    EXPECT_FALSE(
-        Das::Utils::GetPortJson(result_map.Get(), "something").has_value());
+    bool                    has_something = true;
+    const DasReadOnlyString something_key{"something"};
+    ASSERT_EQ(result_map->Has(something_key.Get(), &has_something), DAS_S_OK);
+    EXPECT_FALSE(has_something);
+    EXPECT_NE(Das::Utils::GetPortInt(result_map.Get(), "something"), 1);
 }
 
 TEST_F(TaskComponentContractTest, TaskComponentDoesNotExposeDynamicComponent)
