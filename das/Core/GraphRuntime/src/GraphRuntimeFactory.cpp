@@ -191,14 +191,26 @@ DasResult GraphRuntimeImpl::ExecuteWithTypedIO(
     }
 
     // graph_inputs 的生命周期=本调用栈：进引擎前挂载、返回前摘除，旧
-    // Execute 路径恒见空（默认物化兜底不受染）。
+    // Execute 路径恒见空（默认物化兜底不受染）。RunWithHost 非全程
+    // noexcept（组件工厂调用、JSON 序列化均可抛），异常逃逸也要摘除——
+    // 否则悬挂指针驻留可复用实例，旧 Execute 路径的覆盖层查询会解引用
+    // 已释放的调用方对象。
     engine_.SetGraphInputs(p_graph_inputs);
-    const DasResult result = engine_.RunWithHost(
-        plan,
-        plan.source_fingerprint,
-        p_stop_token,
-        host_.Get(),
-        pp_out_outputs);
+    DasResult result = DAS_E_FAIL;
+    try
+    {
+        result = engine_.RunWithHost(
+            plan,
+            plan.source_fingerprint,
+            p_stop_token,
+            host_.Get(),
+            pp_out_outputs);
+    }
+    catch (...)
+    {
+        engine_.SetGraphInputs(nullptr);
+        throw;
+    }
     engine_.SetGraphInputs(nullptr);
 
     if (DAS::IsFailed(result))
