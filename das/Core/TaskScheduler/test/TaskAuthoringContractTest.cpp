@@ -1174,6 +1174,10 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
         {"moveGraphNodes",
          R"({"moves":[{"nodeId":"n-1","position":{"x":1.5,"y":2}}]})"},
         {"renameGraphNode", R"({"nodeId":"n_0","label":"我的延迟节点"})"},
+        {"addNodePort",
+         R"({"nodeId":"n_0","name":"左值","direction":"input","valueType":"int"})"},
+        {"removeNodePort", R"({"nodeId":"n_0","portId":"p_1"})"},
+        {"renameNodePort", R"({"nodeId":"n_0","portId":"p_1","name":"新名"})"},
         // uiEvent：Core 契约层只放行 kind，payload 语义由 MaaPI
         // ApplyUiEventChange 校验（Core 不解 ui.values 黑盒）。
         {"uiEvent",
@@ -1837,6 +1841,165 @@ TEST(TaskAuthoringContractTest, RenameGraphNodeChangePayloadStrict)
     EXPECT_EQ(r_non_object.error_kind, "missingField");
 }
 
+// addNodePort payload：{nodeId, name, direction, valueType}——键集锁死、
+// valueType 九词白名单（bool/int/int64/float/double/string/image/base/
+// component）、direction 二值 enum、name 非空且 UTF-8 ≤100 字节。方向
+// 语义=签名方向（input=子图入参长在 begin、output=子图出参长在 end），
+// 角色门（仅 begin/end 可持动态口）在 Core 分派层。
+TEST(TaskAuthoringContractTest, AddNodePortChangePayloadStrict)
+{
+    const auto make_change = [](std::string_view payload)
+    {
+        return ParseJson(
+            std::string{R"({"baseRevision":3,"kind":"addNodePort","payload":)"}
+            + std::string{payload} + "}");
+    };
+
+    auto r_ok = ValidateBatchAuthoringChange(make_change(
+        R"({"nodeId":"n_0","name":"左值","direction":"input","valueType":"int"})"));
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    // valueType 白名单外拒绝（含自由串与已退役的 json 词）。
+    for (const std::string_view bad_type :
+         {"json", "object", "signal", "任意词"})
+    {
+        auto r_bad_type = ValidateBatchAuthoringChange(make_change(
+            std::string{
+                R"({"nodeId":"n_0","name":"左值","direction":"input","valueType":")"}
+            + std::string{bad_type} + R"("})"));
+        EXPECT_FALSE(r_bad_type.valid) << bad_type;
+        EXPECT_EQ(r_bad_type.error_kind, "invalidPayload") << bad_type;
+    }
+
+    // direction enum 外拒绝。
+    auto r_bad_direction = ValidateBatchAuthoringChange(make_change(
+        R"({"nodeId":"n_0","name":"左值","direction":"both","valueType":"int"})"));
+    EXPECT_FALSE(r_bad_direction.valid);
+    EXPECT_EQ(r_bad_direction.error_kind, "invalidPayload");
+
+    // 缺 valueType / 非字符串 direction → missingField。
+    auto r_missing_type = ValidateBatchAuthoringChange(
+        make_change(R"({"nodeId":"n_0","name":"左值","direction":"input"})"));
+    EXPECT_FALSE(r_missing_type.valid);
+    EXPECT_EQ(r_missing_type.error_kind, "missingField");
+
+    auto r_non_string_direction = ValidateBatchAuthoringChange(make_change(
+        R"({"nodeId":"n_0","name":"左值","direction":7,"valueType":"int"})"));
+    EXPECT_FALSE(r_non_string_direction.valid);
+    EXPECT_EQ(r_non_string_direction.error_kind, "missingField");
+
+    // name 空 / 101 字节拒绝；恰 100 字节放行。
+    auto r_empty_name = ValidateBatchAuthoringChange(make_change(
+        R"({"nodeId":"n_0","name":"","direction":"input","valueType":"int"})"));
+    EXPECT_FALSE(r_empty_name.valid);
+    EXPECT_EQ(r_empty_name.error_kind, "invalidPayload");
+
+    const std::string name_over_limit(101, 'a');
+    auto              r_over_limit = ValidateBatchAuthoringChange(make_change(
+        std::string{R"({"nodeId":"n_0","name":")"} + name_over_limit
+        + R"(","direction":"input","valueType":"int"})"));
+    EXPECT_FALSE(r_over_limit.valid);
+    EXPECT_EQ(r_over_limit.error_kind, "invalidPayload");
+
+    const std::string name_at_limit(100, 'a');
+    auto              r_at_limit = ValidateBatchAuthoringChange(make_change(
+        std::string{R"({"nodeId":"n_0","name":")"} + name_at_limit
+        + R"(","direction":"input","valueType":"int"})"));
+    EXPECT_TRUE(r_at_limit.valid) << r_at_limit.message;
+
+    // nodeId 空/缺失/非字符串。
+    auto r_empty_node_id = ValidateBatchAuthoringChange(make_change(
+        R"({"nodeId":"","name":"左值","direction":"input","valueType":"int"})"));
+    EXPECT_FALSE(r_empty_node_id.valid);
+    EXPECT_EQ(r_empty_node_id.error_kind, "invalidNodeId");
+
+    auto r_missing_node_id = ValidateBatchAuthoringChange(make_change(
+        R"({"name":"左值","direction":"input","valueType":"int"})"));
+    EXPECT_FALSE(r_missing_node_id.valid);
+    EXPECT_EQ(r_missing_node_id.error_kind, "missingField");
+
+    auto r_non_string_node_id = ValidateBatchAuthoringChange(make_change(
+        R"({"nodeId":7,"name":"左值","direction":"input","valueType":"int"})"));
+    EXPECT_FALSE(r_non_string_node_id.valid);
+    EXPECT_EQ(r_non_string_node_id.error_kind, "missingField");
+
+    // 键集锁死。
+    auto r_extra_key = ValidateBatchAuthoringChange(make_change(
+        R"({"nodeId":"n_0","name":"左值","direction":"input","valueType":"int","extra":1})"));
+    EXPECT_FALSE(r_extra_key.valid);
+    EXPECT_EQ(r_extra_key.error_kind, "unknownField");
+}
+
+// removeNodePort payload：{nodeId, portId}——两键非空、键集锁死。
+TEST(TaskAuthoringContractTest, RemoveNodePortChangePayloadStrict)
+{
+    const auto make_change = [](std::string_view payload)
+    {
+        return ParseJson(
+            std::string{
+                R"({"baseRevision":0,"kind":"removeNodePort","payload":)"}
+            + std::string{payload} + "}");
+    };
+
+    auto r_ok = ValidateBatchAuthoringChange(
+        make_change(R"({"nodeId":"n_0","portId":"p_1"})"));
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    auto r_missing_port =
+        ValidateBatchAuthoringChange(make_change(R"({"nodeId":"n_0"})"));
+    EXPECT_FALSE(r_missing_port.valid);
+    EXPECT_EQ(r_missing_port.error_kind, "missingField");
+
+    auto r_empty_port = ValidateBatchAuthoringChange(
+        make_change(R"({"nodeId":"n_0","portId":""})"));
+    EXPECT_FALSE(r_empty_port.valid);
+    EXPECT_EQ(r_empty_port.error_kind, "invalidPayload");
+
+    auto r_extra_key = ValidateBatchAuthoringChange(
+        make_change(R"({"nodeId":"n_0","portId":"p_1","name":"多余"})"));
+    EXPECT_FALSE(r_extra_key.valid);
+    EXPECT_EQ(r_extra_key.error_kind, "unknownField");
+}
+
+// renameNodePort payload：{nodeId, portId, name}——name 规则与 addNodePort
+// 同源（非空、UTF-8 ≤100 字节；保留前缀的查禁在 Core 分派层）。
+TEST(TaskAuthoringContractTest, RenameNodePortChangePayloadStrict)
+{
+    const auto make_change = [](std::string_view payload)
+    {
+        return ParseJson(
+            std::string{
+                R"({"baseRevision":2,"kind":"renameNodePort","payload":)"}
+            + std::string{payload} + "}");
+    };
+
+    auto r_ok = ValidateBatchAuthoringChange(
+        make_change(R"({"nodeId":"n_0","portId":"p_1","name":"新名"})"));
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    auto r_missing_name = ValidateBatchAuthoringChange(
+        make_change(R"({"nodeId":"n_0","portId":"p_1"})"));
+    EXPECT_FALSE(r_missing_name.valid);
+    EXPECT_EQ(r_missing_name.error_kind, "missingField");
+
+    auto r_empty_name = ValidateBatchAuthoringChange(
+        make_change(R"({"nodeId":"n_0","portId":"p_1","name":""})"));
+    EXPECT_FALSE(r_empty_name.valid);
+    EXPECT_EQ(r_empty_name.error_kind, "invalidPayload");
+
+    const std::string name_over_limit(101, 'a');
+    auto              r_over_limit = ValidateBatchAuthoringChange(make_change(
+        std::string{R"({"nodeId":"n_0","portId":"p_1","name":")"}
+        + name_over_limit + R"("})"));
+    EXPECT_FALSE(r_over_limit.valid);
+    EXPECT_EQ(r_over_limit.error_kind, "invalidPayload");
+
+    auto r_extra_key = ValidateBatchAuthoringChange(make_change(
+        R"({"nodeId":"n_0","portId":"p_1","name":"新名","extra":1})"));
+    EXPECT_FALSE(r_extra_key.valid);
+    EXPECT_EQ(r_extra_key.error_kind, "unknownField");
+}
+
 // schema 契约与 C++ 白名单对账：AuthoringChangeKind enum 集合逐项一致
 // （缺项/多项都在此暴露，防 C++/schema/前端三方漂移）；MoveGraphNode
 // $def 锁死 {nodeId, position{x,y}} 键集与数值类型。
@@ -1884,7 +2047,10 @@ TEST(TaskAuthoringContractTest, SchemaJsonTracksChangeKindWhitelist)
         "moveGraphNode",
         "removeGraphNodes",
         "moveGraphNodes",
-        "renameGraphNode"};
+        "renameGraphNode",
+        "addNodePort",
+        "removeNodePort",
+        "renameNodePort"};
     EXPECT_EQ(schema_kinds, expected_kinds);
 
     auto move_def =
@@ -2279,6 +2445,199 @@ TEST(TaskAuthoringContractTest, SchemaJsonRenameGraphNodeLocked)
         }
     }
     EXPECT_TRUE(found_rename_branch);
+}
+
+// schema 三口 payload def + GraphNodePort.dynamic 对账：AddNodePort required
+// 四键 + valueType 九词 enum + name maxLength 100；RemoveNodePort/
+// RenameNodePort 键集锁死；GraphNodePort.dynamic 可选布尔；payload oneOf
+// 含三 $ref——与 C++ 校验器逐项一致（法则8 lockstep）。
+TEST(TaskAuthoringContractTest, SchemaJsonNodePortDefsLocked)
+{
+    const auto schema_path = ResolveSchemaJsonPath();
+    ASSERT_TRUE(schema_path.has_value())
+        << "TaskAuthoringHttpContract.schema.json not found above "
+        << std::filesystem::current_path();
+    const auto schema_text = ReadFileText(*schema_path);
+    ASSERT_TRUE(schema_text.has_value());
+
+    auto schema = ParseJson(*schema_text);
+    auto schema_object = schema.as_object();
+    ASSERT_TRUE(schema_object.has_value());
+    auto defs_value = (*schema_object)[std::string_view("$defs")];
+    auto defs_object = defs_value.as_object();
+    ASSERT_TRUE(defs_object.has_value());
+
+    const auto read_required_keys =
+        [&defs_object](
+            std::string_view       definition_name,
+            std::set<std::string>& required_keys_out)
+    {
+        auto definition =
+            (*defs_object)[std::string_view(definition_name)].as_object();
+        if (!definition.has_value())
+        {
+            return false;
+        }
+        required_keys_out.clear();
+        auto required_array =
+            (*definition)[std::string_view("required")].as_array();
+        if (!required_array.has_value())
+        {
+            return false;
+        }
+        for (const auto& item : *required_array)
+        {
+            auto text = item.as_string();
+            if (!text.has_value())
+            {
+                return false;
+            }
+            required_keys_out.insert(std::string(*text));
+        }
+        auto additional =
+            (*definition)[std::string_view("additionalProperties")].as_bool();
+        if (!additional.has_value() || *additional)
+        {
+            return false;
+        }
+        return true;
+    };
+
+    // AddNodePort：required 恰四键、additionalProperties:false。
+    std::set<std::string> add_required;
+    ASSERT_TRUE(read_required_keys("AddNodePort", add_required));
+    EXPECT_EQ(
+        add_required,
+        (std::set<std::string>{"nodeId", "name", "direction", "valueType"}));
+
+    auto add_definition =
+        (*defs_object)[std::string_view("AddNodePort")].as_object();
+    ASSERT_TRUE(add_definition.has_value());
+    auto add_properties =
+        (*add_definition)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(add_properties.has_value());
+
+    auto value_type_definition =
+        (*add_properties)[std::string_view("valueType")].as_object();
+    ASSERT_TRUE(value_type_definition.has_value());
+    auto value_type_enum =
+        (*value_type_definition)[std::string_view("enum")].as_array();
+    ASSERT_TRUE(value_type_enum.has_value());
+    std::set<std::string> value_type_words;
+    for (const auto& item : *value_type_enum)
+    {
+        auto text = item.as_string();
+        ASSERT_TRUE(text.has_value());
+        value_type_words.insert(std::string(*text));
+    }
+    EXPECT_EQ(
+        value_type_words,
+        (std::set<std::string>{
+            "bool",
+            "int",
+            "int64",
+            "float",
+            "double",
+            "string",
+            "image",
+            "base",
+            "component"}));
+
+    auto direction_definition =
+        (*add_properties)[std::string_view("direction")].as_object();
+    ASSERT_TRUE(direction_definition.has_value());
+    auto direction_enum =
+        (*direction_definition)[std::string_view("enum")].as_array();
+    ASSERT_TRUE(direction_enum.has_value());
+    EXPECT_EQ(direction_enum->size(), 2u);
+
+    auto name_definition =
+        (*add_properties)[std::string_view("name")].as_object();
+    ASSERT_TRUE(name_definition.has_value());
+    EXPECT_EQ(
+        (*name_definition)[std::string_view("maxLength")].as_sint().value(),
+        100);
+    EXPECT_EQ(
+        (*name_definition)[std::string_view("minLength")].as_sint().value(),
+        1);
+
+    // RemoveNodePort / RenameNodePort：键集锁死。
+    std::set<std::string> remove_required;
+    ASSERT_TRUE(read_required_keys("RemoveNodePort", remove_required));
+    EXPECT_EQ(remove_required, (std::set<std::string>{"nodeId", "portId"}));
+
+    std::set<std::string> rename_required;
+    ASSERT_TRUE(read_required_keys("RenameNodePort", rename_required));
+    EXPECT_EQ(
+        rename_required,
+        (std::set<std::string>{"nodeId", "portId", "name"}));
+
+    // GraphNodePort.dynamic：可选布尔键（engaged-only，不在 required）。
+    auto port_definition =
+        (*defs_object)[std::string_view("GraphNodePort")].as_object();
+    ASSERT_TRUE(port_definition.has_value());
+    auto port_properties =
+        (*port_definition)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(port_properties.has_value());
+    ASSERT_TRUE(port_properties->contains(std::string_view("dynamic")));
+    auto dynamic_definition =
+        (*port_properties)[std::string_view("dynamic")].as_object();
+    ASSERT_TRUE(dynamic_definition.has_value());
+    EXPECT_EQ(
+        (*dynamic_definition)[std::string_view("type")].as_string().value(),
+        "bool");
+
+    // payload oneOf 分支集含三个 $ref。
+    auto payload_definition =
+        (*defs_object)[std::string_view("AuthoringChangePayload")].as_object();
+    ASSERT_TRUE(payload_definition.has_value());
+    auto payload_branches =
+        (*payload_definition)[std::string_view("oneOf")].as_array();
+    ASSERT_TRUE(payload_branches.has_value());
+    std::set<std::string> wanted_refs{
+        "#/$defs/AddNodePort",
+        "#/$defs/RemoveNodePort",
+        "#/$defs/RenameNodePort"};
+    for (const auto& branch : *payload_branches)
+    {
+        auto branch_obj = branch.as_object();
+        if (!branch_obj || !branch_obj->contains(std::string_view("$ref")))
+        {
+            continue;
+        }
+        auto ref = (*branch_obj)[std::string_view("$ref")].as_string();
+        if (ref.has_value())
+        {
+            wanted_refs.erase(std::string(*ref));
+        }
+    }
+    EXPECT_TRUE(wanted_refs.empty());
+}
+
+// GraphNodePort 可选 dynamic 键：布尔真值放行（engaged-only——呈现层只在
+// 动态口上出该键）、非布尔值拒绝。
+TEST(TaskAuthoringContractTest, GraphNodePortDynamicKeyValidation)
+{
+    const auto make_document = [](std::string_view port_entry)
+    {
+        return ParseJson(
+            std::string{
+                R"({"contractVersion":1,"viewKind":"graph","revision":0,"graph":{"nodes":[{"id":"n","ports":[)"}
+            + std::string{port_entry} + R"(]}]}})");
+    };
+
+    auto with_dynamic = make_document(
+        R"({"portId":"p_1","displayLabel":"左值","portType":"int","direction":"output","category":"data","dynamic":true})");
+    auto r_dynamic =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(with_dynamic);
+    EXPECT_TRUE(r_dynamic.valid) << r_dynamic.message;
+
+    auto with_bad_dynamic = make_document(
+        R"({"portId":"p_1","displayLabel":"左值","portType":"int","direction":"output","category":"data","dynamic":"yes"})");
+    auto r_bad_dynamic =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(with_bad_dynamic);
+    EXPECT_FALSE(r_bad_dynamic.valid);
+    EXPECT_EQ(r_bad_dynamic.error_kind, "invalidPortDynamic");
 }
 
 // inputType 词表保持 0-8 官方词表：9（曾短暂用于仓库条目选择器）与 10

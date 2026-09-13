@@ -106,6 +106,11 @@ namespace Contract
     /// (backend-generated server re-projection — the UI never assembles the
     /// origin from the connections list itself). Empty = no incoming edge;
     /// the wire key is absent, never an explicit null.
+    /// `dynamic_port` marks a begin/end dynamic-port merge (D-16): engaged
+    /// only on projected dynamic ports so the UI can offer deletion/rename
+    /// where fixed manifest ports cannot. The wire key "dynamic" is
+    /// engaged-only the same way — absent on static ports, never an
+    /// explicit false.
     struct GraphNodePort
     {
         std::string                  port_id;
@@ -115,6 +120,7 @@ namespace Contract
         std::string                  category;
         std::optional<yyjson::value> value;
         std::string                  connected_from;
+        bool                         dynamic_port = false;
     };
 
     /// One canvas node in the public contract. componentGuid is sourced from
@@ -400,6 +406,16 @@ namespace Contract
         // shared item_or_node_id slot like moveGraphNode; the label is pure
         // presentation data and never participates in node addressing.
         std::optional<std::string> rename_label;
+
+        // addNodePort / removeNodePort / renameNodePort (begin/end dynamic
+        // port partition). The nodeId rides the shared item_or_node_id slot;
+        // remove/rename address the port by its stable partition id, add and
+        // rename carry the (new) port name, add additionally carries the
+        // signature direction and the nine-word value type.
+        std::optional<std::string> node_port_id;
+        std::optional<std::string> node_port_name;
+        std::optional<std::string> node_port_direction;
+        std::optional<std::string> node_port_value_type;
 
         // connectGraphPorts / disconnectGraphPorts
         std::optional<GraphConnection> connection;
