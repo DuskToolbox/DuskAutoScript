@@ -382,9 +382,7 @@ class CppImplementsGenerator:
         lines.append(f"{self.indent}template <typename... Args>")
         lines.append(f"{self.indent}static DasPtr<{raw_name}> Make(Args&&... args)")
         lines.append(f"{self.indent}{{")
-        lines.append(f"{self.indent}{self.indent}auto* p = new TImpl(std::forward<Args>(args)...);")
-        lines.append(f"{self.indent}{self.indent}p->AddRef();")
-        lines.append(f"{self.indent}{self.indent}return DasPtr<{raw_name}>::Attach(p);")
+        lines.append(f"{self.indent}{self.indent}return DasPtr<{raw_name}>(new TImpl(std::forward<Args>(args)...));")
         lines.append(f"{self.indent}}}")
         lines.append("")
 
@@ -399,6 +397,18 @@ class CppImplementsGenerator:
         lines.append(f"{self.indent}{self.indent}auto* p = new TImpl(std::forward<Args>(args)...);")
         lines.append(f"{self.indent}{self.indent}p->AddRef();")
         lines.append(f"{self.indent}{self.indent}return p;")
+        lines.append(f"{self.indent}}}")
+        lines.append("")
+
+        # MakeImpl 工厂方法 - 返回具体类型 DasPtr（需要调用 Impl 特有方法时使用）
+        lines.append(f"{self.indent}/// @brief Factory method returning the concrete impl wrapped in DasPtr")
+        lines.append(f"{self.indent}/// @tparam Args Constructor argument types")
+        lines.append(f"{self.indent}/// @param args Constructor arguments")
+        lines.append(f"{self.indent}/// @return DasPtr<TImpl> holding the new instance")
+        lines.append(f"{self.indent}template <typename... Args>")
+        lines.append(f"{self.indent}static DasPtr<TImpl> MakeImpl(Args&&... args)")
+        lines.append(f"{self.indent}{{")
+        lines.append(f"{self.indent}{self.indent}return DasPtr<TImpl>(new TImpl(std::forward<Args>(args)...));")
         lines.append(f"{self.indent}}}")
 
         lines.append("};")
