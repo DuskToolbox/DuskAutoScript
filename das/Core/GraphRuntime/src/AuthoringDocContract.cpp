@@ -473,6 +473,53 @@ namespace Contract
                    || component_guid == GRAPH_END_COMPONENT_GUID;
         }
 
+        /// 已绑仓库条目的调用节点判定（签名口物化通道的角色门判据，业务
+        /// 中立——不特判组件 guid，只认目录声明的 taskRepositoryRef 字段持
+        /// 正整数值）：这类节点的边界签名口（提取编排物化或手工重建）与
+        /// 运行期值通道共享口坐标，动态口分区是它们的可寻址载体。
+        bool NodeHoldsBoundRepositoryEntry(
+            const Dto::GraphNodeDto&            node,
+            const std::optional<ActionCatalog>& action_catalog)
+        {
+            const ActionCatalogEntry* entry =
+                FindCatalogEntry(action_catalog, ComponentGuidOf(node));
+            if (entry == nullptr)
+            {
+                return false;
+            }
+            std::vector<std::string_view> repository_field_names;
+            for (const auto& config_field : entry->config_fields)
+            {
+                if (config_field.type == std::string_view("taskRepositoryRef"))
+                {
+                    repository_field_names.push_back(config_field.name);
+                }
+            }
+            if (repository_field_names.empty())
+            {
+                return false;
+            }
+            auto settings_obj = node.settings.as_object();
+            if (!settings_obj.has_value())
+            {
+                return false;
+            }
+            for (const auto& field_name : repository_field_names)
+            {
+                if (!settings_obj->contains(std::string_view(field_name)))
+                {
+                    continue;
+                }
+                const auto& value =
+                    (*settings_obj)[std::string_view(field_name)];
+                if (value.is_int() && value.as_int().value_or(0) > 0)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         /// node 作用域稳定口 id 分配（照 AllocateStableNodeId 模式）：
         /// "p_" 前缀计数器 + 现有 id 扫描防撞，首口 p_1。口 id 是连线坐
         /// 标与后续 remove/rename 的寻址键，节点内必须唯一。
@@ -2600,33 +2647,46 @@ namespace Contract
                         {},
                         std::nullopt};
                 }
-                // 角色门 fail-closed：动态口分区仅 begin/end 可持。
+                // 角色门 fail-closed：动态口分区仅 begin/end 与已绑仓库条
+                // 目的调用节点（签名口物化通道）可持。
                 const std::string target_component_guid =
                     ComponentGuidOf(*target_node);
-                if (!IsBoundaryComponent(target_component_guid))
+                const bool target_is_boundary_component =
+                    IsBoundaryComponent(target_component_guid);
+                const bool target_is_bound_call_node =
+                    !target_is_boundary_component
+                    && NodeHoldsBoundRepositoryEntry(
+                        *target_node,
+                        action_catalog);
+                if (!target_is_boundary_component && !target_is_bound_call_node)
                 {
                     return {
                         ChangeErrorKind::InvalidOp,
-                        "addNodePort target must be a Begin or End node; "
-                        "dynamic ports are only supported on boundary "
-                        "components",
+                        "addNodePort target must be a Begin or End node or a "
+                        "repository-bound call node; dynamic ports are only "
+                        "supported on boundary components and bound call "
+                        "nodes",
                         {},
                         std::nullopt};
                 }
                 // 方向角色门：direction 是签名方向——begin 只收入参口、
-                // end 只收出参口。
-                const bool direction_mirrors_role =
-                    (*direction == std::string_view(PORT_DIRECTION_INPUT))
-                    == (target_component_guid
-                        == std::string_view(GRAPH_BEGIN_COMPONENT_GUID));
-                if (!direction_mirrors_role)
+                // end 只收出参口；调用节点物化口两侧皆可（入线口镜像子图
+                // begin 侧、出线口镜像 end 侧）。
+                if (target_is_boundary_component)
                 {
-                    return {
-                        ChangeErrorKind::InvalidOp,
-                        "addNodePort.direction mismatch: Begin accepts input "
-                        "ports, End accepts output ports",
-                        {},
-                        std::nullopt};
+                    const bool direction_mirrors_role =
+                        (*direction == std::string_view(PORT_DIRECTION_INPUT))
+                        == (target_component_guid
+                            == std::string_view(GRAPH_BEGIN_COMPONENT_GUID));
+                    if (!direction_mirrors_role)
+                    {
+                        return {
+                            ChangeErrorKind::InvalidOp,
+                            "addNodePort.direction mismatch: Begin accepts "
+                            "input ports, End accepts output ports",
+                            {},
+                            std::nullopt};
+                    }
                 }
                 if (const auto name_violation =
                         NodePortNameViolation(*change.node_port_name);
@@ -2650,6 +2710,57 @@ namespace Contract
                             {},
                             std::nullopt};
                     }
+                }
+                // 物化口稳定 id（仅调用节点通道）：id 是运行期值通道的键
+                // （子图边界口 id），input/output 两侧同 id 各走各通道——
+                // 唯一性按 (id, direction) 判定，异向同 id 合法共存。
+                if (change.node_port_id.has_value())
+                {
+                    if (!target_is_bound_call_node)
+                    {
+                        return {
+                            ChangeErrorKind::InvalidOp,
+                            "addNodePort.portId is only supported on "
+                            "repository-bound call nodes (stable "
+                            "materialization ids)",
+                            {},
+                            std::nullopt};
+                    }
+                    if (const auto id_violation =
+                            NodePortNameViolation(*change.node_port_id);
+                        id_violation.has_value())
+                    {
+                        return {
+                            ChangeErrorKind::InvalidOp,
+                            "addNodePort.portId " + *id_violation,
+                            {},
+                            std::nullopt};
+                    }
+                    for (const auto& existing_port : target_node->ports)
+                    {
+                        if (existing_port.id == *change.node_port_id
+                            && existing_port.direction == *direction)
+                        {
+                            return {
+                                ChangeErrorKind::InvalidOp,
+                                "addNodePort.portId duplicates an existing "
+                                "port id in the same direction: "
+                                    + *change.node_port_id,
+                                {},
+                                std::nullopt};
+                        }
+                    }
+                    target_node->ports.push_back(
+                        Dto::GraphNodePortDeclarationDto{
+                            *change.node_port_id,
+                            *change.node_port_name,
+                            *direction,
+                            *value_type});
+                    return {
+                        ChangeErrorKind::None,
+                        "",
+                        {},
+                        std::optional<std::string>{*change.node_port_id}};
                 }
                 const auto allocated_id = AllocateNodePortId(*target_node);
                 target_node->ports.push_back(

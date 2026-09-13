@@ -2714,7 +2714,7 @@ namespace
                 s.p,
                 std::string(
                     R"([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"int","direction":"output"}]},)")
-                    + R"({"actionId":"{ginvoke}","ports":[{"portId":"compiledSnapshot","portType":"object","direction":"input"},{"portId":"result","portType":"object","direction":"output"}],"config":[{"name":"repositoryRef","type":"taskRepositoryRef"}]})"),
+                    + R"({"actionId":"{ginvoke}","ports":[{"portId":"compiledSnapshot","portType":"object","direction":"input"},{"portId":"result","portType":"object","direction":"output"}],"config":[{"name":"repositoryRef","type":"taskRepositoryRef"}]}])"),
             DAS_S_OK);
 
         ApplyChangeExpectOk(s.p, "addGraphNode", R"({"actionId":"{g1}"})");

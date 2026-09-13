@@ -998,9 +998,12 @@ namespace
             }
             return true;
         }
-        // addNodePort payload: {nodeId, name, direction, valueType}. The
-        // nodeId rides the shared item_or_node_id slot; the port fields feed
-        // the begin/end dynamic port partition dispatch.
+        // addNodePort payload: {nodeId, name, direction, valueType, portId?}.
+        // The nodeId rides the shared item_or_node_id slot; the port fields
+        // feed the begin/end dynamic port partition dispatch. portId is the
+        // optional stable-id channel for call-node signature port
+        // materialization (the runtime value-plane key — the child graph's
+        // boundary port id), absent for the allocator-assigned p_N ids.
         if (out.kind == "addNodePort")
         {
             std::string node_id;
@@ -1008,6 +1011,12 @@ namespace
                 && !node_id.empty())
             {
                 out.item_or_node_id = std::move(node_id);
+            }
+            std::string port_id;
+            if (ReadStringField(*payload, std::string_view("portId"), port_id)
+                && !port_id.empty())
+            {
+                out.node_port_id = std::move(port_id);
             }
             std::string port_name;
             if (ReadStringField(*payload, std::string_view("name"), port_name)
@@ -1666,6 +1675,43 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
                                 definition.port_type = declared.value_type;
                                 surface.inputs.push_back(definition);
                                 surface.outputs.push_back(definition);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // 调用节点物化口（签名口物化通道）：按声明方向单侧
+                        // 展开——口坐标即子图边界口 id（运行期值通道的
+                        // 键），静态 manifest 面不携带它们。guid 维聚合与
+                        // begin/end 同构（同 guid 多节点的分区口并集）。
+                        for (const auto& node : p->document.nodes)
+                        {
+                            const bool node_matches_guid =
+                                node.target.component_ref.has_value()
+                                && node.target.component_ref->component_guid
+                                       == component_guid;
+                            if (!node_matches_guid || node.ports.empty())
+                            {
+                                continue;
+                            }
+                            for (const auto& declared : node.ports)
+                            {
+                                Das::Core::GraphRuntime::Dto::
+                                    GraphPortDefinitionDto definition;
+                                definition.port_id = declared.id;
+                                definition.display_label = declared.name;
+                                definition.port_type = declared.value_type;
+                                if (declared.direction
+                                    == std::string_view("input"))
+                                {
+                                    surface.inputs.push_back(
+                                        std::move(definition));
+                                }
+                                else
+                                {
+                                    surface.outputs.push_back(
+                                        std::move(definition));
+                                }
                             }
                         }
                     }
