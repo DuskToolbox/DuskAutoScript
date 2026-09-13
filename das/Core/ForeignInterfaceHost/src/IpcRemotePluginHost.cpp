@@ -114,9 +114,9 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
     }
 
     // Original path: create child process via HostLauncher
-    DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
-    auto result = ipc_context_.get().CreateHostLauncher(&raw_launcher);
-    if (DAS::IsFailed(result) || !raw_launcher)
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher;
+    auto result = ipc_context_.get().CreateHostLauncher(launcher.Put());
+    if (DAS::IsFailed(result) || !launcher)
     {
         if (DAS::IsOk(result))
         {
@@ -127,8 +127,6 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
             result);
         return tl::make_unexpected(result);
     }
-
-    const DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher(raw_launcher);
 
     uint16_t owner_session_id = 0;
     result = launcher->StartWithDesc(

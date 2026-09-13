@@ -819,14 +819,11 @@ namespace
         const std::string&                        plugin2_path,
         HostToHostCallDeployment&                 deployment)
     {
-        DAS::Core::IPC::IHostLauncher* raw_host_b = nullptr;
-        DasResult result = context.CreateHostLauncher(&raw_host_b);
-        if (DAS::IsFailed(result) || raw_host_b == nullptr)
+        DasResult result = context.CreateHostLauncher(deployment.host_b.Put());
+        if (DAS::IsFailed(result) || !deployment.host_b)
         {
             return DAS::IsFailed(result) ? result : DAS_E_FAIL;
         }
-        deployment.host_b =
-            DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(raw_host_b);
 
         result = deployment.host_b->Start(
             host_exe_path,
@@ -837,14 +834,11 @@ namespace
             return result;
         }
 
-        DAS::Core::IPC::IHostLauncher* raw_host_a = nullptr;
-        result = context.CreateHostLauncher(&raw_host_a);
-        if (DAS::IsFailed(result) || raw_host_a == nullptr)
+        result = context.CreateHostLauncher(deployment.host_a.Put());
+        if (DAS::IsFailed(result) || !deployment.host_a)
         {
             return DAS::IsFailed(result) ? result : DAS_E_FAIL;
         }
-        deployment.host_a =
-            DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(raw_host_a);
 
         result = deployment.host_a->Start(
             host_exe_path,
@@ -1996,10 +1990,8 @@ TEST_F(
     EXPECT_FALSE(launcher_->IsRunning());
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-    DAS::Core::IPC::IHostLauncher* raw_restart_launcher = nullptr;
-    ASSERT_EQ(ctx_->CreateHostLauncher(&raw_restart_launcher), DAS_S_OK);
-    const DAS::DasPtr<DAS::Core::IPC::IHostLauncher> restart_launcher(
-        raw_restart_launcher);
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> restart_launcher;
+    ASSERT_EQ(ctx_->CreateHostLauncher(restart_launcher.Put()), DAS_S_OK);
     ASSERT_NE(restart_launcher.Get(), nullptr);
     const ScopedHostStop restart_guard{restart_launcher};
 
@@ -3018,10 +3010,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     ScopedEchoSharedStateSegment echo_shared_state_segment;
 
     // 1. 创建并启动 Host B（目标进程）
-    DAS::Core::IPC::IHostLauncher* raw_host_b = nullptr;
-    DasResult result = ctx_->CreateHostLauncher(&raw_host_b);
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_b;
+    DasResult result = ctx_->CreateHostLauncher(host_b.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    const DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_b(raw_host_b);
 
     uint16_t session_b = 0;
     result = host_b->Start(
@@ -3032,10 +3023,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     EXPECT_GT(session_b, static_cast<uint16_t>(0));
 
     // 2. 创建并启动 Host A（调用方进程）
-    DAS::Core::IPC::IHostLauncher* raw_host_a = nullptr;
-    result = ctx_->CreateHostLauncher(&raw_host_a);
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_a;
+    result = ctx_->CreateHostLauncher(host_a.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    const DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_a(raw_host_a);
 
     uint16_t session_a = 0;
     result = host_a->Start(
@@ -3474,13 +3464,16 @@ TEST_F(IpcMultiProcessTestIntegration, StopAllStopsHostsInOnePass)
         {
             return result;
         }
-        out = DAS::DasPtr<DAS::Core::IPC::HostLauncher>(
-            dynamic_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher));
-        if (out.Get() == nullptr)
+        // StopAll 是 HostLauncher 的静态方法，测试需要具体类型；
+        // dynamic_cast 下行后 Attach 接管出厂引用
+        auto* concrete =
+            dynamic_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher);
+        if (concrete == nullptr)
         {
             raw_launcher->Release();
             return DAS_E_NO_INTERFACE;
         }
+        out = DAS::DasPtr<DAS::Core::IPC::HostLauncher>::Attach(concrete);
         return DAS_S_OK;
     };
 
@@ -4073,11 +4066,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
     // 4. 启动第二个 Host 进程
     DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher2;
     {
-        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
-        result = ctx_->CreateHostLauncher(&raw_launcher);
+        result = ctx_->CreateHostLauncher(launcher2.Put());
         ASSERT_EQ(result, DAS_S_OK);
-        ASSERT_NE(raw_launcher, nullptr);
-        launcher2 = DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(raw_launcher);
+        ASSERT_NE(launcher2.Get(), nullptr);
 
         uint16_t session_id2 = 0;
         result = launcher2->Start(
@@ -4138,11 +4129,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
     // 2. 启动第二个 Host 进程
     DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher2;
     {
-        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
-        result = ctx_->CreateHostLauncher(&raw_launcher);
+        result = ctx_->CreateHostLauncher(launcher2.Put());
         ASSERT_EQ(result, DAS_S_OK);
-        ASSERT_NE(raw_launcher, nullptr);
-        launcher2 = DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(raw_launcher);
+        ASSERT_NE(launcher2.Get(), nullptr);
 
         uint16_t session_id2 = 0;
         result = launcher2->Start(

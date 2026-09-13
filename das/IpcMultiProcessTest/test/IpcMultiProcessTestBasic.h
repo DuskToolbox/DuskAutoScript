@@ -72,23 +72,12 @@ protected:
 
     DasResult StartHostAndSetupRunLoop()
     {
-        // 创建 HostLauncher（通过工厂方法，确保 ipc_context_ 正确设置）
-        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
-        DasResult result = ctx_->CreateHostLauncher(&raw_launcher);
-        if (DAS::IsFailed(result) || !raw_launcher)
+        // 创建 HostLauncher（Put 直收 [out] 出厂引用）
+        DasResult result = ctx_->CreateHostLauncher(launcher_.Put());
+        if (DAS::IsFailed(result) || !launcher_)
         {
             return result;
         }
-        launcher_ = std::shared_ptr<DAS::Core::IPC::HostLauncher>(
-            static_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher),
-            [](DAS::Core::IPC::HostLauncher* p)
-            {
-                if (p)
-                {
-                    p->Stop();
-                    p->Release();
-                }
-            });
 
         uint16_t session_id = 0;
         result = launcher_->Start(
@@ -106,6 +95,6 @@ protected:
 protected:
     std::string                                           host_exe_path_;
     DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
-    std::shared_ptr<DAS::Core::IPC::HostLauncher>         launcher_;
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher>            launcher_;
     std::thread                                           run_thread_;
 };

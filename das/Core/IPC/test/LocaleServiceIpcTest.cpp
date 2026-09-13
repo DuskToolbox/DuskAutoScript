@@ -210,12 +210,10 @@ namespace
             ctx_ = MainProcess::CreateIpcContext(true);
             ASSERT_NE(ctx_, nullptr);
 
-            IHostLauncher* raw_launcher = nullptr;
-            const auto     launcher_result =
-                ctx_->CreateHostLauncher(&raw_launcher);
+            const auto launcher_result =
+                ctx_->CreateHostLauncher(launcher_.Put());
             ASSERT_EQ(launcher_result, DAS_S_OK);
-            ASSERT_NE(raw_launcher, nullptr);
-            launcher_ = DasPtr<IHostLauncher>(raw_launcher);
+            ASSERT_NE(launcher_.Get(), nullptr);
 
             run_thread_ = std::thread([this]() { ctx_->Run(); });
             for (int i = 0; i < 100 && !ctx_->GetIoContext().stopped(); ++i)

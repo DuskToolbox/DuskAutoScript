@@ -528,14 +528,12 @@ protected:
      */
     DAS::DasPtr<DAS::Core::IPC::IHostLauncher> StartSingleHost()
     {
-        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
-        DasResult result = ctx_->CreateHostLauncher(&raw_launcher);
-        if (DAS::IsFailed(result) || !raw_launcher)
+        DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher;
+        DasResult result = ctx_->CreateHostLauncher(launcher.Put());
+        if (DAS::IsFailed(result) || !launcher)
         {
             return nullptr;
         }
-
-        DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher(raw_launcher);
 
         uint16_t session_id = 0;
         result = launcher->Start(
@@ -1386,15 +1384,14 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
         }
 
         // 3. Create and start Host
-        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
-        DasResult result = ctx->CreateHostLauncher(&raw_launcher);
-        if (DAS::IsFailed(result) || !raw_launcher)
+        DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher;
+        DasResult result = ctx->CreateHostLauncher(launcher.Put());
+        if (DAS::IsFailed(result) || !launcher)
         {
             ctx->RequestStop();
             run_thread.join();
             continue;
         }
-        DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher(raw_launcher);
 
         uint16_t session_id = 0;
         result = launcher->Start(

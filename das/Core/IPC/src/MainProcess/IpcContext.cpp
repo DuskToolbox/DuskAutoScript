@@ -470,6 +470,9 @@ namespace Core
 
                 try
                 {
+                    // 构造即置空出参；[out] 契约要求出厂自带拥有引用
+                    DAS::DasOutPtr<IHostLauncher> out_launcher{pp_out_launcher};
+
                     // 注入 on_register 回调，IpcContext 自行调用
                     // InternalRegisterHostLauncher
                     auto launcher = DAS::DasPtr<HostLauncher>(new HostLauncher(
@@ -479,7 +482,8 @@ namespace Core
                         { return InternalRegisterHostLauncher(session_id); }));
 
                     launchers_[session_id] = launcher;
-                    *pp_out_launcher = launcher.Get();
+                    out_launcher.Set(launcher.Get());
+                    out_launcher.Keep();
                     return DAS_S_OK;
                 }
                 catch (const std::exception& e)

@@ -308,11 +308,14 @@ namespace
             {
                 return DAS_E_INVALID_ARGUMENT;
             }
+            DAS::DasOutPtr<DAS::Core::IPC::IHostLauncher> out_launcher{
+                pp_out_launcher};
             if (DAS::IsFailed(create_launcher_result))
             {
                 return create_launcher_result;
             }
-            *pp_out_launcher = launcher_.Get();
+            out_launcher.Set(launcher_.Get());
+            out_launcher.Keep();
             return DAS_S_OK;
         }
 

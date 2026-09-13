@@ -89,19 +89,15 @@ protected:
             throw std::runtime_error("Failed to create IpcContext");
         }
 
-        // 创建 HostLauncher
-        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
-        DasResult result = ctx_->CreateHostLauncher(&raw_launcher);
-        if (DAS::IsFailed(result) || !raw_launcher)
+        // 创建 HostLauncher（Put 直收 [out] 出厂引用）
+        DasResult result = ctx_->CreateHostLauncher(launcher_.Put());
+        if (DAS::IsFailed(result) || !launcher_)
         {
             throw std::runtime_error(
                 DAS_FMT_NS::format(
                     "Failed to create HostLauncher: {:#x}",
                     static_cast<uint32_t>(result)));
         }
-
-        // 使用 DasPtr 管理 HostLauncher 的生命周期
-        launcher_ = DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(raw_launcher);
 
         // 启动事件循环线程
         run_thread_ = std::thread([this]() { ctx_->Run(); });
