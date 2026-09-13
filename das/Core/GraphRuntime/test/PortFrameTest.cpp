@@ -1,7 +1,10 @@
 #include <das/Core/GraphRuntime/PortFrame.h>
 
+#include <das/_autogen/idl/abi/IDasImage.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.Implements.hpp>
 #include <gtest/gtest.h>
 
+#include <concepts>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -19,6 +22,95 @@ namespace
     PortKey Key(const std::string& node, const std::string& port)
     {
         return PortKey{node, port};
+    }
+
+    using Das::ExportInterface::IDasImage;
+
+    // 计数型 fake IDasImage：引用语义用例的测量仪——AddRef/Release 计数与
+    // 析构次数静态记账，据此断言帧槽位的引用配对（不泄漏、不双计）。
+    class CountingFakeImage final
+        : public Das::ExportInterface::DasImageImplBase<CountingFakeImage>
+    {
+    public:
+        static int add_ref_count;
+        static int release_count;
+        static int destroyed_count;
+
+        static void ResetCounters()
+        {
+            add_ref_count = 0;
+            release_count = 0;
+            destroyed_count = 0;
+        }
+
+        ~CountingFakeImage() { ++destroyed_count; }
+
+        uint32_t DAS_STD_CALL AddRef() override
+        {
+            ++add_ref_count;
+            return DasImageImplBase<CountingFakeImage>::AddRef();
+        }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            ++release_count;
+            return DasImageImplBase<CountingFakeImage>::Release();
+        }
+
+        DAS_IMPL GetSize(Das::ExportInterface::DasSize* p_out_size) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetChannelCount(int32_t* p_out_channel_count) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL Clip(
+            const Das::ExportInterface::DasRect* p_rect,
+            Das::ExportInterface::IDasImage**    p_out_image) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetDataSize(uint64_t* p_out_size) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetBinaryBuffer(
+            Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetPixelFormat(
+            Das::ExportInterface::DasImagePixelFormat* p_out_format) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+    };
+
+    int CountingFakeImage::add_ref_count = 0;
+    int CountingFakeImage::release_count = 0;
+    int CountingFakeImage::destroyed_count = 0;
+
+    template <typename SlotType>
+    constexpr bool HoldsImageReference()
+    {
+        return requires(const SlotType& data) {
+            {
+                data.ptr
+            } -> std::same_as<
+                const DAS::DasPtr<Das::ExportInterface::IDasImage>&>;
+        };
+    }
+
+    template <typename SlotType>
+    constexpr bool CarriesNoBytesMember()
+    {
+        return !requires(const SlotType& data) { data.bytes; };
     }
 } // namespace
 
@@ -111,6 +203,35 @@ TEST(PortFrameTest, ImageValue)
     EXPECT_EQ(v.AsImage()->bytes.size(), 4u);
     EXPECT_EQ(v.AsImage()->bytes[0], 0xFF);
     EXPECT_EQ(v.AsImage()->bytes[3], 0x40);
+}
+
+// ===========================================================================
+// PortValue — image slot reference form
+// ===========================================================================
+
+TEST(PortFrameTest, ImageSlot_HoldsReferenceNotBytes)
+{
+    // 引用形态约束：帧 image 槽位以 DasPtr<IDasImage> 持有图像对象引用
+    // （引用计数共享、零拷贝），不再以字节缓冲承载像素。探针经模板实例
+    // 化进入依赖语境——槽位仍是 bytes 时成员约束不满足、探针取值 false，
+    // 断言在此失败；引用形态就位后两个探针均为 true。
+    EXPECT_TRUE((HoldsImageReference<ImageData>()));
+    EXPECT_TRUE((CarriesNoBytesMember<ImageData>()));
+}
+
+TEST(PortFrameTest, PortValueTypeEnumValuesPinned)
+{
+    // 槽位形态改造不触碰判别面：十类枚举值序钉住，Image 仍为 7
+    EXPECT_EQ(static_cast<int>(PortValueType::Null), 0);
+    EXPECT_EQ(static_cast<int>(PortValueType::Int), 1);
+    EXPECT_EQ(static_cast<int>(PortValueType::Float), 2);
+    EXPECT_EQ(static_cast<int>(PortValueType::String), 3);
+    EXPECT_EQ(static_cast<int>(PortValueType::Bool), 4);
+    EXPECT_EQ(static_cast<int>(PortValueType::Base), 5);
+    EXPECT_EQ(static_cast<int>(PortValueType::Component), 6);
+    EXPECT_EQ(static_cast<int>(PortValueType::Image), 7);
+    EXPECT_EQ(static_cast<int>(PortValueType::Json), 8);
+    EXPECT_EQ(static_cast<int>(PortValueType::Signal), 9);
 }
 
 TEST(PortFrameTest, JsonValue)
