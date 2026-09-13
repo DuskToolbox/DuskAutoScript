@@ -3,8 +3,10 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/_autogen/idl/abi/IDasImage.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -60,6 +62,49 @@ namespace
         auto v = Das::Utils::ParseYyjsonFromString(json);
         return v ? std::move(*v) : yyjson::value{};
     }
+
+    using Das::ExportInterface::IDasImage;
+
+    // 计数型 fake IDasImage：image 搬运用例的对象身份锚点——同一实例的
+    // 指针身份贯穿 PortMap 与帧两侧，证明引用传递而非数据拷贝。
+    class CountingFakeImage final
+        : public Das::ExportInterface::DasImageImplBase<CountingFakeImage>
+    {
+    public:
+        DAS_IMPL GetSize(Das::ExportInterface::DasSize* p_out_size) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetChannelCount(int32_t* p_out_channel_count) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL Clip(
+            const Das::ExportInterface::DasRect* p_rect,
+            Das::ExportInterface::IDasImage**    p_out_image) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetDataSize(uint64_t* p_out_size) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetBinaryBuffer(
+            Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetPixelFormat(
+            Das::ExportInterface::DasImagePixelFormat* p_out_format) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+    };
 
 } // namespace
 
@@ -226,6 +271,42 @@ TEST(DoAdapterTest, BuildInputPortMap_BoolValue)
     const DasReadOnlyString key{"in"};
     ASSERT_EQ(map->GetBool(key.Get(), &val), DAS_S_OK);
     EXPECT_TRUE(val);
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_ImageValue)
+{
+    DAS::DasPtr<IDasImage> image = CountingFakeImage::Make();
+    PortFrame              frame;
+    frame.Set(SOURCE_NODE, "out", PortValue(ImageData{image}));
+
+    auto bindings = {MakeBinding(SOURCE_NODE, "out", "in")};
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+    DAS::DasPtr<IDasImage>  got;
+    const DasReadOnlyString key{"in"};
+    ASSERT_EQ(map->GetImage(key.Get(), got.Put()), DAS_S_OK);
+    EXPECT_EQ(got.Get(), image.Get());
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_NullImageSkipped)
+{
+    PortFrame frame;
+    frame.Set(
+        SOURCE_NODE,
+        "out",
+        PortValue(ImageData{DAS::DasPtr<IDasImage>{}}));
+
+    auto bindings = {MakeBinding(SOURCE_NODE, "out", "in")};
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+    const DasReadOnlyString key{"in"};
+    bool                    has{};
+    ASSERT_EQ(map->Has(key.Get(), &has), DAS_S_OK);
+    EXPECT_FALSE(has);
 }
 
 TEST(DoAdapterTest, BuildInputPortMap_SignalValue)
@@ -546,6 +627,25 @@ TEST(DoAdapterTest, ExtractOutputPortMap_BoolValue)
     ASSERT_NE(pv, nullptr);
     ASSERT_TRUE(pv->IsBool());
     EXPECT_TRUE(*pv->AsBool());
+}
+
+TEST(DoAdapterTest, ExtractOutputPortMap_ImageValue)
+{
+    DAS::DasPtr<IDasImage>   image = CountingFakeImage::Make();
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(CreateIDasPortMap(map.Put()), DAS_S_OK);
+
+    const DasReadOnlyString key{"out"};
+    ASSERT_EQ(map->SetImage(key.Get(), image.Get()), DAS_S_OK);
+
+    PortFrame frame;
+    ASSERT_EQ(ExtractOutputPortMap(map.Get(), TARGET_NODE, frame), DAS_S_OK);
+
+    const auto* pv = frame.Find({TARGET_NODE, "out"});
+    ASSERT_NE(pv, nullptr);
+    ASSERT_TRUE(pv->IsImage());
+    // 收敛是引用传递：帧槽位持有的就是写入 map 的同一对象
+    EXPECT_EQ(pv->AsImage()->ptr.Get(), image.Get());
 }
 
 TEST(DoAdapterTest, ExtractOutputPortMap_MultipleEntries)
