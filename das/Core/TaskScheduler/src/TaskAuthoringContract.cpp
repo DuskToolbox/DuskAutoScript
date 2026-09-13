@@ -2437,9 +2437,11 @@ namespace Das::Core::TaskScheduler
 
         constexpr std::size_t MAX_NODE_PORT_NAME_UTF8_BYTES = 100;
 
-        // addNodePort payload：{nodeId, name, direction, valueType}——方向
-        // 语义=签名方向（input=子图入参长在 begin、output=子图出参长在
-        // end）；角色门（仅 begin/end 可持动态口）在 Core 分派层。
+        // addNodePort payload：{nodeId, name, direction, valueType,
+        // portId?}——方向语义=签名方向（input=子图入参长在 begin、
+        // output=子图出参长在 end；调用节点物化口两侧皆可）；角色门（仅
+        // begin/end 与已绑条目调用节点可持动态口）在 Core 分派层。portId
+        // 是调用节点物化通道的可选稳定口 id（运行期值通道的键）。
         AuthoringValidationResult ValidateAddNodePortPayload(
             const yyjson::value& payload)
         {
@@ -2449,7 +2451,9 @@ namespace Das::Core::TaskScheduler
                 return Fail("invalidPayload", "payload must be object");
             }
             const auto& obj = obj_opt.value();
-            if (!OnlyKeys(obj, {"nodeId", "name", "direction", "valueType"}))
+            if (!OnlyKeys(
+                    obj,
+                    {"nodeId", "name", "direction", "valueType", "portId"}))
             {
                 return Fail(
                     "unknownField",
@@ -2513,6 +2517,30 @@ namespace Das::Core::TaskScheduler
                     "invalidPayload",
                     "addNodePort.valueType must be one of bool/int/int64/"
                     "float/double/string/image/base/component");
+            }
+            if (obj.contains(std::string_view("portId")))
+            {
+                if (!HasStringField(obj, "portId")
+                    || obj["portId"].as_string().value().empty())
+                {
+                    return Fail(
+                        "invalidPayload",
+                        "addNodePort.portId must be a non-empty string");
+                }
+                const auto port_id = obj["portId"].as_string().value();
+                if (port_id.size() > MAX_NODE_PORT_NAME_UTF8_BYTES)
+                {
+                    return Fail(
+                        "invalidPayload",
+                        "addNodePort.portId must be at most 100 UTF-8 bytes");
+                }
+                if (port_id.front() == '$')
+                {
+                    return Fail(
+                        "invalidPayload",
+                        "addNodePort.portId must not start with '$' "
+                        "(reserved)");
+                }
             }
             return Pass();
         }

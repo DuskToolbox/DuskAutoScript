@@ -608,7 +608,7 @@
       "type": "object",
       "required": ["nodeId", "name", "direction", "valueType"],
       "additionalProperties": false,
-      "$comment": "Dynamic port declaration on a begin/end boundary node (the controlled exception to 'the document stores no port declarations'). The direction is the SIGNATURE direction (input = a graph input growing on Begin, output = a graph output growing on End); the role gate — only Begin/End nodes may carry dynamic ports, Begin accepts input, End accepts output, '$'-prefixed and duplicate names rejected — is enforced in the Core dispatch layer. The backend allocates a stable port id (the edge addressing coordinate) and returns it as the allocated id; a successful add bumps the semantic revision exactly once.",
+      "$comment": "Dynamic port declaration on a begin/end boundary node or a repository-bound call node (the controlled exception to 'the document stores no port declarations'). The direction is the SIGNATURE direction (input = a graph input growing on Begin, output = a graph output growing on End; a bound call node accepts both — its materialized ports mirror the child graph's boundary signature); the role gate — only Begin/End nodes and repository-bound call nodes may carry dynamic ports, Begin accepts input, End accepts output, '$'-prefixed and duplicate names rejected — is enforced in the Core dispatch layer. The backend allocates a stable port id (the edge addressing coordinate) and returns it as the allocated id unless the optional portId is supplied (the call-node materialization channel: the stable id is the child graph's boundary port id, the runtime value-plane key; uniqueness is per (portId, direction) so the input and output sides may share one id). A successful add bumps the semantic revision exactly once.",
       "properties": {
         "nodeId": { "type": "string", "minLength": 1 },
         "name": {
@@ -636,6 +636,13 @@
             "component"
           ],
           "$comment": "Full type vocabulary of the boundary signature (bool/int family/float family/string/image/Base/Component)."
+        },
+        "portId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[^$].*$",
+          "$comment": "Optional stable id for the call-node materialization channel only (the child graph's boundary port id — the runtime value-plane key). Begin/End adds reject it; the backend-allocated p_N ids remain the default."
         }
       }
     },
