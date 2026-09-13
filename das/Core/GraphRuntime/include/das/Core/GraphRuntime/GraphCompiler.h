@@ -207,6 +207,12 @@ public:
         const std::unordered_map<std::string, std::unordered_set<std::string>>&
             required_fields);
 
+    /// Convert a CompileEdgeDiagnostic to a yyjson::value for plan
+    /// diagnostics. Public so session-layer compile checks (begin/end node
+    /// constraints) emit the exact same wire shape as the compiler's own
+    /// diagnostics.
+    static yyjson::value DiagnosticToJson(const CompileEdgeDiagnostic& diag);
+
     /// Unified compile entry point: runs all phases and produces a
     /// CompiledGraphPlanDto. Steps: ValidateEdgePorts ->
     /// ComputeExecutionOrder -> GeneratePortBindingPlan.
@@ -273,10 +279,6 @@ private:
     /// Build a node index: node_id -> GraphNodeDto* for O(1) lookup.
     static std::unordered_map<std::string, const Dto::GraphNodeDto*>
     BuildNodeIndex(const Dto::GraphDocumentDto& document);
-
-    /// Convert a CompileEdgeDiagnostic to a yyjson::value for plan
-    /// diagnostics.
-    static yyjson::value DiagnosticToJson(const CompileEdgeDiagnostic& diag);
 };
 
 DAS_CORE_GRAPHRUNTIME_NS_END

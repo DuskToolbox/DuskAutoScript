@@ -1517,6 +1517,104 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         }
         auto plan = compiler.Compile(p->document, required_fields);
 
+        // begin/end 数量约束是 session graph 视图契约——Core 编译器本体不
+        // 检查（formSequence/maapi/缓存 plan 三场景 begin 永远缺席），门
+        // 按 !IsLinear 分派。违例 fatal：诊断进 plan.diagnostics、
+        // execution_order 清空（UnbackedDataCycle 先例），编译仍返回
+        // envelope（诊断经同一出口供 UI ErrorLens 消费）。
+        if (!Das::Core::GraphRuntime::Contract::IsLinear(p->document))
+        {
+            std::vector<std::string> begin_node_ids;
+            std::vector<std::string> end_node_ids;
+            for (const auto& node : p->document.nodes)
+            {
+                if (!node.target.component_ref.has_value())
+                {
+                    continue;
+                }
+                const std::string& node_component_guid =
+                    node.target.component_ref->component_guid;
+                if (node_component_guid
+                    == Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID)
+                {
+                    begin_node_ids.push_back(node.node_id);
+                }
+                else if (
+                    node_component_guid
+                    == Das::Core::GraphRuntime::GRAPH_END_COMPONENT_GUID)
+                {
+                    end_node_ids.push_back(node.node_id);
+                }
+            }
+
+            const auto join_node_ids =
+                [](const std::vector<std::string>& node_ids)
+            {
+                std::string joined;
+                for (std::size_t index = 0; index < node_ids.size(); ++index)
+                {
+                    if (index != 0)
+                    {
+                        joined += ", ";
+                    }
+                    joined += node_ids[index];
+                }
+                return joined;
+            };
+            const auto append_diagnostic =
+                [&plan](
+                    Das::Core::GraphRuntime::CompileDiagnosticKind kind,
+                    const std::string&                             node_id,
+                    std::string                                    message)
+            {
+                Das::Core::GraphRuntime::CompileEdgeDiagnostic diagnostic;
+                diagnostic.kind = kind;
+                diagnostic.node_id = node_id;
+                diagnostic.message = std::move(message);
+                plan.diagnostics.push_back(
+                    Das::Core::GraphRuntime::GraphCompiler::DiagnosticToJson(
+                        diagnostic));
+            };
+
+            bool has_boundary_violation = false;
+            if (begin_node_ids.empty())
+            {
+                append_diagnostic(
+                    Das::Core::GraphRuntime::CompileDiagnosticKind::
+                        BeginNodeMissing,
+                    {},
+                    "Graph view requires exactly one Begin node; add a Begin "
+                    "node to compile");
+                has_boundary_violation = true;
+            }
+            else if (begin_node_ids.size() > 1)
+            {
+                append_diagnostic(
+                    Das::Core::GraphRuntime::CompileDiagnosticKind::
+                        BeginNodeDuplicate,
+                    begin_node_ids.front(),
+                    "Graph view requires exactly one Begin node; duplicate "
+                    "Begin nodes: "
+                        + join_node_ids(begin_node_ids));
+                has_boundary_violation = true;
+            }
+            if (end_node_ids.size() > 1)
+            {
+                append_diagnostic(
+                    Das::Core::GraphRuntime::CompileDiagnosticKind::
+                        EndNodeDuplicate,
+                    end_node_ids.front(),
+                    "Graph view allows at most one End node; duplicate End "
+                    "nodes: "
+                        + join_node_ids(end_node_ids));
+                has_boundary_violation = true;
+            }
+            if (has_boundary_violation)
+            {
+                plan.execution_order.clear();
+            }
+        }
+
         // Strict authoring compile envelope: the scheduler validates Compile
         // results with OnlyKeys {compile, diagnostics} and extracts the task
         // input from compile.executionInput. The wire artifact traveling
