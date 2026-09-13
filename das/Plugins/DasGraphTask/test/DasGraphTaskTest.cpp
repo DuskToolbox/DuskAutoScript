@@ -1441,11 +1441,19 @@ TEST(DasGraphTaskTest, PreservedBeginEndGraphExecutesAndReturnsEndValue)
     const DasResult hr = task->Do(nullptr, input_map.Get(), output.Put());
     EXPECT_EQ(hr, static_cast<DasResult>(42));
 
+    // 返回码语义断言零回归（hr==42）；result 串口断言随 D-21① 单通道
+    // 换轨反转为缺席——边界值唯一出口=类型化 outputs。
     ASSERT_NE(output.Get(), nullptr);
-    bool                    has_result_port = false;
+    bool                    has_result_port = true;
     const DasReadOnlyString result_key{"result"};
     ASSERT_EQ(output->Has(result_key.Get(), &has_result_port), DAS_S_OK);
-    EXPECT_TRUE(has_result_port);
+    EXPECT_FALSE(has_result_port);
+
+    // 「值」以类型化条目直写（end 的出参面悬空口全量导出）。
+    int64_t                 exported_value = 0;
+    const DasReadOnlyString value_key{"值"};
+    ASSERT_EQ(output->GetInt(value_key.Get(), &exported_value), DAS_S_OK);
+    EXPECT_EQ(exported_value, 42);
 }
 
 // formSequence 上下文（LINEAR 文档）不预置 begin/end。

@@ -4,10 +4,13 @@
 #include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/abi/IDasStringVector.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/header/IDasStringVector.generated.h>
 
 #include <optional>
 #include <string>
@@ -279,6 +282,133 @@ namespace Das::Utils
         }
         default:
             return false;
+        }
+    }
+
+    /// Copy a typed value from @p src_port of @p src into @p dst_port of
+    /// @p dst, preserving the runtime variant kind across every
+    /// pass-through-able kind — including object references (image/base/
+    /// component), which the JSON bridge can never carry. Returns false
+    /// when the source port is absent or holds a non-transferable kind
+    /// (json/signal). Object references ride their Get/Put() AddRef
+    /// pairing exactly once.
+    inline bool CopyPortMapEntry(
+        ExportInterface::IDasReadOnlyPortMap* src,
+        std::string_view                      src_port,
+        ExportInterface::IDasPortMap*         dst,
+        std::string_view                      dst_port)
+    {
+        using DasVariantType = Das::ExportInterface::DasVariantType;
+        using Das::ExportInterface::DAS_VARIANT_TYPE_BASE;
+        using Das::ExportInterface::DAS_VARIANT_TYPE_BOOL;
+        using Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT;
+        using Das::ExportInterface::DAS_VARIANT_TYPE_FLOAT;
+        using Das::ExportInterface::DAS_VARIANT_TYPE_IMAGE;
+        using Das::ExportInterface::DAS_VARIANT_TYPE_INT;
+        using Das::ExportInterface::DAS_VARIANT_TYPE_NULL;
+        using Das::ExportInterface::DAS_VARIANT_TYPE_SIGNAL;
+        using Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
+
+        const DasReadOnlyString key{std::string{src_port}.c_str()};
+        DasVariantType          kind = DAS_VARIANT_TYPE_NULL;
+        if (DAS::IsFailed(src->GetType(key.Get(), &kind)))
+        {
+            return false;
+        }
+        switch (kind)
+        {
+        case DAS_VARIANT_TYPE_INT:
+        {
+            int64_t value{};
+            if (DAS::IsOk(src->GetInt(key.Get(), &value)))
+            {
+                SetPortInt(dst, dst_port, value);
+                return true;
+            }
+            return false;
+        }
+        case DAS_VARIANT_TYPE_BOOL:
+        {
+            bool value{};
+            if (DAS::IsOk(src->GetBool(key.Get(), &value)))
+            {
+                const DasReadOnlyString dst_key{std::string{dst_port}.c_str()};
+                dst->SetBool(dst_key.Get(), value);
+                return true;
+            }
+            return false;
+        }
+        case DAS_VARIANT_TYPE_FLOAT:
+        {
+            double value{};
+            if (DAS::IsOk(src->GetFloat(key.Get(), &value)))
+            {
+                SetPortFloat(dst, dst_port, value);
+                return true;
+            }
+            return false;
+        }
+        case DAS_VARIANT_TYPE_STRING:
+        {
+            IDasReadOnlyString* value_string = nullptr;
+            if (DAS::IsOk(src->GetString(key.Get(), &value_string))
+                && value_string != nullptr)
+            {
+                const DasReadOnlyString dst_key{std::string{dst_port}.c_str()};
+                dst->SetString(dst_key.Get(), value_string);
+                value_string->Release();
+                return true;
+            }
+            return false;
+        }
+        case DAS_VARIANT_TYPE_IMAGE:
+        {
+            // GetImage 返回已 AddRef 的拥有引用——Put() 接管，SetImage
+            // 自持引用后本地引用析构释放，恰好一次配对。
+            DasPtr<ExportInterface::IDasImage> image_ptr;
+            if (DAS::IsOk(src->GetImage(key.Get(), image_ptr.Put())))
+            {
+                const DasReadOnlyString dst_key{std::string{dst_port}.c_str()};
+                dst->SetImage(dst_key.Get(), image_ptr.Get());
+                return true;
+            }
+            return false;
+        }
+        case DAS_VARIANT_TYPE_BASE:
+        {
+            DasPtr<IDasBase> base_ptr;
+            if (DAS::IsOk(
+                    src->GetBase(key.Get(), DAS_IID_BASE, base_ptr.Put())))
+            {
+                const DasReadOnlyString dst_key{std::string{dst_port}.c_str()};
+                dst->SetBase(dst_key.Get(), DAS_IID_BASE, base_ptr.Get());
+                return true;
+            }
+            return false;
+        }
+        case DAS_VARIANT_TYPE_COMPONENT:
+        {
+            DasPtr<IDasBase> component_ptr;
+            if (DAS::IsOk(src->GetComponent(
+                    key.Get(),
+                    DAS_IID_BASE,
+                    component_ptr.Put())))
+            {
+                const DasReadOnlyString dst_key{std::string{dst_port}.c_str()};
+                dst->SetComponent(
+                    dst_key.Get(),
+                    DAS_IID_BASE,
+                    component_ptr.Get());
+                return true;
+            }
+            return false;
+        }
+        case DAS_VARIANT_TYPE_NULL:
+        case DAS_VARIANT_TYPE_SIGNAL:
+        default:
+        {
+            return false;
+        }
         }
     }
 

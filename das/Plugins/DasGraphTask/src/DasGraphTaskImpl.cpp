@@ -8,9 +8,12 @@
 #include <das/DasGuidHolder.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/TaskComponentPorts.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/abi/IDasStringVector.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/header/IDasStringVector.generated.h>
 
 #include <optional>
 #include <string>
@@ -24,15 +27,16 @@ namespace Das::Plugins::DasGraphTask
         // 像——返回码的唯一数据源口）。
         constexpr std::string_view END_VALUE_PORT_ID = "值";
 
-        // 执行成功路径的返回码决策：end 节点在场且 graphOutputs 含「值」
+        // 执行成功路径的返回码决策：end 节点在场且类型化 outputs 含「值」
         // 整数 → 原样透传（含负值——用户图连负值到 end.值 是「任务失败」
         // 的表达通道，不得夹 0）；end 在场但无「值」→ 0 + WARN 记 end 节
         // 点 id；end 缺席 → 0 + WARN 记 execution_order 末节点 id（宽容语
         // 义）。解析全程容错——任一环节失败回落 0，不为返回码通道引入新
-        // 失败面。
+        // 失败面。值源=类型化 outputs PortMap 的「值」口（D-21⑤，旧 result
+        // JSON 的 graphOutputs 段已随单一通道换轨退役）。
         DasResult ResolveTaskReturnCode(
-            const std::string& artifact_text,
-            const std::string& result_text)
+            const std::string&                         artifact_text,
+            Das::ExportInterface::IDasReadOnlyPortMap* typed_outputs)
         {
             std::optional<std::string> end_node_id;
             std::optional<std::string> last_executed_node_id;
@@ -103,34 +107,16 @@ namespace Das::Plugins::DasGraphTask
             {
                 // 解析失败回落宽容路径：end 缺席语义（返回 0）。
             }
-            try
+            if (typed_outputs != nullptr)
             {
-                if (!result_text.empty())
+                int64_t                 end_value = 0;
+                const std::string       value_key_text{END_VALUE_PORT_ID};
+                const DasReadOnlyString value_key{value_key_text.c_str()};
+                if (DAS::IsOk(
+                        typed_outputs->GetInt(value_key.Get(), &end_value)))
                 {
-                    auto result_root = yyjson::read(result_text);
-                    auto result_obj = result_root.as_object();
-                    if (result_obj.has_value()
-                        && result_obj->contains(
-                            std::string_view("graphOutputs")))
-                    {
-                        auto graph_outputs =
-                            (*result_obj)[std::string_view("graphOutputs")]
-                                .as_object();
-                        if (graph_outputs.has_value()
-                            && graph_outputs->contains(
-                                std::string_view(END_VALUE_PORT_ID)))
-                        {
-                            exported_end_value =
-                                (*graph_outputs)[std::string_view(
-                                                     END_VALUE_PORT_ID)]
-                                    .as_int();
-                        }
-                    }
+                    exported_end_value = end_value;
                 }
-            }
-            catch (...)
-            {
-                // graphOutputs 解析失败按「无值」处理。
             }
 
             if (end_node_id.has_value())
@@ -248,9 +234,17 @@ namespace Das::Plugins::DasGraphTask
             return hr;
         }
 
-        // Execute compiled artifact via GraphRuntime
-        DAS::DasPtr<Das::ExportInterface::IDasJson> result_json;
-        hr = runtime->Execute(p_artifact.Get(), stop_token, result_json.Put());
+        // Execute compiled artifact via GraphRuntime over the typed plane
+        // (D-21 单通道)：graph_inputs=整个 input map（executionInput 键
+        // 不匹配任何哨兵 target_port_id，天然无害），outputs=类型化边界
+        // 导出（含不可序列化对象引用）。result 串口的 graphOutputs 序列
+        // 化段已退役——边界值唯一出口=本 PortMap。
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> typed_outputs;
+        hr = runtime->ExecuteWithTypedIO(
+            p_artifact.Get(),
+            stop_token,
+            p_input_port_map,
+            typed_outputs.Put());
 
         if (DAS::IsFailed(hr))
         {
@@ -272,8 +266,6 @@ namespace Das::Plugins::DasGraphTask
             return hr;
         }
 
-        // Serialize result JSON → string, put into output PortMap under
-        // "result" port.
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
         hr = CreateIDasPortMap(output_map.Put());
         if (DAS::IsFailed(hr))
@@ -281,21 +273,40 @@ namespace Das::Plugins::DasGraphTask
             return hr;
         }
 
-        std::string result_text;
-        if (result_json.Get())
+        // 类型化输出直写：GetKeys 枚举逐键按运行期类型转写（无硬编码口
+        // 名表——边界口集由编译产物决定）。
+        if (typed_outputs.Get() != nullptr)
         {
-            DAS::DasPtr<IDasReadOnlyString> p_result_str;
-            hr = result_json->ToString(0, p_result_str.Put());
-            if (DAS::IsOk(hr) && p_result_str.Get())
+            DAS::DasPtr<Das::ExportInterface::IDasStringVector> output_keys;
+            if (DAS::IsOk(typed_outputs->GetKeys(output_keys.Put()))
+                && output_keys)
             {
-                const char* result_utf8 = nullptr;
-                if (DAS::IsOk(p_result_str->GetUtf8(&result_utf8))
-                    && result_utf8 != nullptr)
+                uint64_t output_key_count = 0;
+                if (DAS::IsOk(output_keys->Size(&output_key_count)))
                 {
-                    result_text = result_utf8;
+                    for (uint64_t key_index = 0; key_index < output_key_count;
+                         ++key_index)
+                    {
+                        IDasReadOnlyString* key_string = nullptr;
+                        if (DAS::IsOk(output_keys->At(key_index, &key_string))
+                            && key_string != nullptr)
+                        {
+                            const char* key_utf8 = nullptr;
+                            key_string->GetUtf8(&key_utf8);
+                            const std::string output_port_name(
+                                key_utf8 != nullptr ? key_utf8 : "");
+                            key_string->Release();
+                            if (!output_port_name.empty())
+                            {
+                                Das::Utils::CopyPortMapEntry(
+                                    typed_outputs.Get(),
+                                    output_port_name,
+                                    output_map.Get(),
+                                    output_port_name);
+                            }
+                        }
+                    }
                 }
-                const DasReadOnlyString result_key{"result"};
-                output_map->SetString(result_key.Get(), p_result_str.Get());
             }
         }
 
@@ -304,9 +315,8 @@ namespace Das::Plugins::DasGraphTask
         {
             output_map.Get()->AddRef();
         }
-        // 返回码链：end.值 经 boundary export 进 result 的 graphOutputs
-        // 段，成功路径按其存在性分支返回（result 串口写入保持兼容通道）。
-        return ResolveTaskReturnCode(artifact_text, result_text);
+        // 返回码链：end.值 经类型化 outputs 的「值」口读取（D-21⑤）。
+        return ResolveTaskReturnCode(artifact_text, typed_outputs.Get());
     }
 
 } // namespace Das::Plugins::DasGraphTask
