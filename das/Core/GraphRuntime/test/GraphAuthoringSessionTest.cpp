@@ -2629,6 +2629,76 @@ namespace
         EXPECT_TRUE(boundary_dynamic_found);
     }
 
+    /// 应用一个 change 并断言携带 error 级诊断（拒绝路径）；返回原始结果
+    /// 文本。
+    std::string ApplyChangeExpectRejected(
+        GraphAuthoringSessionState* p,
+        std::string_view            kind,
+        std::string_view            payload)
+    {
+        const auto result = Compact(
+            JsonToUtf8(ApplyChange(p, WrapEnvelope(kind, payload)).Get()));
+        EXPECT_NE(result.find("\"severity\":\"error\""), std::string::npos)
+            << kind << ": " << result;
+        return result;
+    }
+
+    // 动态口方向门：begin 的动态口只可作连线源（口对的值来源是调用方图
+    // 输入，图内入边会静默顶掉它），end 的动态口只可作连线目标（out 侧是
+    // 图输出坐标，不向图内发值）——错向连线在分派层拒绝并出诊断。
+    TEST(
+        GraphAuthoringSessionTest,
+        ConnectRejectsBoundaryDynamicPortDirectionViolation)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                std::string(
+                    R"([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"int","direction":"output"}]},)")
+                    + R"({"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
+                    + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
+                    + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
+            DAS_S_OK);
+
+        ApplyChangeExpectOk(
+            s.p,
+            "addNodePort",
+            R"({"nodeId":"n_0","name":"左值","direction":"input","valueType":"int"})");
+        ApplyChangeExpectOk(
+            s.p,
+            "addNodePort",
+            R"({"nodeId":"n_1","name":"右值","direction":"output","valueType":"int"})");
+        ApplyChangeExpectOk(s.p, "addGraphNode", R"({"actionId":"{g1}"})");
+
+        const auto document = DocumentOf(s.p);
+        const auto begin_port_id = DynamicPortFieldOfComponent(
+            document,
+            std::string_view(BOUNDARY_BEGIN_GUID),
+            std::string_view("portId"));
+        const auto end_port_id = DynamicPortFieldOfComponent(
+            document,
+            std::string_view(BOUNDARY_END_GUID),
+            std::string_view("portId"));
+        ASSERT_FALSE(begin_port_id.empty());
+        ASSERT_FALSE(end_port_id.empty());
+
+        // 错向一：图内边指向 begin 的动态口。
+        ApplyChangeExpectRejected(
+            s.p,
+            "connectGraphPorts",
+            std::string(
+                R"({"fromNodeId":"n_2","fromPortId":"result","toNodeId":"n_0","toPortId":")")
+                + begin_port_id + R"("})");
+
+        // 错向二：图内边从 end 的动态口发出。
+        ApplyChangeExpectRejected(
+            s.p,
+            "connectGraphPorts",
+            std::string(R"({"fromNodeId":"n_1","fromPortId":")") + end_port_id
+                + R"(","toNodeId":"n_2","toPortId":"seed"})");
+    }
+
     // 预置空图（begin/end 零连线）的编译签名：end 的悬空口（静态「值」与
     // 动态口）不得被推导为图级入参——否则每个新建空图都携带幻影输入
     // 「值」，调用方传值经广播绑定写进 end 转写输出，原值回声进出参面
