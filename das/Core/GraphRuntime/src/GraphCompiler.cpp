@@ -1789,17 +1789,30 @@ Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
 
         // begin 的输出口导出排除（D-14）：begin 的同名 out 口是图内值边
         // 源，导出会造成入参回显污染出参面——输出侧跳过 begin 节点；end
-        // 不排除（其口就是出参面）。输入侧推导零改动。
-        const bool node_is_begin = node.target.target_kind == "componentRef"
-                                   && node.target.component_ref.has_value()
+        // 不排除（其口就是出参面）。输入侧对称排除 end（D-14 镜像）：end
+        // 的口语义是「从图内收值」，悬空也不构成图级入参——广播绑定会把
+        // 调用方图输入写进 end 转写输出，原值回声进出参面（含任务返回码
+        // 注入）。begin/end 动态口 id 是节点内计数器（首口恒 p_1），排除
+        // 同时消掉 by-name 合并的系统性撞名面（动态口分区仅 begin/end
+        // 可持）。
+        const bool node_is_boundary_component =
+            node.target.target_kind == "componentRef"
+            && node.target.component_ref.has_value();
+        const bool node_is_begin = node_is_boundary_component
                                    && node.target.component_ref->component_guid
                                           == GRAPH_BEGIN_COMPONENT_GUID;
+        const bool node_is_end = node_is_boundary_component
+                                 && node.target.component_ref->component_guid
+                                        == GRAPH_END_COMPONENT_GUID;
 
         if (surface.has_value())
         {
-            for (const auto& port : surface->inputs)
+            if (!node_is_end)
             {
-                add_boundary_input(port);
+                for (const auto& port : surface->inputs)
+                {
+                    add_boundary_input(port);
+                }
             }
             if (!node_is_begin)
             {
