@@ -229,6 +229,11 @@ namespace
     // dangling input ports (the graph's boundary inputs).
     constexpr std::string_view BROADCAST_SOURCE = "$graph_input";
 
+    /// 子图执行直传整个调用方输入表作 graph_inputs，其中 executionInput
+    /// 键是协议保留键（携带编译产物文本，非图级输入值）——广播覆盖层按
+    /// 口 id 裸键匹配，悬空的同名声明口不得命中它，回落声明默认。
+    constexpr std::string_view TYPED_IO_RESERVED_INPUT_KEY = "executionInput";
+
     /// Materialise a broadcast (graph-level input) binding's @p default_value
     /// directly into @p map under @p port_id. Unlike a point-to-point data edge
     /// there is no upstream node to read from the frame; the value comes from
@@ -547,7 +552,8 @@ DasResult BuildInputPortMap(
         // read either way.
         if (binding.source_node_id == std::string{BROADCAST_SOURCE})
         {
-            if (HasTypedPort(graph_inputs, binding.target_port_id))
+            if (binding.target_port_id != TYPED_IO_RESERVED_INPUT_KEY
+                && HasTypedPort(graph_inputs, binding.target_port_id))
             {
                 const DasResult transfer_result = TransferTypedPortValue(
                     graph_inputs,

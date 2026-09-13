@@ -235,10 +235,10 @@ namespace Das::Plugins::DasGraphTask
         }
 
         // Execute compiled artifact via GraphRuntime over the typed plane
-        // (D-21 单通道)：graph_inputs=整个 input map（executionInput 键
-        // 不匹配任何哨兵 target_port_id，天然无害），outputs=类型化边界
-        // 导出（含不可序列化对象引用）。result 串口的 graphOutputs 序列
-        // 化段已退役——边界值唯一出口=本 PortMap。
+        // (D-21 单通道)：graph_inputs=整个 input map（executionInput 键是
+        // 协议保留键，广播覆盖层对其跳过、悬空同名口回落声明默认），out
+        // puts=类型化边界导出（含不可序列化对象引用）。result 串口的
+        // graphOutputs 序列化段已退役——边界值唯一出口=本 PortMap。
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> typed_outputs;
         hr = runtime->ExecuteWithTypedIO(
             p_artifact.Get(),
