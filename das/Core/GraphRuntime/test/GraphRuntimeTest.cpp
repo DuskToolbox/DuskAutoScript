@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <functional>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -633,6 +634,35 @@ namespace GraphRuntimeTestMock
 
     private:
         Das::DasPtr<IDasImage> image_;
+    };
+
+    // 首次 CreateTaskComponent 抛异常、后续正常的 host：驱动同一 runtime
+    // 实例走「异常逃逸后恢复执行」路径（graph_inputs 悬挂指针防护断言用）。
+    class ThrowingOnceHost final
+        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+              ThrowingOnceHost>
+    {
+    public:
+        DasResult CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            std::ignore = component_guid;
+            if (!pp_out_component)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (throw_next_)
+            {
+                throw_next_ = false;
+                throw std::runtime_error("injected component factory failure");
+            }
+            *pp_out_component = MockTaskComponent::MakeRaw();
+            return DAS_S_OK;
+        }
+
+    private:
+        bool throw_next_ = true;
     };
 
 } // namespace GraphRuntimeTestMock
@@ -2172,4 +2202,78 @@ TEST(GraphRuntimeTest, ExecuteWithTypedIOExportsImageReference)
     const DasReadOnlyString img_key{"img"};
     ASSERT_EQ(outputs->GetImage(img_key.Get(), exported.Put()), DAS_S_OK);
     EXPECT_EQ(exported.Get(), image.Get());
+}
+
+// ExecuteWithTypedIO 的 graph_inputs 指向调用方栈上对象，异常逃逸路径也
+// 必须清零引擎内的跨调用指针——否则同实例后续执行经悬挂指针读已释放内
+// 存（UAF），默认物化兜底被污染。
+TEST(GraphRuntimeTest, ExecuteWithTypedIOExceptionPathClearsGraphInputs)
+{
+    using namespace GraphRuntimeTestMock;
+
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_exception_clears";
+    plan.node_snapshots.push_back(MakeSnapshot(NODE_A, COMP_A));
+    plan.execution_order = {NODE_A};
+
+    // 广播绑定保留 graph_inputs 的访问路径：恢复执行的 BuildInputPortMap
+    // 会对该绑定查询覆盖层——悬挂指针在此被解引用。
+    PortBindingDto broadcast;
+    broadcast.source_node_id = "$graph_input";
+    broadcast.source_port_id = "p2";
+    broadcast.target_node_id = NODE_A;
+    broadcast.target_port_id = "p2";
+    broadcast.expected_type = "string";
+    auto default_parsed = Das::Utils::ParseYyjsonFromString(R"("hello")");
+    ASSERT_TRUE(default_parsed.has_value());
+    broadcast.default_value = std::move(*default_parsed);
+    plan.binding_plan.bindings.push_back(std::move(broadcast));
+
+    const auto shell = BuildCompiledPlanShell(yyjson::object(plan));
+    const auto shell_text = Das::Utils::SerializeYyjsonValue(shell);
+    ASSERT_TRUE(shell_text.has_value());
+    DAS::DasPtr<IDasReadOnlyString> artifact;
+    CreateIDasReadOnlyStringFromUtf8(shell_text->c_str(), artifact.Put());
+
+    auto host = ThrowingOnceHost::Make();
+    DAS::DasPtr<Das::ExportInterface::IDasGraphRuntime> runtime;
+    ASSERT_EQ(CreateGraphRuntimeWithHost(host.Get(), runtime.Put()), DAS_S_OK);
+
+    {
+        // 调用方 graph_inputs：块内构造、块尾释放——首轮执行抛异常逃逸。
+        DAS::DasPtr<IDasPortMap> graph_inputs;
+        ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
+        {
+            const DasReadOnlyString         key{"p2"};
+            DAS::DasPtr<IDasReadOnlyString> value;
+            CreateIDasReadOnlyStringFromUtf8("sentinel", value.Put());
+            ASSERT_EQ(
+                graph_inputs->SetString(key.Get(), value.Get()),
+                DAS_S_OK);
+        }
+
+        bool threw = false;
+        try
+        {
+            DAS::DasPtr<IDasPortMap> outputs;
+            runtime->ExecuteWithTypedIO(
+                artifact.Get(),
+                nullptr,
+                graph_inputs.Get(),
+                outputs.Put());
+        }
+        catch (const std::runtime_error&)
+        {
+            threw = true;
+        }
+        EXPECT_TRUE(threw);
+    }
+
+    // 同实例走旧 Execute（JSON 路径不重挂 graph_inputs，默认物化兜底）：
+    // 必须干净成功——引擎若仍持有首轮悬挂指针，广播覆盖层查询在此读已释
+    // 放内存。
+    DAS::DasPtr<Das::ExportInterface::IDasJson> result_json;
+    const DasResult                             hr =
+        runtime->Execute(artifact.Get(), nullptr, result_json.Put());
+    EXPECT_EQ(hr, DAS_S_OK);
 }
