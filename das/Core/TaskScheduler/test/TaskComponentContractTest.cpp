@@ -1179,7 +1179,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     const std::array<ManifestSpec, 3> manifests{
         ManifestSpec{"DasFlowControl", 16, 45, 26},
         ManifestSpec{"DasMaaPi", 1, 8, 2},
-        ManifestSpec{"DasGraphTask", 1, 2, 0},
+        ManifestSpec{"DasGraphTask", 3, 4, 0},
     };
 
     const auto expect_label_map =
@@ -1284,8 +1284,8 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
         total_ports += ports_with_label;
         total_config_fields += config_fields_with_label;
     }
-    EXPECT_EQ(total_definitions, 18u);
-    EXPECT_EQ(total_ports, 55u);
+    EXPECT_EQ(total_definitions, 20u);
+    EXPECT_EQ(total_ports, 57u);
     EXPECT_EQ(total_config_fields, 28u);
 }
 

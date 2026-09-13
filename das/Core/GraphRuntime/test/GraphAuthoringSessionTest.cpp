@@ -2398,4 +2398,56 @@ namespace
             EXPECT_FALSE(outcome.execution_order.empty());
         }
     }
+
+    // A5 裁决：formSequence 升级 graph 不自动补 begin——升级后的图缺
+    // begin 由编译拒绝 + 诊断指引（用户手动放置），升级入口零节点注入
+    // （向用户既有图插节点是破坏性突变）。
+    TEST(GraphAuthoringSessionTest, UpgradeToGraphDoesNotPresetBoundaryNodes)
+    {
+        constexpr std::string_view item =
+            R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"},"settings":{}}})";
+        const SessionHandle s{
+            std::string(R"({"documentId":"d1","version":0,"items":[)")
+            + std::string(item) + "]}"};
+
+        ASSERT_EQ(GraphAuthoringSessionUpgradeToGraph(s.p), DAS_S_OK);
+
+        // 升级后文档不含预置 begin/end 节点，视图已翻转为 graph。
+        const auto document_text = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(s.p)).value_or(""));
+        EXPECT_NE(
+            document_text.find("\"viewKind\":\"graph\""),
+            std::string::npos);
+        EXPECT_EQ(document_text.find(BOUNDARY_BEGIN_GUID), std::string::npos);
+        EXPECT_EQ(document_text.find(BOUNDARY_END_GUID), std::string::npos);
+
+        // 编译拒绝：BeginNodeMissing（fatal）+ 指引文案可见。
+        const auto outcome = CompileOutcomeOf(s.p);
+        EXPECT_TRUE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::BeginNodeMissing));
+        EXPECT_NE(
+            DiagnosticMessageOfKind(
+                outcome,
+                Das::Core::GraphRuntime::CompileDiagnosticKind::
+                    BeginNodeMissing)
+                .find("add a Begin node"),
+            std::string::npos);
+        EXPECT_TRUE(outcome.execution_order.empty());
+    }
+
+    // 预置边界：调度器形态上下文（taskId + properties 携带非空图文档）
+    // 不追加 begin/end——预置仅限「新建空图」。
+    TEST(
+        GraphAuthoringSessionTest,
+        SchedulerPropertiesContextDoesNotPresetBoundaryNodes)
+    {
+        const SessionHandle s{
+            std::string(R"({"taskId":7,"revision":1,"properties":{"nodes":[)")
+            + RawGraphNodeOf("x1", "{g9}") + R"(],"edges":[]}})"};
+
+        const auto node_ids = DocumentGraphNodeIds(DocumentOf(s.p));
+        ASSERT_EQ(node_ids.size(), 1u);
+        EXPECT_EQ(node_ids[0], "x1");
+    }
 } // namespace
