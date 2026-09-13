@@ -6,6 +6,7 @@
 #include <das/Core/GraphRuntime/CompiledPlanFingerprint.h>
 #include <das/Core/GraphRuntime/FormSequenceProjector.h>
 #include <das/Core/GraphRuntime/GraphAuthoring.h>
+#include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
@@ -1234,6 +1235,42 @@ namespace
         }
         return surfaces;
     }
+
+    // 新建空图预置 begin+end 两节点：仅当 seed 后文档仍空且非
+    // formSequence 视图（LINEAR_TAG）——formSequence 上下文与非空图不
+    // 预置。内部 DTO 直写绕过 addGraphNode 校验（时序上 catalog 尚未就
+    // 位——节点只携带 componentGuid，合法）；节点 id 用 n_0/n_1，与
+    // AllocateStableNodeId 在空文档上的产出逐字相同（计数器从
+    // existing.size() 起扫），后续 addGraphNode 顺延到 n_2。
+    void SeedBoundaryNodesForNewGraph(GraphAuthoringSessionState& s)
+    {
+        if (!s.document.nodes.empty()
+            || Das::Core::GraphRuntime::Contract::IsLinear(s.document))
+        {
+            return;
+        }
+        const auto make_boundary_node =
+            [](const std::string_view node_id,
+               const std::string_view component_guid)
+        {
+            Das::Core::GraphRuntime::Dto::GraphNodeDto node;
+            node.node_id = std::string(node_id);
+            node.target.target_kind = "componentRef";
+            node.target.component_ref =
+                Das::Core::GraphRuntime::Dto::ComponentRefDto{
+                    "componentRef",
+                    std::string(component_guid),
+                    std::string(
+                        Das::Core::GraphRuntime::GRAPH_TASK_PLUGIN_GUID)};
+            return node;
+        };
+        s.document.nodes.push_back(make_boundary_node(
+            "n_0",
+            Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID));
+        s.document.nodes.push_back(make_boundary_node(
+            "n_1",
+            Das::Core::GraphRuntime::GRAPH_END_COMPONENT_GUID));
+    }
 } // anonymous namespace
 
 DAS_C_API DasResult CreateGraphAuthoringSession(
@@ -1254,6 +1291,7 @@ DAS_C_API DasResult CreateGraphAuthoringSession(
         {
             SeedFromContext(*s, ctx);
         }
+        SeedBoundaryNodesForNewGraph(*s);
         *pp_out = s;
         return DAS_S_OK;
     }

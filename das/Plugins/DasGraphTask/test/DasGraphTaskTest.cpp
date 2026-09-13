@@ -110,12 +110,22 @@ public:
 
 // ---- Tests ----
 
-// 空 store 经 Core 编译链产出合法空 plan 文本（executionInput 内层）——
-// 空 artifact 已被执行门拒绝，测试需要「合法的空」必须走真编译产物。
+// 空 plan 文本（executionInput 内层）经 Core 编译链产出——空 artifact 已
+// 被执行门拒绝，测试需要「合法的空」必须走真编译产物。空 graph 会话现
+// 预置 begin/end 节点，零节点 plan 由空 items 的 formSequence 上下文提
+// 供（LINEAR 文档不预置）。
 std::string EmptyCompiledPlanText()
 {
     GraphAuthoringSessionState* state = nullptr;
-    EXPECT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
+    DasPtr<IDasReadOnlyString>  context_string;
+    EXPECT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(
+            R"({"items":[]})",
+            context_string.Put()),
+        DAS_S_OK);
+    EXPECT_EQ(
+        CreateGraphAuthoringSession(context_string.Get(), &state),
+        DAS_S_OK);
     DasPtr<Das::ExportInterface::IDasJson> plan_json;
     EXPECT_EQ(
         GraphAuthoringSessionCompile(state, nullptr, plan_json.Put()),
@@ -213,11 +223,21 @@ TEST(DasGraphTaskTest, DoStopTokenCancel)
 // Smoke: a plan produced by the authoring Compile path can be fed into
 // DasGraphTaskImpl::Do (executionInput port) and execute without error on an
 // empty graph. Validates the authoring→compile→Do handoff (DAS-77 Wave3 A1).
+// 空 graph 会话现预置 begin/end 节点——零节点 plan 由空 items 的
+// formSequence 上下文提供（LINEAR 文档不预置）。
 TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
 {
-    // Compile an empty store via the Core authoring session C ABI.
+    // Compile an empty linear store via the Core authoring session C ABI.
     GraphAuthoringSessionState* state = nullptr;
-    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
+    DasPtr<IDasReadOnlyString>  context_string;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(
+            R"({"items":[]})",
+            context_string.Put()),
+        DAS_S_OK);
+    ASSERT_EQ(
+        CreateGraphAuthoringSession(context_string.Get(), &state),
+        DAS_S_OK);
     ASSERT_NE(state, nullptr);
     DasPtr<Das::ExportInterface::IDasJson> plan_json;
     ASSERT_EQ(

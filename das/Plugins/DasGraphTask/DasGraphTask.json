@@ -55,6 +55,44 @@
           "config": {},
           "diagnostics": []
         }
+      },
+      "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E": {
+        "factoryGuid": "E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.graph.begin",
+          "label": { "en": "Begin", "zh-cn": "开始" },
+          "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+          "inputs": [],
+          "outputs": [],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D": {
+        "factoryGuid": "E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.graph.end",
+          "label": { "en": "End", "zh-cn": "结束" },
+          "componentGuid": "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D",
+          "inputs": [
+            {
+              "id": "值",
+              "type": "int",
+              "label": { "en": "Value", "zh-cn": "值" }
+            }
+          ],
+          "outputs": [
+            {
+              "id": "值",
+              "type": "int",
+              "label": { "en": "Value", "zh-cn": "值" }
+            }
+          ],
+          "config": {},
+          "diagnostics": []
+        }
       }
     }
   }

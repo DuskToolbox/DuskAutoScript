@@ -1,15 +1,19 @@
 #include <das/Plugins/DasGraphTask/DasGraphTaskPluginPackage.h>
 
 #include "DasGraphTaskAuthoringSessionFactory.h"
+#include "GraphTaskBoundaryComponents.h"
 
+#include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/DasApi.h>
 #include <das/DasGuidHolder.h>
+#include <das/IDasBase.h>
 #include <das/Plugins/DasGraphTask/DasGraphTaskAdapter.h>
 #include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
 #include <das/Utils/CommonUtils.hpp>
 
 #include <array>
 #include <new>
+#include <string>
 
 // Factory GUID: {E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B}
 // Must match DasGraphTask.json taskComponents.factories for manifest lookup.
@@ -65,14 +69,49 @@ namespace Das::Plugins::DasGraphTask
         }
         *pp_out_component = nullptr;
 
-        const DasGuid graph_task_guid = DasIidOf<DasGraphTaskImpl>();
-        if (!(component_guid == graph_task_guid))
-        {
-            return DAS_E_NOT_FOUND;
-        }
-
         try
         {
+            // begin/end 与子图执行共用本工厂（manifest 三组件）；GUID 单
+            // 一事实源在 Core 的 GraphBoundaryComponents.h 常量。
+            DasGuid boundary_guid{};
+            if (DAS::IsOk(DasMakeDasGuid(
+                    std::string(
+                        Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID)
+                        .c_str(),
+                    &boundary_guid))
+                && component_guid == boundary_guid)
+            {
+                auto* component = new GraphTaskBoundaryComponent(
+                    GRAPH_BEGIN_KIND,
+                    host_.Get());
+                component->AddRef();
+                *pp_out_component =
+                    static_cast<Das::PluginInterface::IDasTaskComponent*>(
+                        component);
+                return DAS_S_OK;
+            }
+            if (DAS::IsOk(DasMakeDasGuid(
+                    std::string(
+                        Das::Core::GraphRuntime::GRAPH_END_COMPONENT_GUID)
+                        .c_str(),
+                    &boundary_guid))
+                && component_guid == boundary_guid)
+            {
+                auto* component =
+                    new GraphTaskBoundaryComponent(GRAPH_END_KIND, host_.Get());
+                component->AddRef();
+                *pp_out_component =
+                    static_cast<Das::PluginInterface::IDasTaskComponent*>(
+                        component);
+                return DAS_S_OK;
+            }
+
+            const DasGuid graph_task_guid = DasIidOf<DasGraphTaskImpl>();
+            if (!(component_guid == graph_task_guid))
+            {
+                return DAS_E_NOT_FOUND;
+            }
+
             auto* component = new DasGraphTaskImpl(host_.Get());
             component->AddRef();
             *pp_out_component =

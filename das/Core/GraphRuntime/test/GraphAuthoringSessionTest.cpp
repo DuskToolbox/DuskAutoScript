@@ -412,9 +412,13 @@ namespace
     // componentGuid == actionId.
     // -----------------------------------------------------------------------
 
-    /// Ports array of the first graph node inside a Get document; nullopt
-    /// when the node carries no "ports" key at all.
-    std::optional<yyjson::value> FirstNodePortsOf(const yyjson::value& document)
+    /// Ports array of the graph node carrying the given componentGuid inside
+    /// a Get document; nullopt when the node or its "ports" key is absent.
+    /// Empty graph sessions preset begin/end boundary nodes, so tests must
+    /// address their own added nodes by componentGuid, never by position.
+    std::optional<yyjson::value> NodePortsOfComponent(
+        const yyjson::value& document,
+        std::string_view     component_guid)
     {
         auto obj = document.as_object();
         if (!obj || !obj->contains(std::string_view("graph")))
@@ -431,13 +435,27 @@ namespace
         {
             return std::nullopt;
         }
-        auto node_obj = (*nodes)[0].as_object();
-        if (!node_obj || !node_obj->contains(std::string_view("ports")))
+        for (const auto& node : *nodes)
         {
-            return std::nullopt;
+            auto node_obj = node.as_object();
+            if (!node_obj)
+            {
+                continue;
+            }
+            auto node_guid =
+                (*node_obj)[std::string_view("componentGuid")].as_string();
+            if (!node_guid || *node_guid != component_guid)
+            {
+                continue;
+            }
+            if (!node_obj->contains(std::string_view("ports")))
+            {
+                return std::nullopt;
+            }
+            return Das::Utils::CloneYyjsonValue(
+                (*node_obj)[std::string_view("ports")]);
         }
-        return Das::Utils::CloneYyjsonValue(
-            (*node_obj)[std::string_view("ports")]);
+        return std::nullopt;
     }
 
     TEST(GraphAuthoringSessionTest, NodePortsProjectThroughSessionCatalog)
@@ -462,7 +480,8 @@ namespace
         const auto document = DocumentOf(s.p);
 
         // Static ports surface on the node in the declared order.
-        const auto ports = FirstNodePortsOf(document);
+        const auto ports =
+            NodePortsOfComponent(document, std::string_view("{g1}"));
         ASSERT_TRUE(ports.has_value());
         auto arr = ports->as_array();
         ASSERT_TRUE(arr.has_value());
@@ -575,7 +594,8 @@ namespace
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
 
-        const auto ports = FirstNodePortsOf(DocumentOf(s.p));
+        const auto ports =
+            NodePortsOfComponent(DocumentOf(s.p), std::string_view("{g1}"));
         ASSERT_TRUE(ports.has_value());
         auto arr = ports->as_array();
         ASSERT_TRUE(arr.has_value());
@@ -939,9 +959,13 @@ namespace
         return (*obj)[std::string_view("revision")].as_int();
     }
 
-    /// Id of the first node in the document's graph projection; nullopt when
-    /// the document carries no node.
-    std::optional<std::string> FirstGraphNodeOf(const yyjson::value& document)
+    /// Id of the first graph node carrying the given componentGuid in the
+    /// document's graph projection; nullopt when no such node exists. Empty
+    /// graph sessions preset begin/end boundary nodes, so tests must address
+    /// their own added nodes by componentGuid, never by position.
+    std::optional<std::string> FirstGraphNodeOf(
+        const yyjson::value& document,
+        std::string_view     component_guid)
     {
         auto obj = document.as_object();
         if (!obj || !obj->contains(std::string_view("graph")))
@@ -958,17 +982,27 @@ namespace
         {
             return std::nullopt;
         }
-        auto first = (*nodes)[0].as_object();
-        if (!first || !first->contains(std::string_view("id")))
+        for (const auto& node : *nodes)
         {
-            return std::nullopt;
+            auto node_obj = node.as_object();
+            if (!node_obj || !node_obj->contains(std::string_view("id")))
+            {
+                continue;
+            }
+            auto node_guid =
+                (*node_obj)[std::string_view("componentGuid")].as_string();
+            if (!node_guid || *node_guid != component_guid)
+            {
+                continue;
+            }
+            auto id = (*node_obj)[std::string_view("id")].as_string();
+            if (!id)
+            {
+                return std::nullopt;
+            }
+            return std::string(*id);
         }
-        auto id = (*first)[std::string_view("id")].as_string();
-        if (!id)
-        {
-            return std::nullopt;
-        }
-        return std::string(*id);
+        return std::nullopt;
     }
 
     // Optional port default-value channel end to end through the C ABI
@@ -1000,13 +1034,15 @@ namespace
                 .find("\"severity\":\"error\""),
             std::string::npos)
             << "addGraphNode must succeed";
-        const auto node_id = FirstGraphNodeOf(DocumentOf(s.p));
+        const auto node_id =
+            FirstGraphNodeOf(DocumentOf(s.p), std::string_view("{g1}"));
         ASSERT_TRUE(node_id.has_value());
 
         const auto port_of =
             [&s](std::string_view port_id) -> std::optional<yyjson::value>
         {
-            const auto ports = FirstNodePortsOf(DocumentOf(s.p));
+            const auto ports =
+                NodePortsOfComponent(DocumentOf(s.p), std::string_view("{g1}"));
             if (!ports.has_value())
             {
                 return std::nullopt;
@@ -1120,7 +1156,8 @@ namespace
                 .find("\"severity\":\"error\""),
             std::string::npos)
             << "addGraphNode must succeed";
-        const auto node_id = FirstGraphNodeOf(DocumentOf(s.p));
+        const auto node_id =
+            FirstGraphNodeOf(DocumentOf(s.p), std::string_view("{g1}"));
         ASSERT_TRUE(node_id.has_value());
 
         // Wire coordinates formatted as integers exercise the as_num path.
@@ -1154,7 +1191,8 @@ namespace
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
-        const auto node_id = FirstGraphNodeOf(DocumentOf(s.p));
+        const auto node_id =
+            FirstGraphNodeOf(DocumentOf(s.p), std::string_view("{g1}"));
         ASSERT_TRUE(node_id.has_value());
 
         ApplyChange(
@@ -1180,7 +1218,8 @@ namespace
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
-        const auto node_id = FirstGraphNodeOf(DocumentOf(s.p));
+        const auto node_id =
+            FirstGraphNodeOf(DocumentOf(s.p), std::string_view("{g1}"));
         ASSERT_TRUE(node_id.has_value());
         const auto revision_before = DocumentRevisionOf(DocumentOf(s.p));
         ASSERT_TRUE(revision_before.has_value());
@@ -1211,7 +1250,8 @@ namespace
         ApplyChange(
             s1.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
-        const auto node_id = FirstGraphNodeOf(DocumentOf(s1.p));
+        const auto node_id =
+            FirstGraphNodeOf(DocumentOf(s1.p), std::string_view("{g1}"));
         ASSERT_TRUE(node_id.has_value());
 
         const auto persisted = ExtractAcceptedProperties(
@@ -1242,8 +1282,13 @@ namespace
     // one batch message through the session shell)
     // -----------------------------------------------------------------------
 
-    /// All node ids in a GetDocument document blob's graph projection.
-    std::vector<std::string> DocumentGraphNodeIds(const yyjson::value& document)
+    /// All node ids in a GetDocument document blob's graph projection. When a
+    /// component_guid filter is given, only nodes carrying it are collected —
+    /// empty graph sessions preset begin/end boundary nodes, so batch tests
+    /// scope to their own added nodes.
+    std::vector<std::string> DocumentGraphNodeIds(
+        const yyjson::value& document,
+        std::string_view     component_guid = {})
     {
         std::vector<std::string> ids;
         auto                     obj = document.as_object();
@@ -1266,6 +1311,16 @@ namespace
             auto node_obj = node.as_object();
             if (node_obj && node_obj->contains(std::string_view("id")))
             {
+                if (!component_guid.empty())
+                {
+                    auto node_guid =
+                        (*node_obj)[std::string_view("componentGuid")]
+                            .as_string();
+                    if (!node_guid || *node_guid != component_guid)
+                    {
+                        continue;
+                    }
+                }
                 if (auto id = (*node_obj)[std::string_view("id")].as_string())
                 {
                     ids.emplace_back(*id);
@@ -1276,8 +1331,11 @@ namespace
     }
 
     /// All nodeId strings inside an acceptedProperties source blob (the
-    /// internal GraphDocumentDto wire).
-    std::vector<std::string> SourceGraphNodeIds(const yyjson::value& source)
+    /// internal GraphDocumentDto wire). Same optional component_guid filter —
+    /// the source blob nests the guid under target.componentRef.
+    std::vector<std::string> SourceGraphNodeIds(
+        const yyjson::value& source,
+        std::string_view     component_guid = {})
     {
         std::vector<std::string> ids;
         auto                     obj = source.as_object();
@@ -1295,6 +1353,28 @@ namespace
             auto node_obj = node.as_object();
             if (node_obj && node_obj->contains(std::string_view("nodeId")))
             {
+                if (!component_guid.empty())
+                {
+                    auto target =
+                        (*node_obj)[std::string_view("target")].as_object();
+                    if (!target)
+                    {
+                        continue;
+                    }
+                    auto component_ref =
+                        (*target)[std::string_view("componentRef")].as_object();
+                    if (!component_ref)
+                    {
+                        continue;
+                    }
+                    auto node_guid =
+                        (*component_ref)[std::string_view("componentGuid")]
+                            .as_string();
+                    if (!node_guid || *node_guid != component_guid)
+                    {
+                        continue;
+                    }
+                }
                 if (auto id =
                         (*node_obj)[std::string_view("nodeId")].as_string())
                 {
@@ -1372,7 +1452,8 @@ namespace
                 s.p,
                 WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
         }
-        const auto node_ids = DocumentGraphNodeIds(DocumentOf(s.p));
+        const auto node_ids =
+            DocumentGraphNodeIds(DocumentOf(s.p), std::string_view("{g1}"));
         ASSERT_EQ(node_ids.size(), 3u);
         // Wire n0 -> n1 -> n2 so the batch removal also proves edge cascade.
         ApplyChange(
@@ -1402,9 +1483,11 @@ namespace
             << apply;
 
         // The document blob no longer carries the deleted nodes (nor any
-        // trace of their ids — connections included).
+        // trace of their ids — connections included); the preset begin/end
+        // boundary nodes are outside the {g1} scope and survive untouched.
         const auto document = DocumentOf(s.p);
-        const auto remaining = DocumentGraphNodeIds(document);
+        const auto remaining =
+            DocumentGraphNodeIds(document, std::string_view("{g1}"));
         ASSERT_EQ(remaining.size(), 1u);
         EXPECT_EQ(remaining[0], node_ids[2]);
         const auto document_text =
@@ -1414,8 +1497,9 @@ namespace
 
         // The persisted source blob agrees, and the semantic revision moved
         // exactly once for the whole batch.
-        const auto source_ids =
-            SourceGraphNodeIds(AcceptedPropertiesOf(response.Get()));
+        const auto source_ids = SourceGraphNodeIds(
+            AcceptedPropertiesOf(response.Get()),
+            std::string_view("{g1}"));
         ASSERT_EQ(source_ids.size(), 1u);
         EXPECT_EQ(source_ids[0], node_ids[2]);
         const auto after_revision = DocumentRevisionOf(document);
@@ -1433,7 +1517,8 @@ namespace
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
-        const auto node_ids = DocumentGraphNodeIds(DocumentOf(s.p));
+        const auto node_ids =
+            DocumentGraphNodeIds(DocumentOf(s.p), std::string_view("{g1}"));
         ASSERT_EQ(node_ids.size(), 2u);
         const auto revision_before = DocumentRevisionOf(DocumentOf(s.p));
         ASSERT_TRUE(revision_before.has_value());
@@ -1496,11 +1581,14 @@ namespace
     // from acceptedProperties (the scheduler's persistence round-trip).
     // -----------------------------------------------------------------------
 
-    /// String field of the first node of a document blob's graph
-    /// projection; nullopt when the node or the key is absent.
+    /// String field of the graph node carrying the given componentGuid in a
+    /// document blob's graph projection; nullopt when the node or the key is
+    /// absent. Empty graph sessions preset begin/end boundary nodes, so tests
+    /// address their own added nodes by componentGuid, never by position.
     std::optional<std::string> FirstGraphNodeFieldOf(
         const yyjson::value& document,
-        std::string_view     key)
+        std::string_view     key,
+        std::string_view     component_guid)
     {
         auto obj = document.as_object();
         if (!obj || !obj->contains(std::string_view("graph")))
@@ -1517,24 +1605,40 @@ namespace
         {
             return std::nullopt;
         }
-        auto first = (*nodes)[0].as_object();
-        if (!first || !first->contains(key))
+        for (const auto& node : *nodes)
         {
-            return std::nullopt;
+            auto node_obj = node.as_object();
+            if (!node_obj)
+            {
+                continue;
+            }
+            auto node_guid =
+                (*node_obj)[std::string_view("componentGuid")].as_string();
+            if (!node_guid || *node_guid != component_guid)
+            {
+                continue;
+            }
+            if (!node_obj->contains(key))
+            {
+                return std::nullopt;
+            }
+            auto value = (*node_obj)[key].as_string();
+            if (!value)
+            {
+                return std::nullopt;
+            }
+            return std::string(*value);
         }
-        auto value = (*first)[key].as_string();
-        if (!value)
-        {
-            return std::nullopt;
-        }
-        return std::string(*value);
+        return std::nullopt;
     }
 
-    /// String field of the first node of a source blob (the internal
-    /// GraphDocumentDto wire, camelCase Dto keys); nullopt when absent.
+    /// String field of the source-blob node carrying the given componentGuid
+    /// (the internal GraphDocumentDto wire, camelCase Dto keys; the guid
+    /// nests under target.componentRef); nullopt when absent.
     std::optional<std::string> FirstSourceNodeFieldOf(
         const yyjson::value& source,
-        std::string_view     key)
+        std::string_view     key,
+        std::string_view     component_guid)
     {
         auto obj = source.as_object();
         if (!obj || !obj->contains(std::string_view("nodes")))
@@ -1546,17 +1650,42 @@ namespace
         {
             return std::nullopt;
         }
-        auto first = (*nodes)[0].as_object();
-        if (!first || !first->contains(key))
+        for (const auto& node : *nodes)
         {
-            return std::nullopt;
+            auto node_obj = node.as_object();
+            if (!node_obj)
+            {
+                continue;
+            }
+            auto target = (*node_obj)[std::string_view("target")].as_object();
+            if (!target)
+            {
+                continue;
+            }
+            auto component_ref =
+                (*target)[std::string_view("componentRef")].as_object();
+            if (!component_ref)
+            {
+                continue;
+            }
+            auto node_guid =
+                (*component_ref)[std::string_view("componentGuid")].as_string();
+            if (!node_guid || *node_guid != component_guid)
+            {
+                continue;
+            }
+            if (!node_obj->contains(key))
+            {
+                return std::nullopt;
+            }
+            auto value = (*node_obj)[key].as_string();
+            if (!value)
+            {
+                return std::nullopt;
+            }
+            return std::string(*value);
         }
-        auto value = (*first)[key].as_string();
-        if (!value)
-        {
-            return std::nullopt;
-        }
-        return std::string(*value);
+        return std::nullopt;
     }
 
     TEST(GraphAuthoringSessionTest, RenameGraphNodeEndToEndSurvivesReseed)
@@ -1566,7 +1695,8 @@ namespace
         ApplyChange(
             s1.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
-        const auto node_id = FirstGraphNodeOf(DocumentOf(s1.p));
+        const auto node_id =
+            FirstGraphNodeOf(DocumentOf(s1.p), std::string_view("{g1}"));
         ASSERT_TRUE(node_id.has_value());
         const auto base_revision = DocumentRevisionOf(DocumentOf(s1.p));
         ASSERT_TRUE(base_revision.has_value());
@@ -1584,12 +1714,16 @@ namespace
         // untouched (label is pure presentation, never an address); the
         // semantic revision moved exactly once.
         const auto document = DocumentOf(s1.p);
-        const auto wire_label =
-            FirstGraphNodeFieldOf(document, std::string_view("label"));
+        const auto wire_label = FirstGraphNodeFieldOf(
+            document,
+            std::string_view("label"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(wire_label.has_value());
         EXPECT_EQ(*wire_label, "我的延迟节点");
-        const auto wire_id =
-            FirstGraphNodeFieldOf(document, std::string_view("id"));
+        const auto wire_id = FirstGraphNodeFieldOf(
+            document,
+            std::string_view("id"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(wire_id.has_value());
         EXPECT_EQ(*wire_id, *node_id);
         const auto revision_after = DocumentRevisionOf(document);
@@ -1598,12 +1732,16 @@ namespace
 
         // The persisted source blob (acceptedProperties) agrees.
         const auto source = AcceptedPropertiesOf(response.Get());
-        const auto source_label =
-            FirstSourceNodeFieldOf(source, std::string_view("label"));
+        const auto source_label = FirstSourceNodeFieldOf(
+            source,
+            std::string_view("label"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(source_label.has_value());
         EXPECT_EQ(*source_label, "我的延迟节点");
-        const auto source_id =
-            FirstSourceNodeFieldOf(source, std::string_view("nodeId"));
+        const auto source_id = FirstSourceNodeFieldOf(
+            source,
+            std::string_view("nodeId"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(source_id.has_value());
         EXPECT_EQ(*source_id, *node_id);
 
@@ -1615,12 +1753,16 @@ namespace
             + "}";
         const SessionHandle s2{context};
         const auto          reseeded = DocumentOf(s2.p);
-        const auto          reseeded_label =
-            FirstGraphNodeFieldOf(reseeded, std::string_view("label"));
+        const auto          reseeded_label = FirstGraphNodeFieldOf(
+            reseeded,
+            std::string_view("label"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(reseeded_label.has_value());
         EXPECT_EQ(*reseeded_label, "我的延迟节点");
-        const auto reseeded_id =
-            FirstGraphNodeFieldOf(reseeded, std::string_view("id"));
+        const auto reseeded_id = FirstGraphNodeFieldOf(
+            reseeded,
+            std::string_view("id"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(reseeded_id.has_value());
         EXPECT_EQ(*reseeded_id, *node_id);
     }
@@ -1632,11 +1774,15 @@ namespace
     // added node is immediately editable.
     // -----------------------------------------------------------------------
 
-    /// Field lookup in the first node of a document blob's graph
-    /// projection; nullopt when the node carries no such field.
+    /// Field lookup in the graph node carrying the given componentGuid in a
+    /// document blob's graph projection; nullopt when the node carries no
+    /// such field. Empty graph sessions preset begin/end boundary nodes, so
+    /// tests address their own added nodes by componentGuid, never by
+    /// position.
     std::optional<yyjson::value> FirstGraphNodeFieldDescriptorOf(
         const yyjson::value& document,
-        std::string_view     field_name)
+        std::string_view     field_name,
+        std::string_view     component_guid)
     {
         auto obj = document.as_object();
         if (!obj || !obj->contains(std::string_view("graph")))
@@ -1653,28 +1799,43 @@ namespace
         {
             return std::nullopt;
         }
-        auto first = (*nodes)[0].as_object();
-        if (!first || !first->contains(std::string_view("fields")))
+        for (const auto& node : *nodes)
         {
-            return std::nullopt;
-        }
-        auto fields = (*first)[std::string_view("fields")].as_array();
-        if (!fields)
-        {
-            return std::nullopt;
-        }
-        for (const auto& field : *fields)
-        {
-            auto field_obj = field.as_object();
-            if (!field_obj || !field_obj->contains(std::string_view("name")))
+            auto node_obj = node.as_object();
+            if (!node_obj)
             {
                 continue;
             }
-            auto name = (*field_obj)[std::string_view("name")].as_string();
-            if (name && *name == field_name)
+            auto node_guid =
+                (*node_obj)[std::string_view("componentGuid")].as_string();
+            if (!node_guid || *node_guid != component_guid)
             {
-                return Das::Utils::CloneYyjsonValue(field);
+                continue;
             }
+            if (!node_obj->contains(std::string_view("fields")))
+            {
+                return std::nullopt;
+            }
+            auto fields = (*node_obj)[std::string_view("fields")].as_array();
+            if (!fields)
+            {
+                return std::nullopt;
+            }
+            for (const auto& field : *fields)
+            {
+                auto field_obj = field.as_object();
+                if (!field_obj
+                    || !field_obj->contains(std::string_view("name")))
+                {
+                    continue;
+                }
+                auto name = (*field_obj)[std::string_view("name")].as_string();
+                if (name && *name == field_name)
+                {
+                    return Das::Utils::CloneYyjsonValue(field);
+                }
+            }
+            return std::nullopt;
         }
         return std::nullopt;
     }
@@ -1698,7 +1859,8 @@ namespace
         const auto document = DocumentOf(s.p);
         const auto delay_field = FirstGraphNodeFieldDescriptorOf(
             document,
-            std::string_view("delay_ms"));
+            std::string_view("delay_ms"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(delay_field.has_value());
         auto field_obj = delay_field->as_object();
         ASSERT_TRUE(field_obj.has_value());
@@ -1761,7 +1923,8 @@ namespace
         const auto document = DocumentOf(s.p);
         EXPECT_TRUE(FirstGraphNodeFieldDescriptorOf(
                         document,
-                        std::string_view("delay_ms"))
+                        std::string_view("delay_ms"),
+                        std::string_view("{g1}"))
                         .has_value());
     }
 
@@ -1787,7 +1950,8 @@ namespace
         const auto document = DocumentOf(s.p);
         const auto ref_field = FirstGraphNodeFieldDescriptorOf(
             document,
-            std::string_view("repositoryRef"));
+            std::string_view("repositoryRef"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(ref_field.has_value());
         auto ref_obj = ref_field->as_object();
         ASSERT_TRUE(ref_obj.has_value());
@@ -1798,7 +1962,8 @@ namespace
 
         const auto inputs_field = FirstGraphNodeFieldDescriptorOf(
             document,
-            std::string_view("runtimeInputs"));
+            std::string_view("runtimeInputs"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(inputs_field.has_value());
         auto inputs_obj = inputs_field->as_object();
         ASSERT_TRUE(inputs_obj.has_value());
@@ -1818,7 +1983,8 @@ namespace
         const auto after_reject = DocumentOf(s.p);
         const auto survived = FirstGraphNodeFieldDescriptorOf(
             after_reject,
-            std::string_view("repositoryRef"));
+            std::string_view("repositoryRef"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(survived.has_value());
         auto survived_obj = survived->as_object();
         ASSERT_TRUE(survived_obj.has_value());
@@ -1847,7 +2013,8 @@ namespace
         const auto document = DocumentOf(s.p);
         const auto exe_field = FirstGraphNodeFieldDescriptorOf(
             document,
-            std::string_view("exePath"));
+            std::string_view("exePath"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(exe_field.has_value());
         auto exe_obj = exe_field->as_object();
         ASSERT_TRUE(exe_obj.has_value());
@@ -1855,8 +2022,10 @@ namespace
         EXPECT_TRUE(
             (*exe_obj)[std::string_view("required")].as_bool().value_or(false));
 
-        const auto args_field =
-            FirstGraphNodeFieldDescriptorOf(document, std::string_view("args"));
+        const auto args_field = FirstGraphNodeFieldDescriptorOf(
+            document,
+            std::string_view("args"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(args_field.has_value());
         auto args_obj = args_field->as_object();
         ASSERT_TRUE(args_obj.has_value());
@@ -1878,7 +2047,8 @@ namespace
         const auto after_reject = DocumentOf(s.p);
         const auto survived = FirstGraphNodeFieldDescriptorOf(
             after_reject,
-            std::string_view("exePath"));
+            std::string_view("exePath"),
+            std::string_view("{g1}"));
         ASSERT_TRUE(survived.has_value());
         auto survived_obj = survived->as_object();
         ASSERT_TRUE(survived_obj.has_value());
