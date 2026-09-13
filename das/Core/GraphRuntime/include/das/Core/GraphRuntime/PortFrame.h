@@ -8,11 +8,11 @@
 #include <string>
 #include <unordered_map>
 #include <variant>
-#include <vector>
 
 #include <cpp_yyjson.hpp>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/DasPtr.hpp>
+#include <das/_autogen/idl/abi/IDasImage.h>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
@@ -48,7 +48,7 @@ struct ComponentHandle
 
 struct ImageData
 {
-    std::vector<uint8_t> bytes;
+    DAS::DasPtr<Das::ExportInterface::IDasImage> ptr;
 };
 
 struct JsonData

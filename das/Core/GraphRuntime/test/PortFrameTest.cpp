@@ -7,7 +7,6 @@
 #include <concepts>
 #include <cstdint>
 #include <string>
-#include <vector>
 
 namespace
 {
@@ -195,14 +194,11 @@ TEST(PortFrameTest, ComponentValueNullptr)
 
 TEST(PortFrameTest, ImageValue)
 {
-    std::vector<uint8_t> pixels = {0xFF, 0x00, 0x80, 0x40};
-    const PortValue      v(ImageData{std::move(pixels)});
+    const PortValue v(ImageData{DAS::DasPtr<IDasImage>{}});
     EXPECT_TRUE(v.IsImage());
     EXPECT_EQ(v.GetType(), PortValueType::Image);
     ASSERT_NE(v.AsImage(), nullptr);
-    EXPECT_EQ(v.AsImage()->bytes.size(), 4u);
-    EXPECT_EQ(v.AsImage()->bytes[0], 0xFF);
-    EXPECT_EQ(v.AsImage()->bytes[3], 0x40);
+    EXPECT_EQ(v.AsImage()->ptr.Get(), nullptr);
 }
 
 // ===========================================================================
@@ -217,6 +213,53 @@ TEST(PortFrameTest, ImageSlot_HoldsReferenceNotBytes)
     // 断言在此失败；引用形态就位后两个探针均为 true。
     EXPECT_TRUE((HoldsImageReference<ImageData>()));
     EXPECT_TRUE((CarriesNoBytesMember<ImageData>()));
+}
+
+TEST(PortFrameTest, ImageSlot_SurvivesOriginalHolderRelease)
+{
+    CountingFakeImage::ResetCounters();
+    IDasImage* raw = nullptr;
+    {
+        PortValue v;
+        {
+            Das::DasPtr<IDasImage> owner = CountingFakeImage::Make();
+            raw = owner.Get();
+            v = PortValue(ImageData{owner});
+        }
+        // 原持有方已析构，帧值槽位的引用仍钉住对象——身份不变、未悬垂
+        EXPECT_EQ(CountingFakeImage::destroyed_count, 0);
+        ASSERT_NE(v.AsImage(), nullptr);
+        EXPECT_EQ(v.AsImage()->ptr.Get(), raw);
+    }
+    // 槽位随 PortValue 析构释放最后一个引用：恰好一次析构、计数配对
+    EXPECT_EQ(CountingFakeImage::destroyed_count, 1);
+    EXPECT_EQ(
+        CountingFakeImage::add_ref_count,
+        CountingFakeImage::release_count);
+}
+
+TEST(PortFrameTest, ImageSlot_CopySharesReference)
+{
+    CountingFakeImage::ResetCounters();
+    {
+        Das::DasPtr<IDasImage> owner = CountingFakeImage::Make();
+        const PortValue        original(ImageData{owner});
+        const PortValue        copied(original);
+
+        ASSERT_NE(original.AsImage(), nullptr);
+        ASSERT_NE(copied.AsImage(), nullptr);
+        // variant 拷贝共享同一对象引用，不复制图像数据
+        EXPECT_EQ(original.AsImage()->ptr.Get(), copied.AsImage()->ptr.Get());
+        EXPECT_EQ(original.AsImage()->ptr.Get(), owner.Get());
+        // 原持有方 + 两份 PortValue = 3 个活跃引用，不多不少
+        EXPECT_EQ(
+            CountingFakeImage::add_ref_count - CountingFakeImage::release_count,
+            3);
+    }
+    EXPECT_EQ(CountingFakeImage::destroyed_count, 1);
+    EXPECT_EQ(
+        CountingFakeImage::add_ref_count,
+        CountingFakeImage::release_count);
 }
 
 TEST(PortFrameTest, PortValueTypeEnumValuesPinned)
@@ -475,7 +518,9 @@ TEST(PortFrameTest, AllValueTypes)
     frame.Set(
         Key(NODE1, "v_comp"),
         PortValue(ComponentHandle{DAS::DasPtr<IDasBase>{}}));
-    frame.Set(Key(NODE1, "v_image"), PortValue(ImageData{{0xAA, 0xBB}}));
+    frame.Set(
+        Key(NODE1, "v_image"),
+        PortValue(ImageData{DAS::DasPtr<IDasImage>{}}));
     frame.Set(Key(NODE1, "v_json"), PortValue(JsonData{yyjson::read("[]")}));
     frame.Set(Key(NODE1, "v_signal"), PortValue::Signal());
 
@@ -489,7 +534,6 @@ TEST(PortFrameTest, AllValueTypes)
     EXPECT_TRUE(frame.Find(Key(NODE1, "v_base"))->IsBase());
     EXPECT_TRUE(frame.Find(Key(NODE1, "v_comp"))->IsComponent());
     ASSERT_NE(frame.Find(Key(NODE1, "v_image"))->AsImage(), nullptr);
-    EXPECT_EQ(frame.Find(Key(NODE1, "v_image"))->AsImage()->bytes.size(), 2u);
     EXPECT_TRUE(frame.Find(Key(NODE1, "v_json"))->IsJson());
     EXPECT_TRUE(frame.Find(Key(NODE1, "v_signal"))->IsSignal());
 }
