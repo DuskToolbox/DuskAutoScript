@@ -2699,6 +2699,61 @@ namespace
                 + R"(","toNodeId":"n_2","toPortId":"seed"})");
     }
 
+    // 调用节点签名口物化（提取编排与手工拖线共用的数据面通道）：已绑仓
+    // 库条目的调用节点（taskRepositoryRef 声明字段持正整数值）经
+    // addNodePort 物化边界签名口——可选稳定口 id=子图边界口 id（运行期值
+    // 通道的键，input/output 两侧同 id 各走各通道），分派层可解析、编译
+    // 层进声明面（边校验+边界推导），不再只存在于 Get 投影。
+    TEST(
+        GraphAuthoringSessionTest,
+        InvokeNodePortMaterializationResolvesThroughDispatchAndCompile)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                std::string(
+                    R"([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"int","direction":"output"}]},)")
+                    + R"({"actionId":"{ginvoke}","ports":[{"portId":"compiledSnapshot","portType":"object","direction":"input"},{"portId":"result","portType":"object","direction":"output"}],"config":[{"name":"repositoryRef","type":"taskRepositoryRef"}]})"),
+            DAS_S_OK);
+
+        ApplyChangeExpectOk(s.p, "addGraphNode", R"({"actionId":"{g1}"})");
+        ApplyChangeExpectOk(s.p, "addGraphNode", R"({"actionId":"{ginvoke}"})");
+        // 绑定仓库条目：taskRepositoryRef 声明字段持正整数值。
+        ApplyChangeExpectOk(
+            s.p,
+            "setValue",
+            R"({"target":{"kind":"graphNode","id":"n_3"},"fieldName":"repositoryRef","value":42})");
+        // 物化签名口：入线口 + 出线口（同 id p_1，input/output 双通道）。
+        ApplyChangeExpectOk(
+            s.p,
+            "addNodePort",
+            R"({"nodeId":"n_3","name":"payload","direction":"input","valueType":"int","portId":"p_1"})");
+        ApplyChangeExpectOk(
+            s.p,
+            "addNodePort",
+            R"({"nodeId":"n_3","name":"score","direction":"output","valueType":"int","portId":"p_1"})");
+
+        // 分派解析：数据边连到物化口不再「port not declared」。
+        ApplyChangeExpectOk(
+            s.p,
+            "connectGraphPorts",
+            R"({"fromNodeId":"n_2","fromPortId":"result","toNodeId":"n_3","toPortId":"p_1"})");
+        ApplyChangeExpectOk(
+            s.p,
+            "connectGraphPorts",
+            R"({"fromNodeId":"n_3","fromPortId":"p_1","toNodeId":"n_2","toPortId":"seed"})");
+
+        // 编译声明面：物化口边零 PortNotFound/TypeMismatch。
+        const auto outcome = CompileOutcomeOf(s.p);
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound));
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
+    }
+
     // 预置空图（begin/end 零连线）的编译签名：end 的悬空口（静态「值」与
     // 动态口）不得被推导为图级入参——否则每个新建空图都携带幻影输入
     // 「值」，调用方传值经广播绑定写进 end 转写输出，原值回声进出参面
