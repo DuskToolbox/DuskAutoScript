@@ -2277,3 +2277,63 @@ TEST(GraphRuntimeTest, ExecuteWithTypedIOExceptionPathClearsGraphInputs)
         runtime->Execute(artifact.Get(), nullptr, result_json.Put());
     EXPECT_EQ(hr, DAS_S_OK);
 }
+
+// 广播覆盖层不得命中调用方协议保留键 executionInput：子图执行直传整个输
+// 入表时该键携带编译产物文本——悬空的同名声明口（图内放一个未连线的子
+// 图执行节点）若经覆盖层收到它，父图编译产物字符串会被当作该节点的执行
+// 输入注入。保留键回落默认物化。
+TEST(GraphRuntimeTest, BroadcastOverlaySkipsReservedExecutionInputKey)
+{
+    using namespace GraphRuntimeTestMock;
+
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_reserved_key";
+    plan.node_snapshots.push_back(MakeSnapshot(NODE_A, COMP_A));
+    plan.execution_order = {NODE_A};
+
+    PortBindingDto broadcast;
+    broadcast.source_node_id = "$graph_input";
+    broadcast.source_port_id = "executionInput";
+    broadcast.target_node_id = NODE_A;
+    broadcast.target_port_id = "executionInput";
+    broadcast.expected_type = "string";
+    auto default_parsed =
+        Das::Utils::ParseYyjsonFromString(R"("declared-default")");
+    ASSERT_TRUE(default_parsed.has_value());
+    broadcast.default_value = std::move(*default_parsed);
+    plan.binding_plan.bindings.push_back(std::move(broadcast));
+
+    BoundaryPortDto boundary_output;
+    boundary_output.port_id = "executionInput";
+    boundary_output.port_type = "string";
+    boundary_output.node_ids = {NODE_A};
+    plan.boundary_ports.outputs.push_back(std::move(boundary_output));
+
+    DAS::DasPtr<IDasPortMap> graph_inputs;
+    ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
+    {
+        const DasReadOnlyString         key{"executionInput"};
+        DAS::DasPtr<IDasReadOnlyString> value;
+        CreateIDasReadOnlyStringFromUtf8(
+            "compiled-artifact-shell-text",
+            value.Put());
+        ASSERT_EQ(graph_inputs->SetString(key.Get(), value.Get()), DAS_S_OK);
+    }
+
+    DasResult                hr = DAS_E_FAIL;
+    DAS::DasPtr<IDasPortMap> outputs;
+    auto                     host = MockTaskComponentHost::Make();
+    outputs = ExecutePlanShellTyped(host.Get(), plan, graph_inputs.Get(), &hr);
+    ASSERT_EQ(hr, DAS_S_OK);
+    ASSERT_NE(outputs.Get(), nullptr);
+
+    // 回显组件读到的必须是声明默认，不是输入表里保留键携带的编译产物
+    // 文本。
+    DAS::DasPtr<IDasReadOnlyString> exported;
+    const DasReadOnlyString         key{"executionInput"};
+    ASSERT_EQ(outputs->GetString(key.Get(), exported.Put()), DAS_S_OK);
+    ASSERT_NE(exported.Get(), nullptr);
+    const char* exported_utf8 = nullptr;
+    ASSERT_EQ(exported->GetUtf8(&exported_utf8), DAS_S_OK);
+    EXPECT_STREQ(exported_utf8, "declared-default");
+}
