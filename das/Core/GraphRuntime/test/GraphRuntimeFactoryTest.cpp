@@ -1,4 +1,5 @@
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
+#include <das/Core/GraphRuntime/CompiledPlanFingerprint.h>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 #include <das/Core/TaskScheduler/TaskAuthoringContract.h>
@@ -534,9 +535,51 @@ TEST(GraphRuntimeFactoryTest, CompileShellFingerprintChangesWithPlanContent)
 // before any execution happens.
 TEST(GraphRuntimeFactoryTest, ExecuteRejectsTamperedPlanPayloadInShell)
 {
-    // Untampered: an empty document's shell executes cleanly (empty graph).
-    const auto valid_shell = ExecutionInputShellText("");
+    // Untampered: an empty formSequence document compiles to a zero-node
+    // shell that executes cleanly (graph-mode presets Begin/End nodes that
+    // a null-serving host cannot resolve — the empty-plan semantics this
+    // case pins ride the linear context).
+    const auto valid_shell = ExecutionInputShellText(R"({"items":[]})");
     ASSERT_FALSE(valid_shell.empty());
+    // 指纹自洽分解：输入路径与 Execute 完全同构（经 IDasReadOnlyString
+    // 往返 + 重算），任何一环失败都指向 mismatch 拒绝的真实来源。
+    {
+        Das::DasPtr<IDasReadOnlyString> artifact;
+        ASSERT_EQ(
+            CreateIDasReadOnlyStringFromUtf8(
+                valid_shell.c_str(),
+                artifact.Put()),
+            DAS_S_OK);
+        const char* artifact_utf8 = nullptr;
+        ASSERT_EQ(artifact->GetUtf8(&artifact_utf8), DAS_S_OK);
+        const std::string round_trip(
+            artifact_utf8 != nullptr ? artifact_utf8 : "");
+        EXPECT_EQ(round_trip, valid_shell)
+            << "IDasReadOnlyString round trip altered the shell text";
+
+        auto root = yyjson::read(round_trip);
+        auto shell_obj = root.as_object();
+        ASSERT_TRUE(shell_obj.has_value());
+        const auto stored =
+            (*shell_obj)[std::string_view("fingerprint")].as_string();
+        ASSERT_TRUE(stored.has_value());
+        const auto recomputed =
+            Das::Core::GraphRuntime::ComputeCompiledPlanFingerprint(
+                (*shell_obj)[std::string_view("plan")]);
+        EXPECT_EQ(std::string_view(*stored), std::string_view(recomputed))
+            << "shell recompute mismatched the stored fingerprint";
+
+        // 对照：与 ParseVerifiedPlan 逐字相同的 const auto& 视图绑定形
+        // 态——若此形态重算与值形态不同，mismatch 的根因即视图绑定。
+        const auto& plan_subtree = (*shell_obj)[std::string_view("plan")];
+        const auto  recomputed_via_view =
+            Das::Core::GraphRuntime::ComputeCompiledPlanFingerprint(
+                plan_subtree);
+        EXPECT_EQ(
+            std::string_view(recomputed),
+            std::string_view(recomputed_via_view))
+            << "view-bound and value-passed recompute diverge";
+    }
     EXPECT_EQ(ExecuteArtifactText(valid_shell), DAS_S_OK);
 
     // Tampered: modify the plan payload member inside a compiled shell.
