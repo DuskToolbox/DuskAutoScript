@@ -2450,4 +2450,228 @@ namespace
         ASSERT_EQ(node_ids.size(), 1u);
         EXPECT_EQ(node_ids[0], "x1");
     }
+
+    // -----------------------------------------------------------------------
+    // begin/end 动态口进编译声明面（D-17 方案 A：session provider 闭包按
+    // 当前文档动态展开）。空 context 会话预置 begin(n_0)/end(n_1)，后续
+    // addGraphNode 顺延 n_2。
+    // -----------------------------------------------------------------------
+
+    /// 应用一个 change 并断言无错误诊断（成功路径）；返回原始结果文本。
+    std::string ApplyChangeExpectOk(
+        GraphAuthoringSessionState* p,
+        std::string_view            kind,
+        std::string_view            payload)
+    {
+        const auto result = Compact(
+            JsonToUtf8(ApplyChange(p, WrapEnvelope(kind, payload)).Get()));
+        EXPECT_EQ(result.find("\"severity\":\"error\""), std::string::npos)
+            << kind << ": " << result;
+        return result;
+    }
+
+    /// 取指定组件首个 dynamic:true 投影口的指定字符串键值（portId/
+    /// direction），无动态口时返回空串。
+    std::string DynamicPortFieldOfComponent(
+        const yyjson::value& document,
+        std::string_view     component_guid,
+        std::string_view     field)
+    {
+        const auto ports = NodePortsOfComponent(document, component_guid);
+        if (!ports.has_value())
+        {
+            return {};
+        }
+        auto arr = ports->as_array();
+        if (!arr.has_value())
+        {
+            return {};
+        }
+        for (const auto& port : *arr)
+        {
+            auto port_object = port.as_object();
+            if (!port_object.has_value()
+                || !port_object->contains(std::string_view("dynamic")))
+            {
+                continue;
+            }
+            if ((*port_object)[std::string_view("dynamic")].as_bool().value_or(
+                    false))
+            {
+                return std::string((*port_object)[std::string_view(field)]
+                                       .as_string()
+                                       .value_or(""));
+            }
+        }
+        return {};
+    }
+
+    // 声明面动态展开 + 哨兵收敛：begin 长出入参口 左值(int) → begin 口对
+    // 连出到消费节点 → 编译零 PortNotFound/TypeMismatch（动态口被声明面
+    // 解析）；begin 的 in 口悬空 → $graph_input 哨兵绑定 target=该口；
+    // 边界输入面携带该口（display=口名）。
+    TEST(GraphAuthoringSessionTest, CompileResolvesDynamicPortEdgesAndSentinel)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                std::string(
+                    R"([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"string","direction":"output"}]},)")
+                    + R"({"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
+                    + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
+                    + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
+            DAS_S_OK);
+
+        ApplyChangeExpectOk(
+            s.p,
+            "addNodePort",
+            R"({"nodeId":"n_0","name":"左值","direction":"input","valueType":"int"})");
+        ApplyChangeExpectOk(s.p, "addGraphNode", R"({"actionId":"{g1}"})");
+
+        const auto dynamic_port_id = DynamicPortFieldOfComponent(
+            DocumentOf(s.p),
+            std::string_view(BOUNDARY_BEGIN_GUID),
+            std::string_view("portId"));
+        ASSERT_FALSE(dynamic_port_id.empty());
+
+        ApplyChangeExpectOk(
+            s.p,
+            "connectGraphPorts",
+            std::string(R"({"fromNodeId":"n_0","fromPortId":")")
+                + dynamic_port_id + R"(","toNodeId":"n_2","toPortId":"seed"})");
+
+        const auto outcome = CompileOutcomeOf(s.p);
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound));
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
+
+        // 编译产物细读：哨兵绑定 target=begin 的动态口（悬空 in 口自动
+        // 收敛）+ 边界输入面携带该口。
+        DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(s.p, nullptr, compiled.Put()),
+            DAS_S_OK);
+        auto root = yyjson::read(JsonToUtf8(compiled.Get())).as_object();
+        ASSERT_TRUE(root.has_value());
+        auto compile_section = (*root)[std::string_view("compile")].as_object();
+        ASSERT_TRUE(compile_section.has_value());
+        auto shell =
+            (*compile_section)[std::string_view("executionInput")].as_object();
+        ASSERT_TRUE(shell.has_value());
+        auto plan_object = (*shell)[std::string_view("plan")].as_object();
+        ASSERT_TRUE(plan_object.has_value());
+
+        auto binding_plan =
+            (*plan_object)[std::string_view("bindingPlan")].as_object();
+        ASSERT_TRUE(binding_plan.has_value());
+        auto bindings =
+            (*binding_plan)[std::string_view("bindings")].as_array();
+        ASSERT_TRUE(bindings.has_value());
+        bool sentinel_target_found = false;
+        for (const auto& binding : *bindings)
+        {
+            auto binding_object = binding.as_object();
+            if (!binding_object.has_value())
+            {
+                continue;
+            }
+            if ((*binding_object)[std::string_view("sourceNodeId")]
+                        .as_string()
+                        .value_or("")
+                    == std::string_view("$graph_input")
+                && (*binding_object)[std::string_view("targetNodeId")]
+                           .as_string()
+                           .value_or("")
+                       == std::string_view("n_0")
+                && (*binding_object)[std::string_view("targetPortId")]
+                           .as_string()
+                           .value_or("")
+                       == std::string_view(dynamic_port_id))
+            {
+                sentinel_target_found = true;
+                break;
+            }
+        }
+        EXPECT_TRUE(sentinel_target_found);
+
+        auto boundary_ports =
+            (*plan_object)[std::string_view("boundaryPorts")].as_object();
+        ASSERT_TRUE(boundary_ports.has_value());
+        auto boundary_inputs =
+            (*boundary_ports)[std::string_view("inputs")].as_array();
+        ASSERT_TRUE(boundary_inputs.has_value());
+        bool boundary_dynamic_found = false;
+        for (const auto& boundary_input : *boundary_inputs)
+        {
+            auto input_object = boundary_input.as_object();
+            if (!input_object.has_value())
+            {
+                continue;
+            }
+            if ((*input_object)[std::string_view("portId")]
+                    .as_string()
+                    .value_or("")
+                != std::string_view(dynamic_port_id))
+            {
+                continue;
+            }
+            boundary_dynamic_found = true;
+            EXPECT_EQ(
+                (*input_object)[std::string_view("displayLabel")]
+                    .as_string()
+                    .value_or(""),
+                std::string_view("左值"));
+        }
+        EXPECT_TRUE(boundary_dynamic_found);
+    }
+
+    // 会话级 Get 投影：动态口 merge 进呈现面（方向翻转 + dynamic 键），
+    // 且整份文档过严格 wire 校验（validator 词表含 dynamic）。
+    TEST(
+        GraphAuthoringSessionTest,
+        GetProjectionCarriesDynamicPortOnSessionWire)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
+                    + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
+                    + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
+            DAS_S_OK);
+
+        ApplyChangeExpectOk(
+            s.p,
+            "addNodePort",
+            R"({"nodeId":"n_0","name":"左值","direction":"input","valueType":"int"})");
+        ApplyChangeExpectOk(
+            s.p,
+            "addNodePort",
+            R"({"nodeId":"n_1","name":"右值","direction":"output","valueType":"image"})");
+
+        const auto document = DocumentOf(s.p);
+        auto       document_result =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_TRUE(document_result.valid)
+            << document_result.error_kind << ": " << document_result.message;
+
+        // begin 的入参口投影在右侧 output 锚；end 的出参口投影在左侧
+        // input 锚（锚点方向=组件角色翻转）。
+        EXPECT_EQ(
+            DynamicPortFieldOfComponent(
+                document,
+                std::string_view(BOUNDARY_BEGIN_GUID),
+                std::string_view("direction")),
+            "output");
+        EXPECT_EQ(
+            DynamicPortFieldOfComponent(
+                document,
+                std::string_view(BOUNDARY_END_GUID),
+                std::string_view("direction")),
+            "input");
+    }
 } // namespace
