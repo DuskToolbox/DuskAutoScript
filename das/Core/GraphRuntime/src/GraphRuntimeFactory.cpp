@@ -162,6 +162,24 @@ DasResult GraphRuntimeImpl::Execute(
         pp_out_result_json);
 }
 
+DasResult GraphRuntimeImpl::ExecuteWithTypedIO(
+    IDasReadOnlyString*                        p_compiled_artifact_json,
+    Das::PluginInterface::IDasStopToken*       p_stop_token,
+    Das::ExportInterface::IDasReadOnlyPortMap* p_graph_inputs,
+    Das::ExportInterface::IDasPortMap**        pp_out_outputs)
+{
+    (void)p_compiled_artifact_json;
+    (void)p_stop_token;
+    (void)p_graph_inputs;
+    if (!pp_out_outputs)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out_outputs = nullptr;
+
+    return DAS_E_NO_IMPLEMENTATION;
+}
+
 DAS_CORE_GRAPHRUNTIME_NS_END
 
 // ============================================================================

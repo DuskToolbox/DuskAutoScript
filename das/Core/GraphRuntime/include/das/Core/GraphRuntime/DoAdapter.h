@@ -30,14 +30,23 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 /// looked up in @p frame; the value is inserted with the target_port_id as
 /// key (v44: string-keyed, never by index).
 ///
-/// @param frame     Current execution snapshot.
-/// @param bindings  Data-flow edges filtered to the target node's inputs.
-/// @param out_map   Receives a newly allocated IDasPortMap (caller owns).
+/// A broadcast (graph-level input) binding first consults @p graph_inputs:
+/// when it holds the binding's target_port_id as a typed entry, that value
+/// is transferred verbatim (the declared default is not materialised) —
+/// the value precedence is call-site input > port default > component
+/// default.
+///
+/// @param frame        Current execution snapshot.
+/// @param bindings     Data-flow edges filtered to the target node's inputs.
+/// @param out_map      Receives a newly allocated IDasPortMap (caller owns).
+/// @param graph_inputs Typed graph-level inputs keyed by boundary port id;
+///                     null keeps the default-only behaviour.
 /// @return DAS_S_OK on success.
 DasResult BuildInputPortMap(
-    const PortFrame&                        frame,
-    const std::vector<Dto::PortBindingDto>& bindings,
-    Das::ExportInterface::IDasPortMap**     out_map);
+    const PortFrame&                                 frame,
+    const std::vector<Dto::PortBindingDto>&          bindings,
+    Das::ExportInterface::IDasPortMap**              out_map,
+    const Das::ExportInterface::IDasReadOnlyPortMap* graph_inputs = nullptr);
 
 /// Read all entries from @p output_map (returned by Do()) and write them
 /// into @p frame under the given @p node_id.

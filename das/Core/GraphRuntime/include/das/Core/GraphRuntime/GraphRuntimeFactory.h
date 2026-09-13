@@ -33,6 +33,12 @@ public:
         IDasReadOnlyString*                  p_compiled_artifact_json,
         Das::PluginInterface::IDasStopToken* p_stop_token,
         Das::ExportInterface::IDasJson**     pp_out_result_json);
+
+    DAS_IMPL ExecuteWithTypedIO(
+        IDasReadOnlyString*                        p_compiled_artifact_json,
+        Das::PluginInterface::IDasStopToken*       p_stop_token,
+        Das::ExportInterface::IDasReadOnlyPortMap* p_graph_inputs,
+        Das::ExportInterface::IDasPortMap**        pp_out_outputs);
 };
 
 DAS_CORE_GRAPHRUNTIME_NS_END

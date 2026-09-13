@@ -374,14 +374,16 @@ namespace
 // ===========================================================================
 
 DasResult BuildInputPortMap(
-    const PortFrame&                        frame,
-    const std::vector<Dto::PortBindingDto>& bindings,
-    Das::ExportInterface::IDasPortMap**     out_map)
+    const PortFrame&                                 frame,
+    const std::vector<Dto::PortBindingDto>&          bindings,
+    Das::ExportInterface::IDasPortMap**              out_map,
+    const Das::ExportInterface::IDasReadOnlyPortMap* graph_inputs)
 {
     if (out_map == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
+    (void)graph_inputs;
 
     // Create a fresh IDasPortMap via the C API factory, bound to out_map.
     DAS::DasOutPtr<Das::ExportInterface::IDasPortMap> map(out_map);

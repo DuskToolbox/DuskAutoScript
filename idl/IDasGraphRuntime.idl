@@ -1,5 +1,6 @@
 import "DasBasicTypes.idl";
 import "DasJson.idl";
+import "IDasPortMap.idl";
 import "IDasTask.idl";
 import "IDasTaskComponent.idl";
 
@@ -18,5 +19,17 @@ namespace Das::ExportInterface
             IDasReadOnlyString * p_compiled_artifact_json,
             Das::PluginInterface::IDasStopToken * p_stop_token,
             [out] Das::ExportInterface::IDasJson * *pp_out_result_json);
+
+        /// Execute a compiled graph plan over the typed data plane: graph
+        /// inputs ride @p p_graph_inputs as typed entries (keyed by boundary
+        /// port id) instead of being patched into sentinel defaults, and
+        /// boundary outputs are exported into @p pp_out_outputs as typed
+        /// entries — including non-serializable object references that the
+        /// JSON result channel can never carry.
+        DasResult ExecuteWithTypedIO(
+            IDasReadOnlyString * p_compiled_artifact_json,
+            Das::PluginInterface::IDasStopToken * p_stop_token,
+            Das::ExportInterface::IDasReadOnlyPortMap * p_graph_inputs,
+            [out] Das::ExportInterface::IDasPortMap * *pp_out_outputs);
     }
 }

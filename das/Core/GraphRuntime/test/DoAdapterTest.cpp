@@ -557,6 +557,118 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastAndPointToPointCoexist)
 }
 
 // ===========================================================================
+// BuildInputPortMap — graph-input typed pass-through overlay (D-18)
+//
+// A broadcast binding whose target port is present in graph_inputs takes
+// the typed call-site value verbatim (the declared default is never
+// materialised); a missing key falls back to the default; null graph_inputs
+// keeps the default-only behaviour.
+// ===========================================================================
+
+TEST(DoAdapterTest, BuildInputPortMap_GraphInputOverrideBeatsSentinelDefault)
+{
+    const PortFrame frame;
+
+    auto bindings = {MakeBroadcastBinding("p1", "in", ParseJson("9"))};
+
+    DAS::DasPtr<IDasPortMap> graph_inputs;
+    ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
+    {
+        const DasReadOnlyString key{"in"};
+        ASSERT_EQ(graph_inputs->SetInt(key.Get(), int64_t{77}), DAS_S_OK);
+    }
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(
+        BuildInputPortMap(frame, bindings, map.Put(), graph_inputs.Get()),
+        DAS_S_OK);
+
+    int64_t                 val{};
+    const DasReadOnlyString key{"in"};
+    ASSERT_EQ(map->GetInt(key.Get(), &val), DAS_S_OK);
+    EXPECT_EQ(val, 77);
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_GraphInputMissingKeyFallsBackToDefault)
+{
+    const PortFrame frame;
+
+    auto bindings = {MakeBroadcastBinding("p1", "in", ParseJson("9"))};
+
+    // graph_inputs carries an unrelated key only — "in" is absent, so the
+    // declared default must still be materialised.
+    DAS::DasPtr<IDasPortMap> graph_inputs;
+    ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
+    {
+        const DasReadOnlyString key{"other"};
+        ASSERT_EQ(graph_inputs->SetInt(key.Get(), int64_t{1}), DAS_S_OK);
+    }
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(
+        BuildInputPortMap(frame, bindings, map.Put(), graph_inputs.Get()),
+        DAS_S_OK);
+
+    int64_t                 val{};
+    const DasReadOnlyString key{"in"};
+    ASSERT_EQ(map->GetInt(key.Get(), &val), DAS_S_OK);
+    EXPECT_EQ(val, 9);
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_GraphInputOverrideCarriesImageReference)
+{
+    DAS::DasPtr<IDasImage> image = CountingFakeImage::Make();
+
+    const PortFrame frame;
+
+    auto bindings = {MakeBroadcastBinding("p1", "in", ParseJson("null"))};
+
+    DAS::DasPtr<IDasPortMap> graph_inputs;
+    ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
+    {
+        const DasReadOnlyString key{"in"};
+        ASSERT_EQ(graph_inputs->SetImage(key.Get(), image.Get()), DAS_S_OK);
+    }
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(
+        BuildInputPortMap(frame, bindings, map.Put(), graph_inputs.Get()),
+        DAS_S_OK);
+
+    DAS::DasPtr<IDasImage>  got;
+    const DasReadOnlyString key{"in"};
+    ASSERT_EQ(map->GetImage(key.Get(), got.Put()), DAS_S_OK);
+    EXPECT_EQ(got.Get(), image.Get());
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_GraphInputOverrideLeavesPlainEdgesAlone)
+{
+    // Non-sentinel bindings must never consult graph_inputs — a same-keyed
+    // entry there must not shadow the frame value of a real data edge.
+    PortFrame frame;
+    frame.Set(SOURCE_NODE, "out", PortValue(int64_t{7}));
+
+    auto bindings = {MakeBinding(SOURCE_NODE, "out", "in")};
+
+    DAS::DasPtr<IDasPortMap> graph_inputs;
+    ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
+    {
+        const DasReadOnlyString key{"in"};
+        ASSERT_EQ(graph_inputs->SetInt(key.Get(), int64_t{77}), DAS_S_OK);
+    }
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(
+        BuildInputPortMap(frame, bindings, map.Put(), graph_inputs.Get()),
+        DAS_S_OK);
+
+    int64_t                 val{};
+    const DasReadOnlyString key{"in"};
+    ASSERT_EQ(map->GetInt(key.Get(), &val), DAS_S_OK);
+    EXPECT_EQ(val, 7);
+}
+
+// ===========================================================================
 // ExtractOutputPortMap — basic scalar types
 // ===========================================================================
 

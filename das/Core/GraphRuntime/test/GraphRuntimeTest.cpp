@@ -15,6 +15,7 @@
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasErrorLens.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
@@ -189,9 +190,51 @@ namespace
 namespace GraphRuntimeTestMock
 {
     using IDasJson = Das::ExportInterface::IDasJson;
+    using IDasImage = Das::ExportInterface::IDasImage;
     using IDasStopToken = Das::PluginInterface::IDasStopToken;
     using IDasTaskComponent = Das::PluginInterface::IDasTaskComponent;
     using IDasTaskComponentHost = Das::PluginInterface::IDasTaskComponentHost;
+
+    // 计数型 fake IDasImage（DoAdapterTest 同款形态）：引用身份断言的对
+    // 象锚点——跨 PortMap/帧/导出全程同一指针即证明引用直传。
+    class CountingFakeImage final
+        : public Das::ExportInterface::DasImageImplBase<CountingFakeImage>
+    {
+    public:
+        DAS_IMPL GetSize(Das::ExportInterface::DasSize* p_out_size) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetChannelCount(int32_t* p_out_channel_count) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL Clip(
+            const Das::ExportInterface::DasRect* p_rect,
+            Das::ExportInterface::IDasImage**    p_out_image) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetDataSize(uint64_t* p_out_size) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetBinaryBuffer(
+            Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetPixelFormat(
+            Das::ExportInterface::DasImagePixelFormat* p_out_format) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+    };
 
     // ---- Mock IDasTaskComponent ----
     // Manual implementation (not using ImplBase to avoid DasIidOf linker
@@ -439,6 +482,153 @@ namespace GraphRuntimeTestMock
         plan.execution_order.push_back(node_id);
         return plan;
     }
+
+    // ---- TypedIO image mock ----
+
+    // 输出固定 image 引用的替身组件：Do 把构造期持有的同一 IDasImage 实例
+    // 写到 "img" 口——边界导出引用身份断言的对象锚点。
+    class ImageSourceComponent final : public IDasTaskComponent
+    {
+    public:
+        std::atomic<uint32_t> ref_count_{0};
+
+        explicit ImageSourceComponent(IDasImage* image) : image_(image)
+        {
+            image_->AddRef();
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            auto c = --ref_count_;
+            if (c == 0)
+            {
+                ref_count_ = 1;
+                delete this;
+            }
+            return c;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (!pp_out)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            if (!p_out_guid)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                "20000000-0000-0000-0000-0000000000A1");
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            if (!pp_out_name)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            return CreateIDasReadOnlyStringFromUtf8(
+                "ImageSourceComponent",
+                pp_out_name);
+        }
+
+        DasResult ApplySettingsChange(IDasJson*, IDasJson** pp_out_result_json)
+            override
+        {
+            if (pp_out_result_json)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken*,
+            Das::ExportInterface::IDasReadOnlyPortMap*,
+            Das::ExportInterface::IDasPortMap** pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_port_map = nullptr;
+            DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+            DasResult hr = CreateIDasPortMap(output_map.Put());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            const DasReadOnlyString image_key{"img"};
+            hr = output_map->SetImage(image_key.Get(), image_);
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            *pp_out_port_map = output_map.Get();
+            output_map.Get()->AddRef();
+            return DAS_S_OK;
+        }
+
+    private:
+        ~ImageSourceComponent()
+        {
+            if (image_)
+            {
+                image_->Release();
+            }
+        }
+
+        IDasImage* image_;
+    };
+
+    // 只分派 image 源替身的 host（guid 与组件 GetGuid 的镜像一致）。
+    class ImageSourceHost final
+        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+              ImageSourceHost>
+    {
+    public:
+        DasResult CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            if (!pp_out_component)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            const auto expected = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                "20000000-0000-0000-0000-0000000000A1");
+            if (!(component_guid == expected))
+            {
+                *pp_out_component = nullptr;
+                return DAS_E_NOT_FOUND;
+            }
+            auto* component = new ImageSourceComponent(image_.Get());
+            component->AddRef();
+            *pp_out_component = component;
+            return DAS_S_OK;
+        }
+
+        void SetImage(IDasImage* image)
+        {
+            image->AddRef();
+            image_.Attach(image);
+        }
+
+    private:
+        Das::DasPtr<IDasImage> image_;
+    };
 
 } // namespace GraphRuntimeTestMock
 
@@ -1844,4 +2034,137 @@ TEST(GraphRuntimeTest, ExecuteWithoutBoundaryOutputsYieldsEmptyGraphOutputs)
         (*result_obj)[std::string_view("graphOutputs")].as_object();
     ASSERT_TRUE(graph_outputs.has_value());
     EXPECT_TRUE(graph_outputs->empty());
+}
+
+// -------------------------------------------------------------------
+// ExecuteWithTypedIO（D-18/D-21 单通道）：graph_inputs 直传覆盖哨兵默认 +
+// 边界输出口类型化导出（含不可序列化对象引用——JSON 桥做不到的半段）。
+// -------------------------------------------------------------------
+namespace
+{
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> ExecutePlanShellTyped(
+        Das::PluginInterface::IDasTaskComponentHost* host,
+        const CompiledGraphPlanDto&                  plan,
+        Das::ExportInterface::IDasReadOnlyPortMap*   graph_inputs,
+        DasResult*                                   out_hr = nullptr)
+    {
+        const auto shell = BuildCompiledPlanShell(yyjson::object(plan));
+        const auto shell_text = Das::Utils::SerializeYyjsonValue(shell);
+        if (!shell_text.has_value())
+        {
+            return {};
+        }
+
+        Das::DasPtr<Das::ExportInterface::IDasGraphRuntime> runtime;
+        if (CreateGraphRuntimeWithHost(host, runtime.Put()) != DAS_S_OK)
+        {
+            return {};
+        }
+        Das::DasPtr<IDasReadOnlyString> artifact;
+        CreateIDasReadOnlyStringFromUtf8(shell_text->c_str(), artifact.Put());
+        Das::DasPtr<Das::ExportInterface::IDasPortMap> outputs;
+        const DasResult hr = runtime->ExecuteWithTypedIO(
+            artifact.Get(),
+            nullptr,
+            graph_inputs,
+            outputs.Put());
+        if (out_hr != nullptr)
+        {
+            *out_hr = hr;
+        }
+        if (hr != DAS_S_OK)
+        {
+            return {};
+        }
+        return outputs;
+    }
+} // namespace
+
+TEST(GraphRuntimeTest, ExecuteWithTypedIOOverridesSentinelDefault)
+{
+    using namespace GraphRuntimeTestMock;
+
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_typed_input";
+    plan.node_snapshots.push_back(MakeSnapshot(NODE_A, COMP_A));
+    plan.execution_order = {NODE_A};
+
+    // 哨兵绑定声明默认 "hello"；直传 graph_inputs 携带 p2="typed" 时覆盖
+    // 层命中（默认不物化），回显组件读到 "typed" 并回显到帧 → 边界导出。
+    PortBindingDto broadcast;
+    broadcast.source_node_id = "$graph_input";
+    broadcast.source_port_id = "p2";
+    broadcast.target_node_id = NODE_A;
+    broadcast.target_port_id = "p2";
+    broadcast.expected_type = "string";
+    auto default_parsed = Das::Utils::ParseYyjsonFromString(R"("hello")");
+    ASSERT_TRUE(default_parsed.has_value());
+    broadcast.default_value = std::move(*default_parsed);
+    plan.binding_plan.bindings.push_back(std::move(broadcast));
+
+    BoundaryPortDto boundary_output;
+    boundary_output.port_id = "p2";
+    boundary_output.port_type = "string";
+    boundary_output.node_ids = {NODE_A};
+    plan.boundary_ports.outputs.push_back(std::move(boundary_output));
+
+    DAS::DasPtr<IDasPortMap> graph_inputs;
+    ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
+    {
+        const DasReadOnlyString             key{"p2"};
+        DAS::DasPtr<IDasReadOnlyString>     value;
+        CreateIDasReadOnlyStringFromUtf8("typed", value.Put());
+        ASSERT_EQ(graph_inputs->SetString(key.Get(), value.Get()), DAS_S_OK);
+    }
+
+    DasResult                hr = DAS_E_FAIL;
+    DAS::DasPtr<IDasPortMap> outputs;
+    auto                     host = MockTaskComponentHost::Make();
+    outputs = ExecutePlanShellTyped(host.Get(), plan, graph_inputs.Get(), &hr);
+    ASSERT_EQ(hr, DAS_S_OK);
+    ASSERT_NE(outputs.Get(), nullptr);
+
+    // 直传值经覆盖层进入组件（回显输出）并经类型化导出回到调用方。
+    DAS::DasPtr<IDasReadOnlyString> exported;
+    const DasReadOnlyString    p2_key{"p2"};
+    ASSERT_EQ(outputs->GetString(p2_key.Get(), exported.Put()), DAS_S_OK);
+    ASSERT_NE(exported.Get(), nullptr);
+    const char* exported_utf8 = nullptr;
+    ASSERT_EQ(exported->GetUtf8(&exported_utf8), DAS_S_OK);
+    EXPECT_STREQ(exported_utf8, "typed");
+}
+
+TEST(GraphRuntimeTest, ExecuteWithTypedIOExportsImageReference)
+{
+    using namespace GraphRuntimeTestMock;
+
+    DAS::DasPtr<IDasImage> image = CountingFakeImage::Make();
+
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_typed_image";
+    plan.node_snapshots.push_back(
+        MakeSnapshot(NODE_A, "20000000-0000-0000-0000-0000000000A1"));
+    plan.execution_order = {NODE_A};
+
+    BoundaryPortDto boundary_output;
+    boundary_output.port_id = "img";
+    boundary_output.port_type = "image";
+    boundary_output.node_ids = {NODE_A};
+    plan.boundary_ports.outputs.push_back(std::move(boundary_output));
+
+    auto host = ImageSourceHost::MakeImpl();
+    host->SetImage(image.Get());
+
+    DasResult                hr = DAS_E_FAIL;
+    DAS::DasPtr<IDasPortMap> outputs;
+    outputs = ExecutePlanShellTyped(host.Get(), plan, nullptr, &hr);
+    ASSERT_EQ(hr, DAS_S_OK);
+    ASSERT_NE(outputs.Get(), nullptr);
+
+    // 不可序列化对象引用经类型化导出跨边界：身份即源实例（JSON 桥的
+    // graphOutputs 段对该类型只能跳过）。
+    DAS::DasPtr<IDasImage>  exported;
+    const DasReadOnlyString img_key{"img"};
+    ASSERT_EQ(outputs->GetImage(img_key.Get(), exported.Put()), DAS_S_OK);
+    EXPECT_EQ(exported.Get(), image.Get());
 }
