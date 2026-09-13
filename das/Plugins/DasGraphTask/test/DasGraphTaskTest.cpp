@@ -978,6 +978,8 @@ namespace
         "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D";
     constexpr std::string_view PROBE_COMPONENT_GUID_TEXT =
         "77777777-7777-7777-7777-777777777777";
+    constexpr std::string_view NEGATIVE_PROBE_COMPONENT_GUID_TEXT =
+        "88888888-8888-8888-8888-888888888888";
 
     DasGuid GuidOfText(std::string_view guid_text)
     {
@@ -1105,11 +1107,17 @@ namespace
                + R"(","payload":)" + std::string(payload) + "}";
     }
 
-    // 值探针节点组件：Do 输出 值=42 的 int 口（子图产出端的本地替身）。
+    // 值探针节点组件：Do 输出 值=probe_value 的 int 口（子图产出端的本
+    // 地替身；正值/负值两形态共用）。
     class ProbeValueComponent final
         : public Das::PluginInterface::IDasTaskComponent
     {
     public:
+        explicit ProbeValueComponent(int64_t probe_value)
+            : probe_value_(probe_value)
+        {
+        }
+
         uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
 
         uint32_t DAS_STD_CALL Release() override
@@ -1193,13 +1201,14 @@ namespace
                 return hr;
             }
             const DasReadOnlyString value_key{"值"};
-            output_map->SetInt(value_key.Get(), int64_t{42});
+            output_map->SetInt(value_key.Get(), probe_value_);
             *pp_out_port_map = output_map.Get();
             output_map.Get()->AddRef();
             return DAS_S_OK;
         }
 
     private:
+        int64_t               probe_value_;
         std::atomic<uint32_t> ref_count_{1};
     };
 
@@ -1265,9 +1274,17 @@ namespace
             }
             if (!(component_guid == GuidOfText(PROBE_COMPONENT_GUID_TEXT)))
             {
+                if (component_guid
+                    == GuidOfText(NEGATIVE_PROBE_COMPONENT_GUID_TEXT))
+                {
+                    auto* component = new ProbeValueComponent(int64_t{-7});
+                    component->AddRef();
+                    *pp_out_component = component;
+                    return DAS_S_OK;
+                }
                 return DAS_E_NOT_FOUND;
             }
-            auto* component = new ProbeValueComponent();
+            auto* component = new ProbeValueComponent(int64_t{42});
             component->AddRef();
             *pp_out_component = component;
             return DAS_S_OK;
@@ -1680,4 +1697,184 @@ TEST(DasGraphTaskTest, BoundaryComponentTransposesEveryInputKey)
     const char* out_string_utf8 = nullptr;
     ASSERT_EQ(out_string->GetUtf8(&out_string_utf8), DAS_S_OK);
     EXPECT_STREQ(out_string_utf8, "five");
+}
+
+// 返回码负值形态：子图探针产出 -7 → Do 返回码原样透传 -7（负值是「任
+// 务失败」的用户表达通道，不得夹 0）。
+TEST(DasGraphTaskTest, EndValuePassthroughCarriesNegativeReturnCode)
+{
+    GraphAuthoringSessionState* state = nullptr;
+    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
+
+    const std::string action_catalog =
+        std::string(R"([{"actionId":")")
+        + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)" + R"({"actionId":")"
+        + std::string(END_COMPONENT_GUID_TEXT)
+        + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]},)"
+        + R"({"actionId":")" + std::string(NEGATIVE_PROBE_COMPONENT_GUID_TEXT)
+        + R"(","ports":[{"portId":"值","portType":"int","direction":"output"}]}])";
+    {
+        DasPtr<IDasReadOnlyString> catalog_string;
+        ASSERT_EQ(
+            CreateIDasReadOnlyStringFromUtf8(
+                action_catalog.c_str(),
+                catalog_string.Put()),
+            DAS_S_OK);
+        ASSERT_EQ(
+            GraphAuthoringSessionSetActionCatalog(state, catalog_string.Get()),
+            DAS_S_OK);
+    }
+
+    std::string probe_node_id;
+    {
+        DasPtr<Das::ExportInterface::IDasJson> apply_result;
+        const std::string                      add_probe = WrapAuthoringChange(
+            "addGraphNode",
+            std::string(R"({"actionId":")")
+                + std::string(NEGATIVE_PROBE_COMPONENT_GUID_TEXT) + R"("})");
+        DasPtr<IDasReadOnlyString> add_probe_string;
+        CreateIDasReadOnlyStringFromUtf8(
+            add_probe.c_str(),
+            add_probe_string.Put());
+        ASSERT_EQ(
+            GraphAuthoringSessionApplyChange(
+                state,
+                add_probe_string.Get(),
+                apply_result.Put()),
+            DAS_S_OK);
+        const auto nodes =
+            GraphNodesOfResponseText(JsonTextOf(apply_result.Get()));
+        ASSERT_EQ(nodes.size(), 3u);
+        for (const auto& node : nodes)
+        {
+            if (node.component_guid == NEGATIVE_PROBE_COMPONENT_GUID_TEXT)
+            {
+                probe_node_id = node.node_id;
+            }
+        }
+        ASSERT_EQ(probe_node_id, "n_2");
+    }
+
+    {
+        DasPtr<Das::ExportInterface::IDasJson> apply_result;
+        const std::string connect_probe = WrapAuthoringChange(
+            "connectGraphPorts",
+            std::string(R"({"fromNodeId":")") + probe_node_id
+                + R"(","fromPortId":"值","toNodeId":"n_1","toPortId":"值"})");
+        DasPtr<IDasReadOnlyString> connect_probe_string;
+        CreateIDasReadOnlyStringFromUtf8(
+            connect_probe.c_str(),
+            connect_probe_string.Put());
+        ASSERT_EQ(
+            GraphAuthoringSessionApplyChange(
+                state,
+                connect_probe_string.Get(),
+                apply_result.Put()),
+            DAS_S_OK);
+    }
+
+    std::string shell_text;
+    {
+        DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(state, nullptr, compiled.Put()),
+            DAS_S_OK);
+        const auto compile_text = JsonTextOf(compiled.Get());
+        ASSERT_TRUE(ResponseDiagnosticsEmpty(compile_text));
+        auto root = yyjson::read(compile_text);
+        auto root_obj = root.as_object();
+        ASSERT_TRUE(root_obj.has_value());
+        auto compile_section =
+            (*root_obj)[std::string_view("compile")].as_object();
+        ASSERT_TRUE(compile_section.has_value());
+        const auto shell = Das::Utils::SerializeYyjsonValue(
+            (*compile_section)[std::string_view("executionInput")]);
+        ASSERT_TRUE(shell.has_value());
+        shell_text = *shell;
+    }
+    DestroyGraphAuthoringSession(state);
+
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new BoundaryDispatchHost());
+    auto task = DasGraphTaskImpl::Make(host.Get());
+    ASSERT_NE(task.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    const DasReadOnlyString execution_input_key{"executionInput"};
+    const DasReadOnlyString execution_input_value{shell_text.c_str()};
+    ASSERT_EQ(
+        input_map->SetString(
+            execution_input_key.Get(),
+            execution_input_value.Get()),
+        DAS_S_OK);
+
+    DasPtr<Das::ExportInterface::IDasPortMap> output;
+    const DasResult hr = task->Do(nullptr, input_map.Get(), output.Put());
+    EXPECT_EQ(hr, static_cast<DasResult>(-7));
+}
+
+// 返回码缺值形态：end 节点在场但 值 口无帧值（无上游连线）→ Do 返回 0
+// （宽容语义；WARN 记录缺口，不引入新失败面）。
+TEST(DasGraphTaskTest, EndNodeWithoutValuePortYieldsZeroReturnCode)
+{
+    GraphAuthoringSessionState* state = nullptr;
+    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
+
+    const std::string action_catalog =
+        std::string(R"([{"actionId":")")
+        + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)" + R"({"actionId":")"
+        + std::string(END_COMPONENT_GUID_TEXT)
+        + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])";
+    {
+        DasPtr<IDasReadOnlyString> catalog_string;
+        ASSERT_EQ(
+            CreateIDasReadOnlyStringFromUtf8(
+                action_catalog.c_str(),
+                catalog_string.Put()),
+            DAS_S_OK);
+        ASSERT_EQ(
+            GraphAuthoringSessionSetActionCatalog(state, catalog_string.Get()),
+            DAS_S_OK);
+    }
+
+    std::string shell_text;
+    {
+        DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(state, nullptr, compiled.Put()),
+            DAS_S_OK);
+        const auto compile_text = JsonTextOf(compiled.Get());
+        ASSERT_TRUE(ResponseDiagnosticsEmpty(compile_text));
+        auto root = yyjson::read(compile_text);
+        auto root_obj = root.as_object();
+        ASSERT_TRUE(root_obj.has_value());
+        auto compile_section =
+            (*root_obj)[std::string_view("compile")].as_object();
+        ASSERT_TRUE(compile_section.has_value());
+        const auto shell = Das::Utils::SerializeYyjsonValue(
+            (*compile_section)[std::string_view("executionInput")]);
+        ASSERT_TRUE(shell.has_value());
+        shell_text = *shell;
+    }
+    DestroyGraphAuthoringSession(state);
+
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new BoundaryDispatchHost());
+    auto task = DasGraphTaskImpl::Make(host.Get());
+    ASSERT_NE(task.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    const DasReadOnlyString execution_input_key{"executionInput"};
+    const DasReadOnlyString execution_input_value{shell_text.c_str()};
+    ASSERT_EQ(
+        input_map->SetString(
+            execution_input_key.Get(),
+            execution_input_value.Get()),
+        DAS_S_OK);
+
+    DasPtr<Das::ExportInterface::IDasPortMap> output;
+    const DasResult hr = task->Do(nullptr, input_map.Get(), output.Put());
+    EXPECT_EQ(hr, DAS_S_OK);
 }
