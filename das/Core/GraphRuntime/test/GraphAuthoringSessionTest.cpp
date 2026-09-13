@@ -1,3 +1,4 @@
+#include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 #include <das/Core/TaskScheduler/TaskAuthoringContract.h>
 #include <das/DasApi.h>
@@ -2055,5 +2056,346 @@ namespace
         EXPECT_TRUE(
             (*survived_obj)[std::string_view("required")].as_bool().value_or(
                 false));
+    }
+
+    // -----------------------------------------------------------------------
+    // begin/end 编译约束（session graph 视图契约）：begin 恰一 / end 至多
+    // 一；formSequence 视图与 Core 编译器本体不受影响（无 begin 的图文档
+    // 在三场景必须继续可编译）。GUID 与 manifest 字面量独立钉值。
+    // -----------------------------------------------------------------------
+
+    constexpr std::string_view BOUNDARY_BEGIN_GUID =
+        "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E";
+    constexpr std::string_view BOUNDARY_END_GUID =
+        "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D";
+
+    /// Raw graph-doc node literal with the given id and componentGuid.
+    std::string RawGraphNodeOf(
+        std::string_view node_id,
+        std::string_view component_guid)
+    {
+        return std::string(R"({"nodeId":")") + std::string(node_id)
+               + R"(","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":")"
+               + std::string(component_guid)
+               + R"(","pluginGuid":"{p}"}},"settings":{}})";
+    }
+
+    /// Build a raw graph context {"nodes":[...],"edges":[...]} from node
+    /// literals plus optional edge literals.
+    std::string RawGraphContextOf(
+        const std::vector<std::string>& nodes,
+        const std::vector<std::string>& edges = {})
+    {
+        std::string context = R"({"nodes":[)";
+        for (std::size_t index = 0; index < nodes.size(); ++index)
+        {
+            if (index != 0)
+            {
+                context += ',';
+            }
+            context += nodes[index];
+        }
+        context += R"(],"edges":[)";
+        for (std::size_t index = 0; index < edges.size(); ++index)
+        {
+            if (index != 0)
+            {
+                context += ',';
+            }
+            context += edges[index];
+        }
+        context += "]}";
+        return context;
+    }
+
+    struct SessionCompileOutcome
+    {
+        std::vector<yyjson::value> diagnostics;
+        std::vector<std::string>   execution_order;
+    };
+
+    /// Compile outcome parts the constraint tests assert on: the envelope
+    /// diagnostics array (UI ErrorLens consumer) and the inner plan's
+    /// executionOrder (the fatal-precedent clear target).
+    SessionCompileOutcome CompileOutcomeOf(GraphAuthoringSessionState* p)
+    {
+        SessionCompileOutcome                  outcome;
+        DasPtr<Das::ExportInterface::IDasJson> compiled;
+        GraphAuthoringSessionCompile(p, nullptr, compiled.Put());
+        if (compiled.Get() == nullptr)
+        {
+            return outcome;
+        }
+        DasPtr<IDasReadOnlyString> compiled_text;
+        if (DAS::IsFailed(compiled->ToString(0, compiled_text.Put()))
+            || compiled_text.Get() == nullptr)
+        {
+            return outcome;
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(compiled_text->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return outcome;
+        }
+        auto root = yyjson::read(std::string(utf8));
+        auto root_obj = root.as_object();
+        if (!root_obj.has_value())
+        {
+            return outcome;
+        }
+        if (root_obj->contains(std::string_view("diagnostics")))
+        {
+            if (auto diagnostics =
+                    (*root_obj)[std::string_view("diagnostics")].as_array())
+            {
+                for (const auto& diagnostic : *diagnostics)
+                {
+                    outcome.diagnostics.push_back(
+                        Das::Utils::CloneYyjsonValue(diagnostic));
+                }
+            }
+        }
+        if (root_obj->contains(std::string_view("compile")))
+        {
+            auto compile_section =
+                (*root_obj)[std::string_view("compile")].as_object();
+            if (compile_section.has_value())
+            {
+                auto shell =
+                    (*compile_section)[std::string_view("executionInput")]
+                        .as_object();
+                if (shell.has_value())
+                {
+                    auto plan_obj =
+                        (*shell)[std::string_view("plan")].as_object();
+                    if (plan_obj.has_value()
+                        && plan_obj->contains(
+                            std::string_view("executionOrder")))
+                    {
+                        if (auto order =
+                                (*plan_obj)[std::string_view("executionOrder")]
+                                    .as_array())
+                        {
+                            for (const auto& node_id : *order)
+                            {
+                                if (auto id = node_id.as_string())
+                                {
+                                    outcome.execution_order.push_back(
+                                        std::string(*id));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return outcome;
+    }
+
+    bool DiagnosticsContainKind(
+        const SessionCompileOutcome&                   outcome,
+        Das::Core::GraphRuntime::CompileDiagnosticKind kind)
+    {
+        const std::string kind_text = std::to_string(static_cast<int>(kind));
+        for (const auto& diagnostic : outcome.diagnostics)
+        {
+            auto diagnostic_obj = diagnostic.as_object();
+            if (!diagnostic_obj.has_value())
+            {
+                continue;
+            }
+            if ((*diagnostic_obj)[std::string_view("kind")]
+                    .as_string()
+                    .value_or("")
+                == kind_text)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::string DiagnosticMessageOfKind(
+        const SessionCompileOutcome&                   outcome,
+        Das::Core::GraphRuntime::CompileDiagnosticKind kind)
+    {
+        const std::string kind_text = std::to_string(static_cast<int>(kind));
+        for (const auto& diagnostic : outcome.diagnostics)
+        {
+            auto diagnostic_obj = diagnostic.as_object();
+            if (!diagnostic_obj.has_value())
+            {
+                continue;
+            }
+            if ((*diagnostic_obj)[std::string_view("kind")]
+                    .as_string()
+                    .value_or("")
+                == kind_text)
+            {
+                return std::string(
+                    (*diagnostic_obj)[std::string_view("message")]
+                        .as_string()
+                        .value_or(""));
+            }
+        }
+        return {};
+    }
+
+    // 缺 begin：graph 文档零 begin 节点 → BeginNodeMissing（fatal：无执行
+    // 序）+ message 指引文案。
+    TEST(GraphAuthoringSessionTest, CompileGraphViewRequiresBeginNode)
+    {
+        const SessionHandle s{
+            RawGraphContextOf({RawGraphNodeOf("only", "{g1}")})};
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+
+        const auto outcome = CompileOutcomeOf(s.p);
+        EXPECT_TRUE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::BeginNodeMissing));
+        EXPECT_NE(
+            DiagnosticMessageOfKind(
+                outcome,
+                Das::Core::GraphRuntime::CompileDiagnosticKind::
+                    BeginNodeMissing)
+                .find("add a Begin node"),
+            std::string::npos);
+        EXPECT_TRUE(outcome.execution_order.empty());
+    }
+
+    // 双 begin → BeginNodeDuplicate（fatal）+ message 指明重复节点 id。
+    TEST(GraphAuthoringSessionTest, CompileGraphViewRejectsDuplicateBeginNodes)
+    {
+        const SessionHandle s{RawGraphContextOf(
+            {RawGraphNodeOf("dupA", BOUNDARY_BEGIN_GUID),
+             RawGraphNodeOf("dupB", BOUNDARY_BEGIN_GUID)})};
+
+        const auto outcome = CompileOutcomeOf(s.p);
+        EXPECT_TRUE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::
+                BeginNodeDuplicate));
+        const auto message = DiagnosticMessageOfKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::BeginNodeDuplicate);
+        EXPECT_NE(message.find("dupA"), std::string::npos);
+        EXPECT_NE(message.find("dupB"), std::string::npos);
+        EXPECT_TRUE(outcome.execution_order.empty());
+    }
+
+    // 双 end（begin 恰一）→ EndNodeDuplicate（fatal）。
+    TEST(GraphAuthoringSessionTest, CompileGraphViewRejectsDuplicateEndNodes)
+    {
+        const SessionHandle s{RawGraphContextOf(
+            {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+             RawGraphNodeOf("endA", BOUNDARY_END_GUID),
+             RawGraphNodeOf("endB", BOUNDARY_END_GUID)})};
+
+        const auto outcome = CompileOutcomeOf(s.p);
+        EXPECT_TRUE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::EndNodeDuplicate));
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::BeginNodeMissing));
+        EXPECT_TRUE(outcome.execution_order.empty());
+    }
+
+    // 缺 end（begin 恰一）→ 宽容：零 begin/end 约束诊断、执行序非空。
+    TEST(GraphAuthoringSessionTest, CompileGraphViewToleratesMissingEndNode)
+    {
+        const SessionHandle s{RawGraphContextOf(
+            {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+             RawGraphNodeOf("worker", "{g1}")})};
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+
+        const auto outcome = CompileOutcomeOf(s.p);
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::BeginNodeMissing));
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::EndNodeDuplicate));
+        EXPECT_FALSE(outcome.execution_order.empty());
+    }
+
+    // formSequence 门：LINEAR 文档（无 begin）编译零 begin/end 检查诊断。
+    TEST(GraphAuthoringSessionTest, CompileLinearViewSkipsBeginEndConstraints)
+    {
+        constexpr std::string_view item_a =
+            R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"},"settings":{}}})";
+        const SessionHandle s{
+            std::string(R"({"documentId":"d1","version":0,"items":[)")
+            + std::string(item_a) + "]}"};
+
+        const auto outcome = CompileOutcomeOf(s.p);
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::BeginNodeMissing));
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::
+                BeginNodeDuplicate));
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::EndNodeDuplicate));
+    }
+
+    // 值口 int 锁：浮点源口 → end.值 拒（TypeMismatch）；整数族内
+    // （int64 源）放行——113 数字等价类经 session 声明面生效。
+    TEST(GraphAuthoringSessionTest, CompileLocksEndValuePortToIntegerFamily)
+    {
+        const auto edge_literal =
+            [](std::string_view source_id, std::string_view source_type)
+        {
+            return std::string(R"({"edgeId":"e1","sourceNodeId":")")
+                   + std::string(source_id)
+                   + R"(","sourcePortId":"值","targetNodeId":"n_end","targetPortId":"值","edgeType":"data"})";
+        };
+
+        // 浮点源 → TypeMismatch 拒。
+        {
+            const SessionHandle s{RawGraphContextOf(
+                {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+                 RawGraphNodeOf("n_probe", "{g1}"),
+                 RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
+                {edge_literal("n_probe", "float")})};
+            ASSERT_EQ(
+                SetActionCatalog(
+                    s.p,
+                    std::string(
+                        R"([{"actionId":"{g1}","ports":[{"portId":"值","portType":"float","direction":"output"}]},)")
+                        + R"({"actionId":")" + std::string(BOUNDARY_END_GUID)
+                        + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
+                DAS_S_OK);
+
+            const auto outcome = CompileOutcomeOf(s.p);
+            EXPECT_TRUE(DiagnosticsContainKind(
+                outcome,
+                Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
+        }
+
+        // int64 源（整数族内）→ 放行：零 TypeMismatch、执行序非空。
+        {
+            const SessionHandle s{RawGraphContextOf(
+                {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+                 RawGraphNodeOf("n_probe", "{g1}"),
+                 RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
+                {edge_literal("n_probe", "int64")})};
+            ASSERT_EQ(
+                SetActionCatalog(
+                    s.p,
+                    std::string(
+                        R"([{"actionId":"{g1}","ports":[{"portId":"值","portType":"int64","direction":"output"}]},)")
+                        + R"({"actionId":")" + std::string(BOUNDARY_END_GUID)
+                        + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
+                DAS_S_OK);
+
+            const auto outcome = CompileOutcomeOf(s.p);
+            EXPECT_FALSE(DiagnosticsContainKind(
+                outcome,
+                Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
+            EXPECT_FALSE(outcome.execution_order.empty());
+        }
     }
 } // namespace

@@ -1,7 +1,9 @@
 #ifndef DAS_CORE_GRAPHRUNTIME_GRAPHCOMPILER_H
 #define DAS_CORE_GRAPHRUNTIME_GRAPHCOMPILER_H
 
+#include <cassert>
 #include <cpp_yyjson.hpp>
+#include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
@@ -39,7 +41,14 @@ enum class CompileDiagnosticKind
     UnbackedDataCycle, // Data cycle without a signal circuit carrying the loop
     LoopBodyDataLeak,  // Loop-body data edge leaves the loop (stale-value risk)
     // loopCarried output port without a same-name input port to pair with
-    LoopCarriedPortInvalid
+    LoopCarriedPortInvalid,
+    // begin/end 数量约束是 session graph 视图契约——Core 编译器本体不检
+    // 查（formSequence/maapi/缓存 plan 场景 begin 永远缺席），检查与诊断
+    // 的产出都在 session compile 层（GraphAuthoringSessionCompile），此处
+    // 只定义 kind 词汇供 wire 序列化消费。
+    BeginNodeMissing,   // graph-view document carries no Begin node
+    BeginNodeDuplicate, // graph-view document carries more than one Begin node
+    EndNodeDuplicate    // graph-view document carries more than one End node
 };
 
 struct CompileEdgeDiagnostic
