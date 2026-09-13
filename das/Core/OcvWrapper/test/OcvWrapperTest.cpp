@@ -1298,15 +1298,11 @@ namespace Das
             ASSERT_NE(p_image, nullptr);
             p_memory->Release();
 
-            ExportInterface::IDasBinaryBuffer* p_first_buffer = nullptr;
-            ASSERT_EQ(p_image->GetBinaryBuffer(&p_first_buffer), DAS_S_OK);
-            const DAS::DasPtr<ExportInterface::IDasBinaryBuffer> first_buffer{
-                p_first_buffer};
+            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> first_buffer;
+            ASSERT_EQ(p_image->GetBinaryBuffer(first_buffer.Put()), DAS_S_OK);
 
-            ExportInterface::IDasBinaryBuffer* p_second_buffer = nullptr;
-            ASSERT_EQ(p_image->GetBinaryBuffer(&p_second_buffer), DAS_S_OK);
-            const DAS::DasPtr<ExportInterface::IDasBinaryBuffer> second_buffer{
-                p_second_buffer};
+            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> second_buffer;
+            ASSERT_EQ(p_image->GetBinaryBuffer(second_buffer.Put()), DAS_S_OK);
 
             unsigned char* first_data = nullptr;
             ASSERT_EQ(first_buffer->GetData(&first_data), DAS_S_OK);
@@ -1477,7 +1473,7 @@ namespace Das
             auto* img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
                 mat,
                 ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            const DAS::DasPtr<IImageBackend> guard(img);
+            const auto guard = DAS::DasPtr<IImageBackend>::Attach(img);
 
             void* ptr = nullptr;
             auto  result = img->QueryInterface(
@@ -1498,16 +1494,14 @@ namespace Das
             auto* img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
                 mat.clone(),
                 ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            const DAS::DasPtr<IImageBackend> guard(img);
+            const auto guard = DAS::DasPtr<IImageBackend>::Attach(img);
 
-            ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
-            auto result = img->GetBinaryBuffer(&p_buffer);
+            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> buffer_guard;
+            auto result = img->GetBinaryBuffer(buffer_guard.Put());
             ASSERT_EQ(result, DAS_S_OK);
-            const DAS::DasPtr<ExportInterface::IDasBinaryBuffer> buffer_guard(
-                p_buffer);
 
             unsigned char* data = nullptr;
-            result = p_buffer->GetData(&data);
+            result = buffer_guard->GetData(&data);
             ASSERT_EQ(result, DAS_S_OK);
 
             // Zero-copy: GetData should return same data as GetCpuMat

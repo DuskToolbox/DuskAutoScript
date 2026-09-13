@@ -942,16 +942,13 @@ namespace
             return result;
         }
 
-        DAS::PluginInterface::IDasComponent* component_raw = nullptr;
         result = component_factory->CreateInstance(
             DasIidOf<DAS::PluginInterface::IDasComponent>(),
-            &component_raw);
+            deployment.query_component.Put());
         if (DAS::IsFailed(result))
         {
             return result;
         }
-        deployment.query_component =
-            DAS::DasPtr<DAS::PluginInterface::IDasComponent>(component_raw);
         return DAS_S_OK;
     }
 

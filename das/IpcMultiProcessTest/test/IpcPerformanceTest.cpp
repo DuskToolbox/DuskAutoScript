@@ -683,15 +683,15 @@ protected:
         }
 
         // 8. CreateInstance → IDasComponent
-        DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+        DAS::DasPtr<DAS::PluginInterface::IDasComponent> component;
         if (DAS::IsFailed(factory->CreateInstance(
                 DasIidOf<DAS::PluginInterface::IDasComponent>(),
-                &component_raw)))
+                component.Put())))
         {
             return nullptr;
         }
 
-        return DAS::DasPtr<DAS::PluginInterface::IDasComponent>(component_raw);
+        return component;
     }
 
     /**
@@ -786,15 +786,15 @@ protected:
         }
 
         // 7. CreateInstance → IDasComponent
-        DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+        DAS::DasPtr<DAS::PluginInterface::IDasComponent> component;
         if (DAS::IsFailed(factory->CreateInstance(
                 DasIidOf<DAS::PluginInterface::IDasComponent>(),
-                &component_raw)))
+                component.Put())))
         {
             return nullptr;
         }
 
-        return DAS::DasPtr<DAS::PluginInterface::IDasComponent>(component_raw);
+        return component;
     }
 
     DAS::DasPtr<IDasBase> LoadPluginPackageForHost(
@@ -2427,15 +2427,15 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
             return nullptr;
         }
 
-        DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+        DAS::DasPtr<DAS::PluginInterface::IDasComponent> component;
         if (DAS::IsFailed(factory->CreateInstance(
                 DasIidOf<IDasComponent>(),
-                &component_raw)))
+                component.Put())))
         {
             return nullptr;
         }
 
-        return DAS::DasPtr<IDasComponent>(component_raw);
+        return component;
     };
 
     auto component_a = GetIdasComponent(p1);
