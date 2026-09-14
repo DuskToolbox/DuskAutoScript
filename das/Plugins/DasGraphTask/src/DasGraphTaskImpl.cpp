@@ -1,3 +1,4 @@
+#include "GraphTaskFocusLog.h"
 #include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
 
 #include <cassert>
@@ -36,7 +37,8 @@ namespace Das::Plugins::DasGraphTask
         // JSON 的 graphOutputs 段已随单一通道换轨退役）。
         DasResult ResolveTaskReturnCode(
             const std::string&                         artifact_text,
-            Das::ExportInterface::IDasReadOnlyPortMap* typed_outputs)
+            Das::ExportInterface::IDasReadOnlyPortMap* typed_outputs,
+            std::int64_t*                              p_resolved_end_value)
         {
             std::optional<std::string> end_node_id;
             std::optional<std::string> last_executed_node_id;
@@ -123,6 +125,10 @@ namespace Das::Plugins::DasGraphTask
             {
                 if (exported_end_value.has_value())
                 {
+                    if (p_resolved_end_value != nullptr)
+                    {
+                        *p_resolved_end_value = *exported_end_value;
+                    }
                     return static_cast<DasResult>(*exported_end_value);
                 }
                 DAS_LOG_WARNING(
@@ -131,6 +137,10 @@ namespace Das::Plugins::DasGraphTask
                         "return code falls back to 0",
                         *end_node_id)
                         .c_str());
+                if (p_resolved_end_value != nullptr)
+                {
+                    *p_resolved_end_value = 0;
+                }
                 return DAS_S_OK;
             }
             DAS_LOG_WARNING(
@@ -139,6 +149,10 @@ namespace Das::Plugins::DasGraphTask
                     "(last executed node = {})",
                     last_executed_node_id.value_or(std::string("(none)")))
                     .c_str());
+            if (p_resolved_end_value != nullptr)
+            {
+                *p_resolved_end_value = 0;
+            }
             return DAS_S_OK;
         }
     } // namespace
@@ -316,7 +330,15 @@ namespace Das::Plugins::DasGraphTask
             output_map.Get()->AddRef();
         }
         // 返回码链：end.值 经类型化 outputs 的「值」口读取（D-21⑤）。
-        return ResolveTaskReturnCode(artifact_text, typed_outputs.Get());
+        std::int64_t    resolved_end_value = 0;
+        const DasResult task_result = ResolveTaskReturnCode(
+            artifact_text,
+            typed_outputs.Get(),
+            &resolved_end_value);
+        // 完成事件落 focus 通道（user.jsonl → UI 事件日志）：end 值经插件
+        // i18n 模板渲染；发布失败只落调试日志，不影响任务返回码。
+        PublishGraphTaskFinishedFocusEntry(resolved_end_value);
+        return task_result;
     }
 
 } // namespace Das::Plugins::DasGraphTask

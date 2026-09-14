@@ -28,6 +28,16 @@ add_custom_command(
         ${CMAKE_BINARY_DIR}/das/tmp/DasGraphTask.json
         $<TARGET_FILE_DIR:DasGraphTask>/DasGraphTask.json)
 
+# i18n per-locale JSON 翻译表随插件部署到 DLL 目录 i18n/，运行期经
+# boost::dll::this_line_location().parent_path()/i18n 定位（cwd != 插件目录，
+# DasMaaPi 同款）。
+add_custom_command(
+    TARGET DasGraphTaskPluginMetadataDeploy
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/i18n
+        $<TARGET_FILE_DIR:DasGraphTask>/i18n)
+
 if(DAS_BUILD_TEST)
     set(DAS_DASGRAPHTASK_TEST_PLUGIN_SOURCES ${DAS_DASGRAPHTASK_SOURCES})
     list(FILTER DAS_DASGRAPHTASK_TEST_PLUGIN_SOURCES EXCLUDE REGEX "DllMain\\.cpp$")

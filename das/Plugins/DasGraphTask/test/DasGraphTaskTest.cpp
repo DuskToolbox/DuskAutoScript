@@ -10,6 +10,7 @@
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasStringVector.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
+#include <das/_autogen/idl/header/IDasLogRecorder.generated.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/header/IDasStringVector.generated.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.Implements.hpp>
@@ -17,8 +18,12 @@
 #include <gtest/gtest.h>
 
 #include "../src/DasGraphTaskAuthoringSession.h"
+#include "../src/GraphTaskFocusLog.h"
 
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,6 +31,14 @@
 
 using namespace Das::Plugins::DasGraphTask;
 using DAS::DasPtr;
+
+// Windows 下 path / "窄串字面量" 会经 ACP 隐式转换（ASCII 偶然安全，非
+// ASCII 字面量不可逆乱码）——路径拼接字面量按平台宽度分流。
+#ifdef _WIN32
+#define GRAPH_TASK_TEST_PATH_LITERAL(text) L##text
+#else
+#define GRAPH_TASK_TEST_PATH_LITERAL(text) text
+#endif
 
 // ---- Minimal mock for IDasTaskComponentHost ----
 
@@ -2599,3 +2612,185 @@ TEST(DasGraphTaskTest, TypedDirectTransferCarriesImageReferenceAcrossSubgraph)
     ASSERT_EQ(output->Has(result_key.Get(), &has_result_port), DAS_S_OK);
     EXPECT_FALSE(has_result_port);
 }
+
+// ---- 完成事件 focus 记录（user.jsonl → UI 事件日志面板）----
+
+namespace
+{
+
+    // 真实 recorder + 临时 session 目录（DasMaaPi AgentOnOutputTest 同款
+    // 基建）：Record 落盘 user.jsonl，测试读文件断言渲染文本。
+    class GraphTaskFocusLogFixture : public ::testing::Test
+    {
+    protected:
+        DasPtr<Das::ExportInterface::IDasLogNotifier>        notifier_;
+        DasPtr<Das::ExportInterface::IDasLogSession>         session_;
+        DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder_;
+        DasPtr<IDasReadOnlyString>                           saved_locale_;
+
+        void SetUp() override
+        {
+            ASSERT_EQ(GetDasLogNotifier(notifier_.Put()), DAS_S_OK);
+            const auto stamp =
+                std::chrono::steady_clock::now().time_since_epoch().count();
+            const auto stamp_directory =
+                std::filesystem::path{GRAPH_TASK_TEST_PATH_LITERAL("focus-")}
+                    .concat(std::to_string(stamp));
+            const auto u8_session_directory =
+                (std::filesystem::current_path()
+                 / GRAPH_TASK_TEST_PATH_LITERAL("graphtask-focus-test-output")
+                 / stamp_directory)
+                    .u8string();
+            const std::string session_directory_utf8(
+                u8_session_directory.begin(),
+                u8_session_directory.end());
+            DasPtr<IDasReadOnlyString> session_directory;
+            ASSERT_EQ(
+                CreateIDasReadOnlyStringFromUtf8(
+                    session_directory_utf8.c_str(),
+                    session_directory.Put()),
+                DAS_S_OK);
+            ASSERT_EQ(
+                CreateLogSession(session_directory.Get(), session_.Put()),
+                DAS_S_OK);
+            ASSERT_EQ(
+                CreateIDasProcessLogRecorder(
+                    notifier_.Get(),
+                    session_.Get(),
+                    recorder_.Put()),
+                DAS_S_OK);
+            // GlobalLocale 是进程级状态：save/restore 防跨测试污染。
+            ASSERT_EQ(DasGetDefaultLocale(saved_locale_.Put()), DAS_S_OK);
+        }
+
+        void TearDown() override
+        {
+            if (saved_locale_.Get() != nullptr)
+            {
+                (void)DasSetDefaultLocale(saved_locale_.Get());
+            }
+        }
+
+        void SetDefaultLocale(const char* locale_name)
+        {
+            DasPtr<IDasReadOnlyString> locale;
+            ASSERT_EQ(
+                CreateIDasReadOnlyStringFromUtf8(locale_name, locale.Put()),
+                DAS_S_OK);
+            ASSERT_EQ(DasSetDefaultLocale(locale.Get()), DAS_S_OK);
+        }
+
+        // en/zh-CN 双 locale 夹具表（{0} 位置占位符）。
+        std::filesystem::path WriteI18nFixture()
+        {
+            const std::filesystem::path directory =
+                std::filesystem::current_path()
+                / GRAPH_TASK_TEST_PATH_LITERAL("graphtask-focus-i18n-fixture");
+            std::filesystem::create_directories(directory);
+            {
+                std::ofstream file(
+                    directory / GRAPH_TASK_TEST_PATH_LITERAL("en.json"),
+                    std::ios::binary);
+                file << "{\"graphTask.finished\": \"Graph task finished: "
+                        "end value = {0}\"}";
+            }
+            {
+                std::ofstream file(
+                    directory / GRAPH_TASK_TEST_PATH_LITERAL("zh-CN.json"),
+                    std::ios::binary);
+                file << "{\"graphTask.finished\": \"图任务完成：结束值 = "
+                        "{0}\"}";
+            }
+            return directory;
+        }
+
+        std::string ReadUserJsonlText()
+        {
+            DasPtr<IDasReadOnlyString> path_string;
+            if (DAS::IsFailed(session_->GetUserJsonlPath(path_string.Put()))
+                || !path_string)
+            {
+                return {};
+            }
+            const char* utf8 = nullptr;
+            if (DAS::IsFailed(path_string->GetUtf8(&utf8)) || utf8 == nullptr)
+            {
+                return {};
+            }
+            const std::filesystem::path jsonl_path{
+                reinterpret_cast<const char8_t*>(utf8)};
+            std::ifstream file(jsonl_path, std::ios::binary);
+            return std::string(
+                (std::istreambuf_iterator<char>(file)),
+                std::istreambuf_iterator<char>());
+        }
+    };
+
+    TEST_F(GraphTaskFocusLogFixture, RecordsFinishedEntryWithEnglishTemplate)
+    {
+        SetDefaultLocale("en");
+        const std::filesystem::path i18n_directory = WriteI18nFixture();
+
+        EXPECT_EQ(
+            RecordGraphTaskFinishedFocusEntry(
+                recorder_.Get(),
+                i18n_directory,
+                42),
+            DAS_S_OK);
+
+        const std::string jsonl_text = ReadUserJsonlText();
+        EXPECT_NE(
+            jsonl_text.find("Graph task finished: end value = 42"),
+            std::string::npos);
+    }
+
+    TEST_F(GraphTaskFocusLogFixture, RecordsFinishedEntryWithZhCnTemplate)
+    {
+        SetDefaultLocale("zh-CN");
+        const std::filesystem::path i18n_directory = WriteI18nFixture();
+
+        EXPECT_EQ(
+            RecordGraphTaskFinishedFocusEntry(
+                recorder_.Get(),
+                i18n_directory,
+                42),
+            DAS_S_OK);
+
+        const std::string jsonl_text = ReadUserJsonlText();
+        EXPECT_NE(
+            jsonl_text.find("图任务完成：结束值 = 42"),
+            std::string::npos);
+    }
+
+    TEST_F(
+        GraphTaskFocusLogFixture,
+        FallsBackToLiteralTemplateWhenI18nTableMissing)
+    {
+        SetDefaultLocale("zh-CN");
+        const std::filesystem::path missing_directory =
+            std::filesystem::current_path()
+            / GRAPH_TASK_TEST_PATH_LITERAL("graphtask-focus-i18n-absent");
+
+        EXPECT_EQ(
+            RecordGraphTaskFinishedFocusEntry(
+                recorder_.Get(),
+                missing_directory,
+                -7),
+            DAS_S_OK);
+
+        // 表缺失回落 en 字面模板（base locale 语义），负值原样渲染。
+        const std::string jsonl_text = ReadUserJsonlText();
+        EXPECT_NE(
+            jsonl_text.find("Graph task finished: end value = -7"),
+            std::string::npos);
+    }
+
+    TEST(GraphTaskFocusLogPublish, PublishNeverFailsTheTaskPath)
+    {
+        // 生产入口在无 recorder 服务/无 i18n 表的环境（单测进程）不抛不
+        // 崩，降级只落调试日志——Do 返回码不受 focus 发布影响。
+        PublishGraphTaskFinishedFocusEntry(0);
+        SUCCEED();
+    }
+
+} // namespace
