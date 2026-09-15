@@ -7,6 +7,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 
 #include <algorithm>
@@ -215,15 +216,6 @@ namespace
             return false;
         }
         return true;
-    }
-
-    // UTF-8 std::string 到 path 的唯一物化入口：1:1 字节拷入
-    // std::u8string 后走 C++20 path(std::u8string) 构造（u8path 自由
-    // 函数已弃用；Windows 窄构造走 ANSI 代码页，非 ASCII 名会损坏）。
-    std::filesystem::path PathFromUtf8(std::string_view utf8_text)
-    {
-        std::u8string u8_text(utf8_text.begin(), utf8_text.end());
-        return std::filesystem::path{std::move(u8_text)};
     }
 
     // 读取内核：64KB 分块读到 EOF。CRC 校验由 libzip 在条目数据读完时
@@ -665,7 +657,7 @@ DasResult InstallPlugin(
     for (const auto& entry : entries)
     {
         auto effective_name = auto_prefix + entry.name;
-        auto target_path = temp_dir / PathFromUtf8(effective_name);
+        auto target_path = temp_dir / Das::Utils::PathFromUtf8(effective_name);
 
         if (!IsPathSafe(temp_dir, target_path))
         {
@@ -735,9 +727,9 @@ DasResult InstallPlugin(
     }
 
     // --- Step 6: Atomic install — rename temp into final location ---
-    auto src = temp_dir / PathFromUtf8(plugin_name);
-    auto dst = plugin_dir / PathFromUtf8(plugin_name);
-    auto old = plugin_dir / PathFromUtf8(plugin_name + ".old");
+    auto src = temp_dir / Das::Utils::PathFromUtf8(plugin_name);
+    auto dst = plugin_dir / Das::Utils::PathFromUtf8(plugin_name);
+    auto old = plugin_dir / Das::Utils::PathFromUtf8(plugin_name + ".old");
 
     // Move existing plugin aside
     if (std::filesystem::exists(dst))
