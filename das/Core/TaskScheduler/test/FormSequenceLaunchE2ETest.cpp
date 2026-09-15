@@ -569,7 +569,7 @@ namespace
                     {
                         yyjson::value settings(Das::Utils::MakeYyjsonObject());
                         const std::string stub_exe_path =
-                            stub_exe.generic_string();
+                            Das::Utils::PathToGenericUtf8(stub_exe);
                         (*settings.as_object())[std::string_view("exePath")] =
                             std::make_pair(
                                 std::string_view(stub_exe_path),

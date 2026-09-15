@@ -15,6 +15,7 @@
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
 #include <gtest/gtest.h>
@@ -85,19 +86,19 @@ namespace
 
     std::filesystem::path PluginPackageDir()
     {
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()}
-               / "DasMaaPi";
+        return IpcTestConfig::GetPluginDir() / DAS_PATH_LITERAL("DasMaaPi");
     }
 
     std::filesystem::path MaapiManifestPath()
     {
-        return PluginPackageDir() / "DasMaaPi.json";
+        return PluginPackageDir() / DAS_PATH_LITERAL("DasMaaPi.json");
     }
 
     std::filesystem::path FixturePath(std::string_view name)
     {
-        return std::filesystem::current_path() / "DasMaaPi" / "test"
-               / "fixtures" / std::filesystem::path{name};
+        return std::filesystem::current_path() / DAS_PATH_LITERAL("DasMaaPi")
+               / DAS_PATH_LITERAL("test") / DAS_PATH_LITERAL("fixtures")
+               / Das::Utils::PathFromUtf8(name);
     }
 
     DasPtr<IForeignLanguageRuntime> CreateCppRuntime()
@@ -316,7 +317,8 @@ namespace
         const auto ticks =
             std::chrono::steady_clock::now().time_since_epoch().count();
         return std::filesystem::temp_directory_path()
-               / ("das_maapi_authoring_" + std::to_string(ticks));
+               / Das::Utils::PathFromUtf8(
+                   "das_maapi_authoring_" + std::to_string(ticks));
     }
 
     class MaapiAuthoringFixture : public ::testing::Test
@@ -338,7 +340,7 @@ namespace
             // 模拟生产 DasHttp 启动设 host path（App.cpp:146），让 loadMode:ipc
             // 的 DasMaaPi.json 能 spawn 真实 DasHost。host
             // 未配置/不存在则跳过。
-            std::string das_host_path;
+            std::filesystem::path das_host_path;
             try
             {
                 das_host_path = IpcTestConfig::GetDasHostPath();
@@ -349,9 +351,12 @@ namespace
             }
             if (!std::filesystem::exists(das_host_path))
             {
-                GTEST_SKIP() << "DasHost not found at: " << das_host_path;
+                GTEST_SKIP() << "DasHost not found at: "
+                             << Das::Utils::PathToUtf8(das_host_path);
             }
-            plugin_manager_->SetHostExePath(das_host_path);
+            // ABI 边界收 const std::string&，path 在调用点物化为 UTF-8
+            plugin_manager_->SetHostExePath(
+                Das::Utils::PathToUtf8(das_host_path));
             ASSERT_EQ(
                 plugin_manager_->LoadPlugin(MaapiManifestPath()),
                 DAS_S_OK);
@@ -722,7 +727,8 @@ namespace
 TEST_F(MaapiAuthoringFixture, ApplyPathFailurePersistsDiagnostics)
 {
     auto session = CreateSession();
-    auto missing_path = FixturePath("missing.jsonc").generic_string();
+    auto missing_path =
+        Das::Utils::PathToGenericUtf8(FixturePath("missing.jsonc"));
     auto change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
         "\"kind\":\"document\"},\"fieldName\":\"adapter.interfacePath\","
@@ -756,7 +762,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
 {
     auto session = CreateSession();
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
         "\"kind\":\"document\"},\"fieldName\":\"adapter.interfacePath\","
@@ -806,7 +812,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
 TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     // D-84-34/40: 严格 contract 不再支持 pi.tasks 批量替换；初始状态直接通过
     // session context 注入一个 DailyFarm 实例（带显式 itemId 方便后续
     // formSequenceItem-targeted setValue 寻址）。
@@ -909,7 +915,7 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
 TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"orphanPaths\":[\"options:legacy\","
@@ -957,7 +963,7 @@ TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
 TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + R"("},"pi":{"orphanPaths":["pi.tasks:MissingTask"]}})");
@@ -1007,7 +1013,7 @@ TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)
 TEST_F(MaapiAuthoringFixture, ContractDocShapeHasFormSequenceAndNoPrivateFields)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
@@ -1076,7 +1082,7 @@ TEST_F(MaapiAuthoringFixture, ContractDocShapeHasFormSequenceAndNoPrivateFields)
 TEST_F(MaapiAuthoringFixture, ItemLevelSetValueTogglesTaskEnabled)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
@@ -1109,7 +1115,7 @@ TEST_F(MaapiAuthoringFixture, ItemLevelSetValueTogglesTaskEnabled)
 TEST_F(MaapiAuthoringFixture, RemoveSequenceItemDropsTaskFromPiTasks)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
@@ -1358,7 +1364,7 @@ TEST(PortDerivationTest, BuildPortDefinitionsJsonProducesValidArray)
 TEST_F(MaapiAuthoringFixture, ApplyChangeReturnsDynamicPortsInResultJson)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
 
     // 起始 session 已注入 DailyFarm 实例（带 itemId），避免依赖已删除的
     // pi.tasks 批量替换入口。
@@ -2838,7 +2844,7 @@ TEST(PresetTest, NestedOptionsAreInitializedFromPreset)
 TEST_F(MaapiAuthoringFixture, PresetNameSetValueTriggersTaskExpansion)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -2903,7 +2909,7 @@ TEST_F(MaapiAuthoringFixture, PresetNameSetValueTriggersTaskExpansion)
 TEST_F(MaapiAuthoringFixture, ApplyPresetExpandsTasksAndRestoresOptionValues)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -2976,7 +2982,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPresetExpandsTasksAndRestoresOptionValues)
 TEST_F(MaapiAuthoringFixture, InvalidPresetNameWritesOrphanPath)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -3803,7 +3809,7 @@ TEST(MaapiProjectionTest, IconsResolvedToAbsoluteOrHttps)
     using namespace Das::Plugins::DasMaaPi;
 
     auto catalog = MakeStrictProjectionMockCatalog();
-    catalog.interface_directory = "C:/maapi/strict";
+    catalog.interface_directory = DAS_PATH_LITERAL("C:/maapi/strict");
     catalog.controllers.front().dto.icon = "https://example.com/android.png";
     catalog.tasks.front().dto.icon = "C:/maapi/icons/daily.png";
     for (auto& opt : catalog.options)
@@ -4013,7 +4019,7 @@ std::size_t CountDiagnosticsBySeverity(
 TEST_F(MaapiAuthoringFixture, SetValueDocumentTargetControllerNameSucceeds)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -4052,7 +4058,7 @@ TEST_F(MaapiAuthoringFixture, SetValueDocumentTargetControllerNameSucceeds)
 TEST_F(MaapiAuthoringFixture, SetValueDocumentTargetRejectsUnknownField)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -4088,7 +4094,7 @@ TEST_F(MaapiAuthoringFixture, SetValueDocumentTargetRejectsUnknownField)
 TEST_F(MaapiAuthoringFixture, SetValueFormSequenceItemTargetUpdatesEnabled)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_a\","
@@ -4120,7 +4126,7 @@ TEST_F(MaapiAuthoringFixture, SetValueFormSequenceItemTargetUpdatesEnabled)
 TEST_F(MaapiAuthoringFixture, SetValueFormSequenceItemTargetRejectsUnknownId)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_a\","
@@ -4154,7 +4160,7 @@ TEST_F(MaapiAuthoringFixture, SetValueFormSequenceItemTargetRejectsUnknownId)
 TEST_F(MaapiAuthoringFixture, SetValueRejectsLegacyValuePathPayload)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -4181,7 +4187,7 @@ TEST_F(MaapiAuthoringFixture, SetValueRejectsLegacyValuePathPayload)
 TEST_F(MaapiAuthoringFixture, SetValueRejectsLegacyNodeIdFieldPayload)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_a\","
@@ -4212,7 +4218,7 @@ TEST_F(MaapiAuthoringFixture, SetValueRejectsLegacyNodeIdFieldPayload)
 TEST_F(MaapiAuthoringFixture, SetValueRejectsExtraPayloadMember)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -4233,7 +4239,7 @@ TEST_F(MaapiAuthoringFixture, SetValueRejectsExtraPayloadMember)
 TEST_F(MaapiAuthoringFixture, AddFormSequenceItemRegistersTaskInstance)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -4271,7 +4277,7 @@ TEST_F(MaapiAuthoringFixture, AddFormSequenceItemRegistersTaskInstance)
 TEST_F(MaapiAuthoringFixture, AddFormSequenceItemRejectsUnknownActionId)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -4298,7 +4304,7 @@ TEST_F(MaapiAuthoringFixture, AddFormSequenceItemRejectsUnknownActionId)
 TEST_F(MaapiAuthoringFixture, RemoveFormSequenceItemDropsTaskByItemId)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":["
@@ -4333,7 +4339,7 @@ TEST_F(MaapiAuthoringFixture, RemoveFormSequenceItemDropsTaskByItemId)
 TEST_F(MaapiAuthoringFixture, RemoveFormSequenceItemRejectsUnknownId)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":["
@@ -4362,7 +4368,7 @@ TEST_F(MaapiAuthoringFixture, RemoveFormSequenceItemRejectsUnknownId)
 TEST_F(MaapiAuthoringFixture, MoveFormSequenceItemReordersByItemId)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":["
@@ -4400,7 +4406,7 @@ TEST_F(MaapiAuthoringFixture, MoveFormSequenceItemReordersByItemId)
 TEST_F(MaapiAuthoringFixture, InvokeCommandRejectsUnknownCommandId)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + R"("},"pi":{"presetName":"DailyPreset"}})");
@@ -4430,7 +4436,7 @@ TEST_F(MaapiAuthoringFixture, InvokeCommandRejectsUnknownCommandId)
 TEST_F(MaapiAuthoringFixture, SetValuePresetNameLoadsCustomPreset)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"controllerName\":\"Android\","
@@ -4502,7 +4508,7 @@ TEST_F(MaapiAuthoringFixture, SetValuePresetNameLoadsCustomPreset)
 TEST_F(MaapiAuthoringFixture, InvokeCommandNewPresetCreatesSnapshot)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     // flat pi seed：无 configurations，只有 PI 官方字段 + 一个 task 实例。
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path
@@ -4612,7 +4618,7 @@ TEST_F(MaapiAuthoringFixture, InvokeCommandNewPresetCreatesSnapshot)
 TEST_F(MaapiAuthoringFixture, ConvertViewRejectedByMaapi)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -4632,7 +4638,7 @@ TEST_F(MaapiAuthoringFixture, ConvertViewRejectedByMaapi)
 TEST_F(MaapiAuthoringFixture, LegacyKindsRejectedAsUnsupportedChange)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -4668,7 +4674,7 @@ TEST_F(MaapiAuthoringFixture, LegacyKindsRejectedAsUnsupportedChange)
 TEST_F(MaapiAuthoringFixture, CompileEmptyRequestReturnsStrictEnvelope)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -4949,8 +4955,8 @@ TEST_F(MaapiAuthoringFixture, LiteralV28InterfaceProjectsStrictWire)
 {
     auto fixture_text = ReadFixtureText("interface_authoring_v28.jsonc");
     ASSERT_TRUE(fixture_text.has_value()) << "fixture missing";
-    auto interface_path =
-        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    auto interface_path = Das::Utils::PathToGenericUtf8(
+        FixturePath("interface_authoring_v28.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -5012,8 +5018,8 @@ TEST_F(MaapiAuthoringFixture, LiteralV28InterfaceProjectsStrictWire)
 // MaaPI 约定默认回退首个 case "1-1"。
 TEST_F(MaapiAuthoringFixture, FreshSessionOmitsFreeGlobalOptionFromRootFields)
 {
-    auto interface_path =
-        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    auto interface_path = Das::Utils::PathToGenericUtf8(
+        FixturePath("interface_authoring_v28.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -5038,8 +5044,8 @@ TEST_F(MaapiAuthoringFixture, FreshSessionOmitsFreeGlobalOptionFromRootFields)
 // use-medicine=[] 因 v28 fixture 无 default_case）。
 TEST_F(MaapiAuthoringFixture, AddFormSequenceItemProjectsTaskOptionPiDefaults)
 {
-    auto interface_path =
-        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    auto interface_path = Das::Utils::PathToGenericUtf8(
+        FixturePath("interface_authoring_v28.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -5092,8 +5098,8 @@ TEST_F(MaapiAuthoringFixture, LiteralPost84StateRoundTripsProviderGetApplyGet)
 {
     auto fixture_text = ReadFixtureText("post84_accepted_properties.json");
     ASSERT_TRUE(fixture_text.has_value()) << "fixture missing";
-    auto interface_path =
-        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    auto interface_path = Das::Utils::PathToGenericUtf8(
+        FixturePath("interface_authoring_v28.jsonc"));
 
     // 把字面量 fixture 装进 session context。interfacePath 用 v28 fixture
     // 的绝对路径覆盖（fixture 内的相对值只是占位）。
@@ -5185,8 +5191,8 @@ TEST_F(MaapiAuthoringFixture, LiteralPost84StateFullLifecyclePreservesAuthority)
 {
     auto fixture_text = ReadFixtureText("post84_accepted_properties.json");
     ASSERT_TRUE(fixture_text.has_value()) << "fixture missing";
-    auto interface_path =
-        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    auto interface_path = Das::Utils::PathToGenericUtf8(
+        FixturePath("interface_authoring_v28.jsonc"));
 
     std::ostringstream context_buf;
     context_buf << R"({"adapter":{"interfacePath":")" << interface_path
@@ -5284,8 +5290,8 @@ TEST_F(MaapiAuthoringFixture, MalformedChangeLeavesDisposableStateUnchanged)
 {
     auto fixture_text = ReadFixtureText("post84_accepted_properties.json");
     ASSERT_TRUE(fixture_text.has_value()) << "fixture missing";
-    auto interface_path =
-        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    auto interface_path = Das::Utils::PathToGenericUtf8(
+        FixturePath("interface_authoring_v28.jsonc"));
     auto parsed = ParseJsonFromStringStrict(*fixture_text);
     ASSERT_TRUE(parsed.has_value());
     auto root_obj = parsed->as_object();
@@ -5608,7 +5614,7 @@ TEST(MaapiProjectionTest, TaskSwitchOptionFallsBackToPiDefaultWhenMissing)
 TEST_F(MaapiAuthoringFixture, PresetExpansionAssignsStableItemIds)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -5654,7 +5660,7 @@ TEST_F(
     DocumentTargetSetValueOnTaskScopedOptionAssignsItemId)
 {
     auto interface_path =
-        FixturePath("interface_authoring.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
     auto session = CreateSession(
         R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
@@ -6963,7 +6969,8 @@ namespace
                 name = "MaapiUpdate_" + std::to_string(counter++);
             }
             name_ = std::move(name);
-            dir_ = std::filesystem::temp_directory_path() / name_;
+            dir_ = std::filesystem::temp_directory_path()
+                   / Das::Utils::PathFromUtf8(name_);
             Cleanup();
             std::error_code ec;
             std::filesystem::create_directories(dir_, ec);
@@ -6975,7 +6982,9 @@ namespace
 
         void WriteInterface(const std::string& json)
         {
-            std::ofstream file(dir_ / "interface.json", std::ios::binary);
+            std::ofstream file(
+                dir_ / DAS_PATH_LITERAL("interface.json"),
+                std::ios::binary);
             file << json;
         }
 
@@ -6993,7 +7002,8 @@ namespace
                      std::filesystem::directory_options::skip_permission_denied,
                      ec))
             {
-                const auto leaf = entry.path().filename().string();
+                const auto leaf =
+                    Das::Utils::PathToUtf8(entry.path().filename());
                 if (leaf.rfind(backup_prefix, 0) == 0 || leaf == update_name)
                 {
                     std::filesystem::remove_all(entry.path(), ec);
@@ -7093,12 +7103,14 @@ namespace
     }
 
     // 构造会话直接测试的 AcceptedSettingsDto（adapter.interfacePath →
-    // 临时项目目录的 interface.json；generic_string 用 '/' 避免 JSON 转义）。
+    // 临时项目目录的 interface.json；generic 形态用 '/' 避免 JSON 转义）。
     AcceptedSettingsDto MakeUpdateSettings(const std::filesystem::path& pi_dir)
     {
         const auto context = Das::Utils::ParseYyjsonFromString(
             R"({"adapter":{"interfacePath":")"
-            + (pi_dir / "interface.json").generic_string() + R"("}})");
+            + Das::Utils::PathToGenericUtf8(
+                pi_dir / DAS_PATH_LITERAL("interface.json"))
+            + R"("}})");
         return ParseAcceptedSettings(
             context.has_value() ? *context : Das::Utils::MakeYyjsonObject());
     }
@@ -8110,7 +8122,7 @@ TEST(MaapiUpdateCommandTest, UpdateSectionTopOrderingAcrossCheckEntryStates)
     };
     const auto dir_of = [](const AcceptedSettingsDto& settings)
     {
-        return std::filesystem::path(*settings.adapter.interface_path)
+        return Das::Utils::PathFromUtf8(*settings.adapter.interface_path)
             .parent_path();
     };
     const auto first_section_id = [](const yyjson::value& document)
@@ -8372,7 +8384,8 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateAcceptedRetainsPending)
         UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
             project.Dir(),
             std::chrono::seconds(10)));
-    const auto replaced = ReadFileText(project.Dir() / "interface.json");
+    const auto replaced =
+        ReadFileText(project.Dir() / DAS_PATH_LITERAL("interface.json"));
     EXPECT_NE(replaced.find("1.2.0"), std::string::npos);
     EXPECT_EQ(replaced.find("1.0.0"), std::string::npos);
     // job 完成后检查结果条目仍保留。
@@ -8501,7 +8514,8 @@ TEST(
     }
 
     // pi_dir 已替换 + 检查结果条目保留。
-    const auto replaced = ReadFileText(project.Dir() / "interface.json");
+    const auto replaced =
+        ReadFileText(project.Dir() / DAS_PATH_LITERAL("interface.json"));
     EXPECT_NE(replaced.find("1.2.0"), std::string::npos);
     {
         const auto entry = UpdateCheckStore::Instance().Get(project.Dir());
@@ -8685,7 +8699,8 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateFailureRetainsPending)
     EXPECT_NE(final_value.find("result=-10008"), std::string::npos);
 
     // pi_dir 旧内容保留 + 检查结果条目保留（可重试）。
-    const auto current = ReadFileText(project.Dir() / "interface.json");
+    const auto current =
+        ReadFileText(project.Dir() / DAS_PATH_LITERAL("interface.json"));
     EXPECT_NE(current.find("1.0.0"), std::string::npos);
     {
         const auto entry = UpdateCheckStore::Instance().Get(project.Dir());
@@ -9525,9 +9540,10 @@ TEST(MaapiAdbDeviceCommandTest, DiscoverAdbDevicesAppliesToDocumentCandidates)
 
     // 构造 AcceptedSettingsDto 指向 interface_controller.jsonc（含 Adb
     // controller 名 "Android"，确保 IsCurrentControllerAdb 守卫通过）。
-    auto settings_json =
-        R"({"adapter":{"interfacePath":")"
-        + FixturePath("interface_controller.jsonc").generic_string() + R"("}})";
+    auto settings_json = R"({"adapter":{"interfacePath":")"
+                         + Das::Utils::PathToGenericUtf8(
+                             FixturePath("interface_controller.jsonc"))
+                         + R"("}})";
     auto settings = ParseAcceptedSettings(
         Das::Utils::ParseYyjsonFromString(settings_json).value());
     MaapiAuthoringSession session(settings);
@@ -9616,7 +9632,7 @@ TEST(MaapiCompileDeviceCacheTest, SelectedDeviceInCacheOverridesRawJson)
 
     AcceptedSettingsDto settings;
     settings.adapter.interface_path =
-        FixturePath("interface_controller.jsonc").string();
+        Das::Utils::PathToUtf8(FixturePath("interface_controller.jsonc"));
     settings.pi.controller_name = "Android";
     settings.pi.controller_adb_device = "127.0.0.1:5554";
 
@@ -9658,7 +9674,7 @@ TEST(MaapiCompileDeviceCacheTest, SelectedDeviceNotInCacheFallsBackWithWarning)
 
     AcceptedSettingsDto settings;
     settings.adapter.interface_path =
-        FixturePath("interface_controller.jsonc").string();
+        Das::Utils::PathToUtf8(FixturePath("interface_controller.jsonc"));
     settings.pi.controller_name = "Android";
     // 指向不在 cache 的 address。
     settings.pi.controller_adb_device = "ghost:9999";
@@ -9707,7 +9723,7 @@ TEST(MaapiCompileDeviceCacheTest, EmptySelectedDeviceUsesRawJsonAndIgnoresCache)
 
     AcceptedSettingsDto settings;
     settings.adapter.interface_path =
-        FixturePath("interface_controller.jsonc").string();
+        Das::Utils::PathToUtf8(FixturePath("interface_controller.jsonc"));
     settings.pi.controller_name = "Android";
     // controller_adb_device 留空（nullopt）。
 

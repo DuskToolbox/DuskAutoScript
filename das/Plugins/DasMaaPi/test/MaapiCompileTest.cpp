@@ -9,6 +9,7 @@
 #include <das/Plugins/DasMaaPi/PiCatalog.h>
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <gtest/gtest.h>
 
@@ -29,14 +30,14 @@ namespace
 
     std::filesystem::path PluginPackageDir()
     {
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()}
-               / "DasMaaPi";
+        return IpcTestConfig::GetPluginDir() / DAS_PATH_LITERAL("DasMaaPi");
     }
 
     std::filesystem::path FixturePath(std::string_view name)
     {
-        return std::filesystem::current_path() / "DasMaaPi" / "test"
-               / "fixtures" / std::filesystem::path{name};
+        return std::filesystem::current_path() / DAS_PATH_LITERAL("DasMaaPi")
+               / DAS_PATH_LITERAL("test") / DAS_PATH_LITERAL("fixtures")
+               / Das::Utils::PathFromUtf8(name);
     }
 
     DasPtr<IForeignLanguageRuntime> CreateCppRuntime()
@@ -75,7 +76,8 @@ namespace
         const auto ticks =
             std::chrono::steady_clock::now().time_since_epoch().count();
         return std::filesystem::temp_directory_path()
-               / ("das_maapi_compile_" + std::to_string(ticks));
+               / Das::Utils::PathFromUtf8(
+                   "das_maapi_compile_" + std::to_string(ticks));
     }
 
     class MaapiCompileFixture : public ::testing::Test
@@ -97,7 +99,7 @@ namespace
             // 模拟生产 DasHttp 启动设 host path（App.cpp:146），让 loadMode:ipc
             // 的 DasMaaPi.json 能 spawn 真实 DasHost。host
             // 未配置/不存在则跳过。
-            std::string das_host_path;
+            std::filesystem::path das_host_path;
             try
             {
                 das_host_path = IpcTestConfig::GetDasHostPath();
@@ -108,9 +110,12 @@ namespace
             }
             if (!std::filesystem::exists(das_host_path))
             {
-                GTEST_SKIP() << "DasHost not found at: " << das_host_path;
+                GTEST_SKIP() << "DasHost not found at: "
+                             << Das::Utils::PathToUtf8(das_host_path);
             }
-            plugin_manager_->SetHostExePath(das_host_path);
+            // ABI 边界收 const std::string&，path 在调用点物化为 UTF-8
+            plugin_manager_->SetHostExePath(
+                Das::Utils::PathToUtf8(das_host_path));
             ASSERT_EQ(
                 plugin_manager_->LoadPlugin(PluginPackageDir()),
                 DAS_S_OK);
@@ -308,7 +313,9 @@ namespace
 TEST_F(MaapiCompileFixture, CompilePreviewOmitsExecutionEnvelope)
 {
     auto result = Compile(
-        CompileContext(FixturePath("interface_compile.jsonc").generic_string()),
+        CompileContext(
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc"))),
         "preview");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -321,7 +328,9 @@ TEST_F(MaapiCompileFixture, CompilePreviewOmitsExecutionEnvelope)
 TEST_F(MaapiCompileFixture, CompileExecutionReturnsEnvelope)
 {
     auto result = Compile(
-        CompileContext(FixturePath("interface_compile.jsonc").generic_string()),
+        CompileContext(
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc"))),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -342,7 +351,9 @@ TEST_F(
     CompileExecutionIncludesTypedControllerSpecAndRawPiEnv)
 {
     auto result = Compile(
-        CompileContext(FixturePath("interface_compile.jsonc").generic_string()),
+        CompileContext(
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc"))),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -377,7 +388,9 @@ TEST_F(
 TEST_F(MaapiCompileFixture, PipelineOverrideMergesOptions)
 {
     auto result = Compile(
-        CompileContext(FixturePath("interface_compile.jsonc").generic_string()),
+        CompileContext(
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc"))),
         "execution");
     auto maapi = (*(*result.as_object())[std::string_view("executionInput")]
                        .as_object())[std::string_view("maapi")]
@@ -411,7 +424,8 @@ TEST_F(MaapiCompileFixture, CompileExecutionEnvSnapshotHasClientVersions)
     // compile→envelope→run 链路。
     auto result = Compile(
         CompileContext(
-            FixturePath("interface_compile.jsonc").generic_string(),
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc")),
             "zh_cn"),
         "execution");
     auto obj = result.as_object();
@@ -493,7 +507,8 @@ TEST_F(MaapiCompileFixture, CompileExecutionIncludesFocusTranslationsPath)
 {
     auto result = Compile(
         CompileContext(
-            FixturePath("interface_v26_jsonc.jsonc").generic_string(),
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_v26_jsonc.jsonc")),
             "zh_cn"),
         "execution");
     auto obj = result.as_object();
@@ -520,7 +535,8 @@ TEST_F(MaapiCompileFixture, AgentBoundaryAllowsExecutionEnvelope)
 {
     auto result = Compile(
         CompileContextV26(
-            FixturePath("interface_v26_jsonc.jsonc").generic_string()),
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_v26_jsonc.jsonc"))),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -554,7 +570,8 @@ TEST_F(MaapiCompileFixture, SettingReferencedOptionMergesAtGlobalLevel)
 {
     auto result = Compile(
         CompileContextSetting(
-            FixturePath("interface_compile.jsonc").generic_string()),
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc"))),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -599,7 +616,8 @@ TEST_F(MaapiCompileFixture, SettingOptionDedupedWithExplicitGlobalOption)
 {
     auto result = Compile(
         CompileContextSetting(
-            FixturePath("interface_compile.jsonc").generic_string()),
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc"))),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -632,7 +650,8 @@ TEST_F(MaapiCompileFixture, SettingOptionRespectsV281IsActiveFilter)
 {
     auto result = Compile(
         CompileContextSetting(
-            FixturePath("interface_compile.jsonc").generic_string()),
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc"))),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -658,7 +677,8 @@ TEST_F(MaapiCompileFixture, UneditedOptionDefaultsMergeIntoPipeline)
 {
     auto result = Compile(
         CompileContextDefaults(
-            FixturePath("interface_compile.jsonc").generic_string()),
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc"))),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -731,7 +751,8 @@ TEST_F(MaapiCompileFixture, UneditedSwitchLowercaseNoCaseMergesOverride)
 {
     auto result = Compile(
         CompileContextDefaults(
-            FixturePath("interface_compile.jsonc").generic_string()),
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc"))),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -767,7 +788,8 @@ TEST_F(MaapiCompileFixture, EditedOptionSelectionOverridesDefault)
 {
     auto result = Compile(
         CompileContextSingleGlobal(
-            FixturePath("interface_compile.jsonc").generic_string()),
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc"))),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -814,7 +836,8 @@ TEST_F(MaapiCompileFixture, StaleOptionSelectionEmitsNonBlockingWarning)
 {
     // Build a context whose globalOptions references "ghost-option" — not
     // declared in interface_compile.jsonc's catalog.
-    const auto path = FixturePath("interface_compile.jsonc").generic_string();
+    const auto path =
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_compile.jsonc"));
     const auto context =
         R"({"adapter":{"interfacePath":")" + std::string(path)
         + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"

@@ -12,6 +12,7 @@
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <gtest/gtest.h>
 
@@ -40,18 +41,19 @@ namespace
 
     std::filesystem::path PluginRootDir()
     {
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()};
+        return IpcTestConfig::GetPluginDir();
     }
 
     std::filesystem::path PluginPackageDir()
     {
-        return PluginRootDir() / "DasMaaPi";
+        return PluginRootDir() / DAS_PATH_LITERAL("DasMaaPi");
     }
 
     std::filesystem::path FixturePath(std::string_view name)
     {
-        return std::filesystem::current_path() / "DasMaaPi" / "test"
-               / "fixtures" / std::filesystem::path{name};
+        return std::filesystem::current_path() / DAS_PATH_LITERAL("DasMaaPi")
+               / DAS_PATH_LITERAL("test") / DAS_PATH_LITERAL("fixtures")
+               / Das::Utils::PathFromUtf8(name);
     }
 
     std::string JsonStringLiteral(std::string_view value)
@@ -123,7 +125,8 @@ namespace
         const auto ticks =
             std::chrono::steady_clock::now().time_since_epoch().count();
         return std::filesystem::temp_directory_path()
-               / ("das_maapi_integration_" + std::to_string(ticks));
+               / Das::Utils::PathFromUtf8(
+                   "das_maapi_integration_" + std::to_string(ticks));
     }
 
     class MaapiIntegrationFixture : public ::testing::Test
@@ -145,7 +148,7 @@ namespace
             // 模拟生产 DasHttp 启动设 host path（App.cpp:146），让 loadMode:ipc
             // 的 DasMaaPi.json 能 spawn 真实 DasHost。host
             // 未配置/不存在则跳过。
-            std::string das_host_path;
+            std::filesystem::path das_host_path;
             try
             {
                 das_host_path = IpcTestConfig::GetDasHostPath();
@@ -156,17 +159,21 @@ namespace
             }
             if (!std::filesystem::exists(das_host_path))
             {
-                GTEST_SKIP() << "DasHost not found at: " << das_host_path;
+                GTEST_SKIP() << "DasHost not found at: "
+                             << Das::Utils::PathToUtf8(das_host_path);
             }
-            plugin_manager_->SetHostExePath(das_host_path);
-            ASSERT_TRUE(
-                std::filesystem::exists(PluginPackageDir() / "DasMaaPi.json"));
-            ASSERT_TRUE(
-                std::filesystem::exists(
-                    PluginPackageDir() / "libDasMaaPi.dll"));
+            // ABI 边界收 const std::string&，path 在调用点物化为 UTF-8
+            plugin_manager_->SetHostExePath(
+                Das::Utils::PathToUtf8(das_host_path));
             ASSERT_TRUE(
                 std::filesystem::exists(
-                    PluginPackageDir() / "MaaFramework.dll"));
+                    PluginPackageDir() / DAS_PATH_LITERAL("DasMaaPi.json")));
+            ASSERT_TRUE(
+                std::filesystem::exists(
+                    PluginPackageDir() / DAS_PATH_LITERAL("libDasMaaPi.dll")));
+            ASSERT_TRUE(
+                std::filesystem::exists(
+                    PluginPackageDir() / DAS_PATH_LITERAL("MaaFramework.dll")));
             ASSERT_EQ(
                 plugin_manager_->LoadPlugin(PluginPackageDir()),
                 DAS_S_OK);
@@ -253,7 +260,7 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
         initial_document.as_object()->contains(std::string_view("kind")));
 
     auto interface_path =
-        FixturePath("sample_interface.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("sample_interface.jsonc"));
     auto change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
         "\"kind\":\"document\"},\"fieldName\":\"adapter.interfacePath\","
@@ -418,8 +425,9 @@ namespace
         std::string_view                                fixture_name)
     {
         CompiledEnvelope out;
-        const auto interface_path = FixturePath(fixture_name).generic_string();
-        auto       set_path = ParseDasJson(
+        const auto       interface_path =
+            Das::Utils::PathToGenericUtf8(FixturePath(fixture_name));
+        auto set_path = ParseDasJson(
             "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
             "\"target\":{\"kind\":\"document\"},\"fieldName\":"
             "\"adapter.interfacePath\",\"value\":\""
@@ -501,18 +509,24 @@ TEST_F(MaapiIntegrationFixture, V28E2EPretaskSuccessPathRunsBeforeController)
     // pretask 相对路径 exec 由 RunPretasks 基于 interface_directory 预解析成
     // 绝对路径后再 spawn（对齐 ResolveChildExec，写法同 MaapiRuntimeTest）。
     const auto interface_dir =
-        std::filesystem::path(compiled.envelope->maapi.interface_directory);
+        Das::Utils::PathFromUtf8(compiled.envelope->maapi.interface_directory);
     EXPECT_EQ(
         runner.launches[0].exec,
-        (interface_dir / "tools/bootstrap.exe").lexically_normal().string());
+        Das::Utils::PathToUtf8(
+            (interface_dir / DAS_PATH_LITERAL("tools/bootstrap.exe"))
+                .lexically_normal()));
     EXPECT_EQ(
         runner.launches[1].exec,
-        (interface_dir / "tools/warmup.exe").lexically_normal().string());
+        Das::Utils::PathToUtf8(
+            (interface_dir / DAS_PATH_LITERAL("tools/warmup.exe"))
+                .lexically_normal()));
     EXPECT_EQ(
         runner.launches[2].exec,
-        (interface_dir / "tools/cleanup.exe").lexically_normal().string());
+        Das::Utils::PathToUtf8(
+            (interface_dir / DAS_PATH_LITERAL("tools/cleanup.exe"))
+                .lexically_normal()));
     EXPECT_EQ(
-        runner.launches[0].working_directory.string(),
+        Das::Utils::PathToUtf8(runner.launches[0].working_directory),
         compiled.envelope->maapi.interface_directory);
     // Controller + tasker still created after pretask stage completes.
     EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Android:Adb"));
@@ -607,7 +621,7 @@ TEST_F(MaapiIntegrationFixture, V28E2EEnvSnapshotHasAllEightPiFields)
     // (user setting wins); without an explicit language it is legitimately
     // empty and AppendEnv omits PI_CLIENT_LANGUAGE from the launch env.
     const auto interface_path =
-        FixturePath("interface_v28.jsonc").generic_string();
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_v28.jsonc"));
     auto context = ParseDasJson(
         R"({"adapter":{"interfacePath":")" + interface_path
         + "\",\"executionPolicy\":{\"failFast\":true}},"
@@ -651,8 +665,8 @@ TEST_F(MaapiIntegrationFixture, V28E2EEnvSnapshotHasAllEightPiFields)
 // shape + dispatch routing end-to-end through the real plugin compile path.
 TEST_F(MaapiIntegrationFixture, V28E2EWin32TypedControllerEmitsTypedInitParams)
 {
-    const auto interface_path =
-        FixturePath("interface_controller.jsonc").generic_string();
+    const auto interface_path = Das::Utils::PathToGenericUtf8(
+        FixturePath("interface_controller.jsonc"));
     // Select the Desktop (Win32) controller explicitly so PiCompiler emits the
     // typed init params instead of defaulting to the first controller
     // (Android).

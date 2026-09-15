@@ -6,6 +6,7 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
@@ -35,23 +36,22 @@ namespace
 
     std::filesystem::path PluginPackageDir()
     {
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()}
-               / "DasMaaPi";
+        return IpcTestConfig::GetPluginDir() / DAS_PATH_LITERAL("DasMaaPi");
     }
 
     std::filesystem::path MaapiManifestPath()
     {
-        return PluginPackageDir() / "DasMaaPi.json";
+        return PluginPackageDir() / DAS_PATH_LITERAL("DasMaaPi.json");
     }
 
     std::filesystem::path MaapiLibPath()
     {
-        return PluginPackageDir() / "libDasMaaPi.dll";
+        return PluginPackageDir() / DAS_PATH_LITERAL("libDasMaaPi.dll");
     }
 
     std::filesystem::path MaaFrameworkDllPath()
     {
-        return PluginPackageDir() / "MaaFramework.dll";
+        return PluginPackageDir() / DAS_PATH_LITERAL("MaaFramework.dll");
     }
 
     DasPtr<IForeignLanguageRuntime> CreateCppRuntime()
@@ -105,7 +105,8 @@ namespace
         const auto ticks =
             std::chrono::steady_clock::now().time_since_epoch().count();
         return std::filesystem::temp_directory_path()
-               / ("das_maapi_scaffold_" + std::to_string(ticks));
+               / Das::Utils::PathFromUtf8(
+                   "das_maapi_scaffold_" + std::to_string(ticks));
     }
 
     class MaapiPluginScaffoldFixture : public ::testing::Test
@@ -129,7 +130,7 @@ namespace
             // 模拟生产 DasHttp 启动设 host path（App.cpp:146），让 loadMode:ipc
             // 的 DasMaaPi.json 能 spawn 真实 DasHost。host
             // 未配置/不存在则跳过。
-            std::string das_host_path;
+            std::filesystem::path das_host_path;
             try
             {
                 das_host_path = IpcTestConfig::GetDasHostPath();
@@ -140,9 +141,12 @@ namespace
             }
             if (!std::filesystem::exists(das_host_path))
             {
-                GTEST_SKIP() << "DasHost not found at: " << das_host_path;
+                GTEST_SKIP() << "DasHost not found at: "
+                             << Das::Utils::PathToUtf8(das_host_path);
             }
-            plugin_manager_->SetHostExePath(das_host_path);
+            // ABI 边界收 const std::string&，path 在调用点物化为 UTF-8
+            plugin_manager_->SetHostExePath(
+                Das::Utils::PathToUtf8(das_host_path));
         }
 
         void TearDown() override

@@ -34,12 +34,22 @@ inline std::filesystem::path PathFromUtf8(std::string_view utf8_text)
 }
 
 /// path 出向为 UTF-8 文本的唯一通道：u8string() 后 char8_t→char 1:1
-/// 拷贝（native 分隔符；需要 '/' 分隔符的消费点位逐处改用
-/// generic_u8string()）。Windows 的 .string() 走 ANSI 代码页，非 ASCII
+/// 拷贝（native 分隔符；需要 '/' 分隔符的消费点位改用
+/// PathToGenericUtf8）。Windows 的 .string() 走 ANSI 代码页，非 ASCII
 /// 名会损坏。
 inline std::string PathToUtf8(const std::filesystem::path& source_path)
 {
     const std::u8string u8_text = source_path.u8string();
+    return std::string{
+        reinterpret_cast<const char*>(u8_text.data()),
+        u8_text.size()};
+}
+
+/// path 出向为正斜杠 + UTF-8 文本（JSON 文本域等按 '/' 约定消费的点位）：
+/// generic_string() 走 ANSI 代码页，是它的非法通道。
+inline std::string PathToGenericUtf8(const std::filesystem::path& source_path)
+{
+    const std::u8string u8_text = source_path.generic_u8string();
     return std::string{
         reinterpret_cast<const char*>(u8_text.data()),
         u8_text.size()};
