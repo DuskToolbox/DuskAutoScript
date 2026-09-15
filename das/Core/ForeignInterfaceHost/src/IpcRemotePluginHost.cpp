@@ -3,7 +3,7 @@
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/Logger/Logger.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 
 #include <limits>
 #include <tl/expected.hpp>
@@ -57,10 +57,9 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
     if (request.target_session_id.has_value())
     {
         const uint16_t    session_id = request.target_session_id.value();
-        auto              u8path = request.manifest_path.u8string();
         const std::string manifest_str =
             request.remote_manifest_path.empty()
-                ? std::string{DAS::Utils::U8AsString(u8path)}
+                ? DAS::Utils::PathToUtf8(request.manifest_path)
                 : request.remote_manifest_path;
 
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
@@ -158,8 +157,7 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
     }
 
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-    auto        u8manifest = request.manifest_path.u8string();
-    std::string manifest_path{DAS::Utils::U8AsString(u8manifest)};
+    std::string manifest_path = DAS::Utils::PathToUtf8(request.manifest_path);
     result = ipc_context_.get().LoadPluginAsync(
         launcher.Get(),
         manifest_path.c_str(),

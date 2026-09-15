@@ -34,7 +34,7 @@ namespace Detail
             EXCEPTION_POINTERS*          exception_pointers)
         {
             const HANDLE file = CreateFileW(
-                path.wstring().c_str(),
+                path.native().c_str(),
                 GENERIC_WRITE,
                 0,
                 nullptr,

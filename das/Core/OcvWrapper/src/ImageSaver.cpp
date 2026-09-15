@@ -3,6 +3,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasMemory.h>
 
 DAS_DISABLE_WARNING_BEGIN
@@ -291,7 +292,7 @@ DasResult ImageSaver::SaveToFile(
     {
         DAS_CORE_LOG_ERROR(
             "ImageSaver::SaveToFile: cannot open {}",
-            path.string());
+            Das::Utils::PathToUtf8(path));
         return DAS_E_INVALID_FILE;
     }
     output.write(
@@ -302,7 +303,7 @@ DasResult ImageSaver::SaveToFile(
     {
         DAS_CORE_LOG_ERROR(
             "ImageSaver::SaveToFile: write failed for {}",
-            path.string());
+            Das::Utils::PathToUtf8(path));
         return DAS_E_INVALID_FILE;
     }
     return DAS_S_OK;

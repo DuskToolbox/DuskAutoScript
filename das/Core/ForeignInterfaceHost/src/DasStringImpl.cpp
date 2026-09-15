@@ -4,6 +4,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasConfig.h>
 #include <das/DasException.hpp>
+#include <das/Utils/PathText.h>
 #include <limits>
 #include <magic_enum_format.hpp>
 #include <new>
@@ -156,8 +157,7 @@ DasStringCppImpl::DasStringCppImpl() = default;
 
 DasStringCppImpl::DasStringCppImpl(const std::filesystem::path& path)
 {
-    const auto u8_path = path.u8string();
-    SetUtf8(reinterpret_cast<const char*>(u8_path.c_str()));
+    SetUtf8(Das::Utils::PathToUtf8(path).c_str());
 }
 
 DasStringCppImpl::DasStringCppImpl(

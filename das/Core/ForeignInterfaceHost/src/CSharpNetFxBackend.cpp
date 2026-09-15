@@ -41,7 +41,8 @@ namespace
 #if defined(_WIN32) && defined(DAS_CSHARP_NETFX_BACKEND)
     std::wstring ToWide(const std::filesystem::path& path)
     {
-        return path.wstring();
+        // Win32 块内 native() 即 wstring 本体，原生串搬运零编码转换。
+        return path.native();
     }
 
     std::wstring ToWide(std::string_view value)

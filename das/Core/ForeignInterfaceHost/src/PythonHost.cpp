@@ -1,5 +1,3 @@
-#include <das/Utils/StringUtils.h>
-
 #ifdef DAS_EXPORT_PYTHON
 
 // #include "TemporaryPluginObjectStorage.h"  // TODO: 未来将重写 PythonHost
@@ -9,6 +7,8 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/TaskScheduler/TaskScheduler.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/Expected.h>
+#include <das/Utils/PathText.h>
 
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_UNUSED_PARAMETER
@@ -179,7 +179,7 @@ DasResult LoadPluginConfig(
     {
         DAS_CORE_LOG_ERROR(
             "Failed to open plugin config: {}",
-            DAS::Utils::U8AsString(json_path.u8string()));
+            DAS::Utils::PathToUtf8(json_path));
         return DAS_E_FILE_NOT_FOUND;
     }
 
@@ -192,7 +192,7 @@ DasResult LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to parse plugin config: {}",
-                DAS::Utils::U8AsString(json_path.u8string()));
+                DAS::Utils::PathToUtf8(json_path));
             return DAS_E_FAIL;
         }
         auto config = std::move(*config_opt);
@@ -201,7 +201,7 @@ DasResult LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin config is not a JSON object: {}",
-                DAS::Utils::U8AsString(json_path.u8string()));
+                DAS::Utils::PathToUtf8(json_path));
             return DAS_E_FAIL;
         }
 
@@ -215,7 +215,7 @@ DasResult LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin config missing 'entryPoint' field: {}",
-                DAS::Utils::U8AsString(json_path.u8string()));
+                DAS::Utils::PathToUtf8(json_path));
             return DAS_E_FAIL;
         }
 
@@ -455,8 +455,7 @@ bool PythonManager::Initialize()
                     auto              cwd = std::filesystem::current_path();
                     const PyObjectPtr cwd_str =
                         PyObjectPtr::Attach(PyUnicode_FromString(
-                            reinterpret_cast<const char*>(
-                                cwd.u8string().c_str())));
+                            DAS::Utils::PathToUtf8(cwd).c_str()));
                     if (cwd_str)
                     {
                         if (!PySequence_Contains(
@@ -466,7 +465,7 @@ bool PythonManager::Initialize()
                             PyList_Insert(path_list.Get(), 0, cwd_str.Get());
                             DAS_CORE_LOG_INFO(
                                 "Added current directory to sys.path: {}",
-                                DAS::Utils::U8AsString(cwd.u8string()));
+                                DAS::Utils::PathToUtf8(cwd));
                         }
                     }
                 }
@@ -653,7 +652,7 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin manifest not found: {}",
-                DAS::Utils::U8AsString(path.u8string()));
+                DAS::Utils::PathToUtf8(path));
             return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
         }
 
@@ -697,8 +696,7 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
             // 创建目录字符串
             const PyObjectPtr dir_str =
                 PyObjectPtr::Attach(PyUnicode_FromString(
-                    reinterpret_cast<const char*>(
-                        manifest_dir.u8string().c_str())));
+                    DAS::Utils::PathToUtf8(manifest_dir).c_str()));
             if (!dir_str)
             {
                 throw PythonException("Failed to create directory string");
@@ -710,7 +708,7 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
                 PyList_Append(path_list.Get(), dir_str.Get());
                 DAS_CORE_LOG_INFO(
                     "Added manifest dir to sys.path: {}",
-                    manifest_dir.generic_string());
+                    DAS::Utils::PathToGenericUtf8(manifest_dir));
             }
         }
 

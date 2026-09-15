@@ -9,6 +9,7 @@
 #include <das/IDasSchedulerService.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <filesystem>
@@ -96,9 +97,8 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_plugin_dir;
-            auto                       u8_path = plugin_dir_.u8string();
             auto dir_cr = CreateIDasReadOnlyStringFromUtf8(
-                reinterpret_cast<const char*>(u8_path.c_str()),
+                Das::Utils::PathToUtf8(plugin_dir_).c_str(),
                 p_plugin_dir.Put());
             if (DAS::IsFailed(dir_cr))
             {

@@ -199,11 +199,12 @@ void CleanupStaleProcessLogs(
         return;
     }
 
-    // 文件名宽通道匹配：写入侧已是宽直达（进程 exe 名可能非 ASCII），窄
-    // .string() 读回在 ACP 不可表示字符下会异常/损坏——本函数挂在 g_logger
-    // 静态初始化路径上，异常即进程起不来。
-    const std::wregex name_pattern(
-        LR"(^(.+)-(\d{8}_\d{2}-\d{2}-\d{2})-(\d+)\.log(?:\.\d+)?$)");
+    // 文件名 UTF-8 匹配：进程 exe 名可能非 ASCII，PathToUtf8 出向无损
+    // （.string() 在 ACP 不可表示字符下会异常/损坏）——本函数挂在 g_logger
+    // 静态初始化路径上，异常即进程起不来。时间戳/pid/分隔符结构段全
+    // ASCII，窄 regex 语义与宽通道一致。
+    const std::regex name_pattern(
+        R"(^(.+)-(\d{8}_\d{2}-\d{2}-\d{2})-(\d+)\.log(?:\.\d+)?$)");
     const std::time_t now = std::time(nullptr);
     const std::time_t cutoff =
         now - static_cast<std::time_t>(max_age_days) * 86400;
@@ -219,23 +220,16 @@ void CleanupStaleProcessLogs(
             continue;
         }
 
-        const std::wstring name = entry.path().filename().wstring();
-        std::wsmatch       match;
+        const std::string name =
+            Das::Utils::PathToUtf8(entry.path().filename());
+        std::smatch match;
         if (!std::regex_match(name, match, name_pattern))
         {
             continue;
         }
 
-        std::tm file_time{};
-        // 时间戳段纯 ASCII，逐字符收窄走窄流解析（get_time 的宽字符 facet
-        // 在 MinGW libstdc++ 上不可依赖）。
-        std::string narrow_time;
-        narrow_time.reserve(match[2].length());
-        for (const wchar_t time_character : match[2].str())
-        {
-            narrow_time.push_back(static_cast<char>(time_character));
-        }
-        std::istringstream time_stream(narrow_time);
+        std::tm            file_time{};
+        std::istringstream time_stream(match[2].str());
         time_stream >> std::get_time(&file_time, "%Y%m%d_%H-%M-%S");
         if (time_stream.fail())
         {

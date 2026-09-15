@@ -2,7 +2,8 @@
 
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/Expected.h>
+#include <das/Utils/PathText.h>
 
 #include <cstdint>
 #include <string>
@@ -67,8 +68,8 @@ DasResult NativeIpcRuntime::LoadPlugin(
         return DAS_E_OBJECT_NOT_INIT;
     }
 
-    auto executable = MakeReadOnlyString(
-        std::string{DAS::Utils::U8AsString(host_exe_path_.u8string())});
+    auto executable =
+        MakeReadOnlyString(DAS::Utils::PathToUtf8(host_exe_path_));
     if (!executable)
     {
         return executable.error();
@@ -101,8 +102,8 @@ DasResult NativeIpcRuntime::LoadPlugin(
     remote_request.launch_desc.p_executable_path = executable->Get();
     remote_request.launch_desc.pp_args = args.data();
     remote_request.launch_desc.arg_count = args.size();
-    remote_request.manifest_path = std::filesystem::path(
-        reinterpret_cast<const char8_t*>(request.manifest_path));
+    remote_request.manifest_path =
+        DAS::Utils::PathFromUtf8(request.manifest_path);
     remote_request.plugin_guid = request.plugin_guid;
     remote_request.timeout = timeout_;
     remote_request.on_process_exit = callbacks_.on_process_exit;
