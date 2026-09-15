@@ -1,6 +1,7 @@
 #include <das/Core/ForeignInterfaceHost/CSharpManifest.h>
 
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 
 #include <algorithm>
 #include <cctype>
@@ -128,8 +129,11 @@ namespace
 
     bool IsUnsafePackageRelativePath(const std::filesystem::path& path)
     {
-        const auto path_text = path.generic_string();
-        const bool has_windows_drive_prefix =
+        // 结构检查只关心 ASCII 骨架；generic 形态统一分隔符后按 UTF-8 面
+        // 逐字符判读
+        const auto        path_u8 = path.generic_u8string();
+        const std::string path_text{path_u8.begin(), path_u8.end()};
+        const bool        has_windows_drive_prefix =
             path_text.size() >= 2
             && std::isalpha(static_cast<unsigned char>(path_text[0]))
             && path_text[1] == ':';
@@ -287,7 +291,8 @@ Das::Utils::Expected<CSharpManifest> ParseCSharpManifest(
     result.entry_point = *entry_point;
     result.plugin_binary_path =
         result.package_root
-        / (result.name + "." + result.plugin_filename_extension);
+        / Das::Utils::PathFromUtf8(
+            result.name + "." + result.plugin_filename_extension);
 
     if (result.target_framework_family
         == CSharpTargetFrameworkFamily::ModernDotNet)
@@ -296,7 +301,7 @@ Das::Utils::Expected<CSharpManifest> ParseCSharpManifest(
         if (*runtime_config_path_string)
         {
             runtime_config_path =
-                std::filesystem::path{**runtime_config_path_string};
+                Das::Utils::PathFromUtf8(**runtime_config_path_string);
             if (IsUnsafePackageRelativePath(runtime_config_path))
             {
                 return tl::make_unexpected(DAS_E_CSHARP_MANIFEST_INVALID);
@@ -304,7 +309,8 @@ Das::Utils::Expected<CSharpManifest> ParseCSharpManifest(
         }
         else
         {
-            runtime_config_path = result.name + ".runtimeconfig.json";
+            runtime_config_path =
+                Das::Utils::PathFromUtf8(result.name + ".runtimeconfig.json");
         }
 
         result.runtime_config_path =

@@ -2,7 +2,8 @@
 
 #include <das/Core/ForeignInterfaceHost/NodeRuntime.h>
 
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/BoostPathBridge.h>
+#include <das/Utils/PathText.h>
 
 #include <das/DasApi.h>
 
@@ -25,7 +26,7 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 namespace
 {
     constexpr auto NODE_HOST_EXECUTABLE_ENV = "DAS_NODE_HOST_EXE_PATH";
-    constexpr auto NODE_EXECUTABLE_NAME = "node";
+    constexpr auto NODE_EXECUTABLE_NAME = DAS_PATH_LITERAL("node");
 #ifndef DAS_NODE_PACKAGE_NAME
 #define DAS_NODE_PACKAGE_NAME "das-core-node"
 #endif
@@ -105,8 +106,7 @@ namespace
     auto MakeEnvironmentConfig(const std::filesystem::path& app_root)
         -> DAS::Utils::Expected<DAS::DasPtr<IDasReadOnlyString>>
     {
-        const auto value =
-            std::string{DAS::Utils::U8AsString(app_root.u8string())};
+        const auto value = Das::Utils::PathToUtf8(app_root);
         if (value.empty())
         {
             return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
@@ -203,15 +203,15 @@ NodeRuntime::NodeRuntime(
 auto NodeRuntime::ResolveNodeExecutable()
     -> DAS::Utils::Expected<std::filesystem::path>
 {
-    const char* env_value = std::getenv(NODE_HOST_EXECUTABLE_ENV);
-    if (env_value && env_value[0] != '\0')
+    const auto env_value =
+        Das::Utils::PathFromEnvironment(NODE_HOST_EXECUTABLE_ENV);
+    if (env_value && !env_value->empty())
     {
-        std::filesystem::path strict_path{env_value};
-        if (!IsPresentFile(strict_path))
+        if (!IsPresentFile(*env_value))
         {
             return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
         }
-        return strict_path;
+        return *env_value;
     }
 
     const auto resolved =
@@ -220,24 +220,28 @@ auto NodeRuntime::ResolveNodeExecutable()
     {
         return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
     }
-    return std::filesystem::path{resolved.string()};
+    return Das::Utils::ToStdPath(resolved);
 }
 
 auto NodeRuntime::ResolvePackagePaths(
     const std::filesystem::path& package_root,
     const std::filesystem::path& node_modules_root) -> NodeRuntimePackagePaths
 {
-    const auto runtime_root = node_modules_root / RUNTIME_PACKAGE_NAME;
+    const auto runtime_root =
+        node_modules_root / Das::Utils::PathFromUtf8(RUNTIME_PACKAGE_NAME);
     return NodeRuntimePackagePaths{
         .package_root = package_root,
         .node_modules_root = node_modules_root,
         .runtime_root = runtime_root,
-        .package_json_path = runtime_root / PACKAGE_JSON_FILE_NAME,
-        .public_entry_path = runtime_root / PACKAGE_ENTRY_FILE_NAME,
+        .package_json_path =
+            runtime_root / Das::Utils::PathFromUtf8(PACKAGE_JSON_FILE_NAME),
+        .public_entry_path =
+            runtime_root / Das::Utils::PathFromUtf8(PACKAGE_ENTRY_FILE_NAME),
         .host_script_path =
-            runtime_root / std::filesystem::path{HOST_SCRIPT_RELATIVE},
-        .wrapper_path = runtime_root / WRAPPER_FILE_NAME,
-        .addon_path = runtime_root / std::filesystem::path{ADDON_RELATIVE},
+            runtime_root / Das::Utils::PathFromUtf8(HOST_SCRIPT_RELATIVE),
+        .wrapper_path =
+            runtime_root / Das::Utils::PathFromUtf8(WRAPPER_FILE_NAME),
+        .addon_path = runtime_root / Das::Utils::PathFromUtf8(ADDON_RELATIVE),
         .app_root = node_modules_root.parent_path().parent_path()};
 }
 
@@ -267,8 +271,7 @@ auto NodeRuntime::BuildHostLaunchDesc() const
     result.package_paths = std::move(paths);
 
     auto executable = MakeReadOnlyString(
-        std::string{DAS::Utils::U8AsString(
-            result.resolved_node_executable.u8string())});
+        Das::Utils::PathToUtf8(result.resolved_node_executable));
     if (!executable)
     {
         return tl::make_unexpected(executable.error());
@@ -276,17 +279,14 @@ auto NodeRuntime::BuildHostLaunchDesc() const
     result.executable = std::move(executable.value());
 
     const std::vector<std::string> args = {
-        std::string{DAS::Utils::U8AsString(
-            result.package_paths.host_script_path.u8string())},
+        Das::Utils::PathToUtf8(result.package_paths.host_script_path),
         "--main-pid",
         std::to_string(
             static_cast<uint32_t>(boost::process::v2::current_pid())),
         "--package-root",
-        std::string{DAS::Utils::U8AsString(
-            result.package_paths.package_root.u8string())},
+        Das::Utils::PathToUtf8(result.package_paths.package_root),
         "--node-modules-root",
-        std::string{DAS::Utils::U8AsString(
-            result.package_paths.node_modules_root.u8string())}};
+        Das::Utils::PathToUtf8(result.package_paths.node_modules_root)};
 
     result.arg_storage.reserve(args.size());
     for (const auto& arg : args)
@@ -300,8 +300,7 @@ auto NodeRuntime::BuildHostLaunchDesc() const
     }
 
     auto working_directory = MakeReadOnlyString(
-        std::string{DAS::Utils::U8AsString(
-            result.package_paths.package_root.u8string())});
+        Das::Utils::PathToUtf8(result.package_paths.package_root));
     if (!working_directory)
     {
         return tl::make_unexpected(working_directory.error());

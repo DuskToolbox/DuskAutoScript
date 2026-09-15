@@ -3,7 +3,7 @@
 #include "CSharpHostFxrBackend.h"
 
 #include <das/DasPtr.hpp>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 
 #include <cstdint>
 #include <memory>
@@ -43,8 +43,7 @@ namespace
     std::string BuildAssemblyQualifiedTypeName(const CSharpManifest& manifest)
     {
         return manifest.entry_point.type_name + ", "
-               + std::string{DAS::Utils::U8AsString(
-                   manifest.plugin_binary_path.stem().u8string())};
+               + Das::Utils::PathToUtf8(manifest.plugin_binary_path.stem());
     }
 
     void ReleaseFailedPackage(DasCSharpBootstrapArgsV1& bootstrap_args)
@@ -65,9 +64,9 @@ namespace
     std::basic_string<char_t> ToHostString(const std::filesystem::path& path)
     {
 #ifdef _WIN32
-        return path.wstring();
+        return path.native();
 #else
-        return std::string{DAS::Utils::U8AsString(path.u8string())};
+        return Das::Utils::PathToUtf8(path);
 #endif
     }
 
@@ -87,7 +86,7 @@ namespace
         explicit DynamicLibrary(const std::filesystem::path& path)
         {
 #ifdef _WIN32
-            handle_ = ::LoadLibraryW(path.wstring().c_str());
+            handle_ = ::LoadLibraryW(path.c_str());
 #else
             handle_ = ::dlopen(path.string().c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -168,7 +167,7 @@ namespace
         return {};
 #else
         const DynamicLibrary nethost_library{
-            std::filesystem::path{DAS_CSHARP_NETHOST_LIBRARY_PATH}};
+            Das::Utils::PathFromUtf8(DAS_CSHARP_NETHOST_LIBRARY_PATH)};
         if (!nethost_library.IsLoaded())
         {
             return {};

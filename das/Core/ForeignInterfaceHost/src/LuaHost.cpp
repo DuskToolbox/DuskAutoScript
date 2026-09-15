@@ -16,9 +16,10 @@ DAS_DISABLE_WARNING_END
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
+#include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 #include <filesystem>
 #include <fstream>
 #include <lauxlib.h>
@@ -58,7 +59,7 @@ namespace
     auto TryDllInDir(const std::filesystem::path& dir, const char* dll_name)
         -> std::optional<std::filesystem::path>
     {
-        auto dll_path = dir / dll_name;
+        auto dll_path = dir / Das::Utils::PathFromUtf8(dll_name);
         if (std::filesystem::exists(dll_path))
         {
             return dll_path;
@@ -72,8 +73,8 @@ namespace
         -> std::filesystem::path
     {
         auto manifest_dir = manifest_path.parent_path();
-        auto exe_dir = std::filesystem::path{
-            boost::dll::program_location().parent_path().string()};
+        auto exe_dir =
+            Das::Utils::ToStdPath(boost::dll::program_location().parent_path());
 
         // Try MinGW name first, then standard name, in each directory
         for (const auto& search_dir : {manifest_dir, exe_dir})
@@ -89,7 +90,7 @@ namespace
         }
 
         // Fallback: return the standard name in manifest dir
-        return manifest_dir / LUA_EXPORT_DLL_NAME;
+        return manifest_dir / Das::Utils::PathFromUtf8(LUA_EXPORT_DLL_NAME);
     }
 } // namespace
 
@@ -164,7 +165,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
 {
     DAS_CORE_LOG_INFO(
         "[LuaRuntime::LoadPlugin] Starting load for manifest: {}",
-        DAS::Utils::U8AsString(path.u8string()));
+        Das::Utils::PathToUtf8(path));
 
     // ── 1. Parse manifest.json ──────────────────────────────────────────
     std::ifstream file(path);
@@ -172,7 +173,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
     {
         DAS_CORE_LOG_ERROR(
             "Failed to open plugin manifest: {}",
-            DAS::Utils::U8AsString(path.u8string()));
+            Das::Utils::PathToUtf8(path));
         return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
     }
 
@@ -187,7 +188,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to parse plugin manifest: {}",
-                DAS::Utils::U8AsString(path.u8string()));
+                Das::Utils::PathToUtf8(path));
             return tl::make_unexpected(DAS_E_FAIL);
         }
         auto manifest = std::move(*manifest_opt);
@@ -196,7 +197,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin manifest is not a JSON object: {}",
-                DAS::Utils::U8AsString(path.u8string()));
+                Das::Utils::PathToUtf8(path));
             return tl::make_unexpected(DAS_E_FAIL);
         }
 
@@ -207,7 +208,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin manifest missing 'name' field: {}",
-                DAS::Utils::U8AsString(path.u8string()));
+                Das::Utils::PathToUtf8(path));
             return tl::make_unexpected(DAS_E_FAIL);
         }
         plugin_name = std::string(*name_str);
@@ -219,7 +220,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin manifest missing 'entryPoint' field: {}",
-                DAS::Utils::U8AsString(path.u8string()));
+                Das::Utils::PathToUtf8(path));
             return tl::make_unexpected(DAS_E_FAIL);
         }
         entry_point = std::string(*ep_str);
@@ -236,7 +237,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         auto export_dll_path = FindLuaExportDll(path);
         DAS_CORE_LOG_INFO(
             "[LuaRuntime::LoadPlugin] Loading Lua export DLL: {}",
-            DAS::Utils::U8AsString(export_dll_path.u8string()));
+            Das::Utils::PathToUtf8(export_dll_path));
 
         // Add Lua DLL directory to Windows search path so
         // libDasCoreLuaExport.dll can find liblua.dll at runtime
@@ -245,7 +246,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
             auto lua_dll_dir = export_dll_path.parent_path();
             if (!lua_dll_dir.empty())
             {
-                AddDllDirectory(lua_dll_dir.wstring().c_str());
+                AddDllDirectory(lua_dll_dir.c_str());
             }
             // Also try common MSYS2/MinGW paths
             AddDllDirectory(L"E:/msys64/clang64/bin");
@@ -253,12 +254,12 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
 #endif
 
         boost::system::error_code ec;
-        export_lib_.load(export_dll_path.wstring(), ec);
+        export_lib_.load(Das::Utils::ToBoostPath(export_dll_path), ec);
         if (ec)
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to load Lua export library: {}, error: {}",
-                DAS::Utils::U8AsString(export_dll_path.u8string()),
+                Das::Utils::PathToUtf8(export_dll_path),
                 ec.message());
             return tl::make_unexpected(DAS_E_INVALID_FILE);
         }
@@ -314,8 +315,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
 
     // ── 6. Add manifest directory to Lua package.path ───────────────────
     {
-        auto manifest_dir =
-            std::string{DAS::Utils::U8AsString(path.parent_path().u8string())};
+        auto manifest_dir = Das::Utils::PathToUtf8(path.parent_path());
         // Convert backslashes to forward slashes for Lua compatibility
         std::replace(manifest_dir.begin(), manifest_dir.end(), '\\', '/');
 

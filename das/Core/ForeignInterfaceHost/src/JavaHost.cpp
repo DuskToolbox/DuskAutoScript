@@ -4,8 +4,9 @@
 
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
+#include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 #include <filesystem>
 #include <fstream>
 
@@ -257,7 +258,7 @@ JavaVM* JvmManager::CreateJVM(
     {
         DAS_CORE_LOG_ERROR(
             "Failed to load JVM DLL: {} - {}",
-            DAS::Utils::U8AsString(jvm_dll_path.u8string()),
+            Das::Utils::PathToUtf8(jvm_dll_path),
             e.what());
         return nullptr;
     }
@@ -303,17 +304,21 @@ JavaVM* JvmManager::CreateJVM(
             boost::dll::this_line_location();
         if (!module_path.empty())
         {
-            const boost::dll::fs::path module_dir = module_path.parent_path();
-            // 使用 generic_string() 获取正斜杠路径，避免 JVM
-            // 把反斜杠解析为转义字符
-            java_library_path = DAS_FMT_NS::format(
-                "-Djava.library.path={}",
-                module_dir.generic_string());
+            const auto module_dir =
+                Das::Utils::ToStdPath(module_path).parent_path();
+            // JVM 把反斜杠当转义字符解析，选项字符串是 UTF-8 面，
+            // 路径须正斜杠形态
+            const auto        module_dir_u8 = module_dir.generic_u8string();
+            const std::string module_dir_text{
+                module_dir_u8.begin(),
+                module_dir_u8.end()};
+            java_library_path =
+                DAS_FMT_NS::format("-Djava.library.path={}", module_dir_text);
             options.push_back(
                 {const_cast<char*>(java_library_path.c_str()), nullptr});
             DAS_CORE_LOG_INFO(
                 "Setting java.library.path to: {}",
-                module_dir.generic_string());
+                module_dir_text);
         }
     }
 
@@ -354,14 +359,13 @@ JavaVM* JvmManager::CreateJVM(
 
 std::filesystem::path JvmManager::FindJvmDllPath()
 {
-    // 从环境变量 JAVA_HOME 查找
-    char*  java_home = nullptr;
-    size_t len = 0;
-    if (_dupenv_s(&java_home, &len, "JAVA_HOME") == 0 && java_home)
+    // 从环境变量 JAVA_HOME 查找；_wgetenv 宽源直构消灭 ACP 转换
+    const auto java_home = Das::Utils::PathFromEnvironment("JAVA_HOME");
+    if (java_home)
     {
-        std::filesystem::path jvm_path =
-            std::filesystem::path(java_home) / "bin" / "server" / "jvm.dll";
-        free(java_home);
+        const std::filesystem::path jvm_path =
+            *java_home / DAS_PATH_LITERAL("bin") / DAS_PATH_LITERAL("server")
+            / DAS_PATH_LITERAL("jvm.dll");
         if (std::filesystem::exists(jvm_path))
         {
             return jvm_path;
@@ -381,7 +385,9 @@ std::string JvmManager::BuildClassPathString(
         {
             result += ";"; // Windows 路径分隔符
         }
-        result += path.generic_string(); // 使用正斜杠路径，避免 JVM 解析错误
+        // 正斜杠 + UTF-8：JVM 把反斜杠当转义字符解析
+        const auto path_u8 = path.generic_u8string();
+        result += std::string{path_u8.begin(), path_u8.end()};
     }
     return result;
 }
@@ -458,7 +464,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin file not found: {}",
-                DAS::Utils::U8AsString(plugin_file_path_.u8string()));
+                Das::Utils::PathToUtf8(plugin_file_path_));
             return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
         }
 
@@ -525,9 +531,12 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
 
         for (size_t i = 0; i < jar_paths.size(); ++i)
         {
-            // 转换为 file:/// URL
-            auto jar_absolute =
-                std::filesystem::absolute(jar_paths[i]).generic_string();
+            // 转换为 file:/// URL；URL 是 UTF-8 面，正斜杠形态
+            const auto jar_absolute_u8 =
+                std::filesystem::absolute(jar_paths[i]).generic_u8string();
+            const std::string jar_absolute{
+                jar_absolute_u8.begin(),
+                jar_absolute_u8.end()};
             auto url_string = DAS_FMT_NS::format("file:///{}", jar_absolute);
 
             const JStringPtr j_url_str(
@@ -537,7 +546,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             {
                 DAS_CORE_LOG_ERROR(
                     "Failed to create URL string for: {}",
-                    DAS::Utils::U8AsString(jar_paths[i].u8string()));
+                    Das::Utils::PathToUtf8(jar_paths[i]));
                 return tl::make_unexpected(DAS_E_OUT_OF_MEMORY);
             }
 
@@ -880,7 +889,7 @@ DasResult JavaRuntime::LoadPluginConfig(
     {
         DAS_CORE_LOG_ERROR(
             "Failed to open plugin config: {}",
-            DAS::Utils::U8AsString(json_path.u8string()));
+            Das::Utils::PathToUtf8(json_path));
         return DAS_E_FILE_NOT_FOUND;
     }
     {
@@ -892,7 +901,7 @@ DasResult JavaRuntime::LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to parse plugin config: {}",
-                DAS::Utils::U8AsString(json_path.u8string()));
+                Das::Utils::PathToUtf8(json_path));
             return DAS_E_FAIL;
         }
         auto config = std::move(*config_opt);
@@ -901,7 +910,7 @@ DasResult JavaRuntime::LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin config is not a JSON object: {}",
-                DAS::Utils::U8AsString(json_path.u8string()));
+                Das::Utils::PathToUtf8(json_path));
             return DAS_E_FAIL;
         }
 
@@ -915,7 +924,7 @@ DasResult JavaRuntime::LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin config missing 'entryPoint' field: {}",
-                DAS::Utils::U8AsString(json_path.u8string()));
+                Das::Utils::PathToUtf8(json_path));
             return DAS_E_FAIL;
         }
 
@@ -928,7 +937,8 @@ DasResult JavaRuntime::LoadPluginConfig(
         {
             plugin_file_path_ =
                 json_path.parent_path()
-                / (std::string(*name_str) + "." + std::string(*ext_str));
+                / Das::Utils::PathFromUtf8(
+                    std::string(*name_str) + "." + std::string(*ext_str));
         }
 
         return DAS_S_OK;
