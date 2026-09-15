@@ -25,6 +25,7 @@
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/FileUtils.hpp>
+#include <das/Utils/PathText.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/spdlog.h>
 
@@ -1326,7 +1327,7 @@ namespace Das::Plugins::DasMaaPi
                 }
                 const auto plugin_module = boost::dll::this_line_location();
                 const auto plugin_dir = plugin_module.parent_path();
-                const auto log_dir = plugin_dir / "logs";
+                const auto log_dir = plugin_dir / DAS_PATH_LITERAL("logs");
                 std::error_code error_code;
                 if (!Das::Utils::CreateDirectoryRecursive(
                         Das::Utils::ToStdPath(log_dir),
@@ -1334,9 +1335,13 @@ namespace Das::Plugins::DasMaaPi
                 {
                     return nullptr;
                 }
+                // spdlog 的 filename_t 是 ACP 窄串（_fsopen 打开），此处
+                // 保留 boost path 的 ACP 出向与其消费面一致；换 UTF-8
+                // 出向会在中文 plugin 目录下产生乱码文件名。
                 auto sink =
                     std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                        (log_dir / "DasMaaPi-agent.log").string(),
+                        (log_dir / DAS_PATH_LITERAL("DasMaaPi-agent.log"))
+                            .string(),
                         MAX_AGENT_LOG_BYTES,
                         MAX_AGENT_LOG_FILES);
                 auto logger =
@@ -1503,12 +1508,12 @@ namespace Das::Plugins::DasMaaPi
                 // 相对可执行路径，process_start_dir 只决定子进程启动后的
                 // CWD——不预解析会 spawn 失败（与 agent 共用 ResolveChildExec，
                 // 对齐 MXU maa_agent.rs:339 resolve_child_exec_path）。
-                request.exec = ResolveChildExec(
-                                   pretask.exec,
-                                   envelope.maapi.interface_directory)
-                                   .string();
+                request.exec = Das::Utils::PathToUtf8(ResolveChildExec(
+                    pretask.exec,
+                    envelope.maapi.interface_directory));
                 request.args = pretask.args;
-                request.working_directory = envelope.maapi.interface_directory;
+                request.working_directory = Das::Utils::PathFromUtf8(
+                    envelope.maapi.interface_directory);
                 auto run = runner.Run(request);
                 if (!run.launched)
                 {
@@ -1744,8 +1749,7 @@ namespace Das::Plugins::DasMaaPi
             log_context->language =
                 std::string{envelope.maapi.pi_env.client_language};
             log_context->interface_directory =
-                std::filesystem::path{reinterpret_cast<const char8_t*>(
-                    envelope.maapi.interface_directory.data())};
+                Das::Utils::PathFromUtf8(envelope.maapi.interface_directory);
             if (!envelope.maapi.focus_translations_path.empty())
             {
                 // 一次性读取 translations 文件（PiCompiler 经
@@ -1753,9 +1757,8 @@ namespace Das::Plugins::DasMaaPi
                 // 时 translations 留空，focus content `$key` 解析降级为去 `$`
                 // 前缀的 key（ResolveFocusContent 既有 fallback），不阻塞
                 // task。
-                const auto translations_path =
-                    std::filesystem::path{reinterpret_cast<const char8_t*>(
-                        envelope.maapi.focus_translations_path.data())};
+                const auto translations_path = Das::Utils::PathFromUtf8(
+                    envelope.maapi.focus_translations_path);
                 std::ifstream translations_input{translations_path};
                 if (translations_input.is_open())
                 {
@@ -1787,7 +1790,7 @@ namespace Das::Plugins::DasMaaPi
                             result,
                             "focus-translations-parse-failed",
                             "Failed to parse focus translations JSON at: "
-                                + translations_path.string()
+                                + Das::Utils::PathToUtf8(translations_path)
                                 + "; focus content `$key` resolution "
                                   "degrades to key text",
                             std::nullopt,
@@ -1800,7 +1803,7 @@ namespace Das::Plugins::DasMaaPi
                         result,
                         "focus-translations-missing",
                         "Focus translations file not found at: "
-                            + translations_path.string()
+                            + Das::Utils::PathToUtf8(translations_path)
                             + "; focus content `$key` resolution degrades "
                               "to key text",
                         std::nullopt,
@@ -1834,7 +1837,11 @@ namespace Das::Plugins::DasMaaPi
                 {
                     const auto plugin_module = boost::dll::this_line_location();
                     const auto plugin_dir = plugin_module.parent_path();
-                    const auto log_dir = (plugin_dir / "logs").string();
+                    // MaaFW 的 LogDir 通道按 UTF-8 解释窄串（C API 约定），
+                    // 出向取 UTF-8 文本而非 ACP。
+                    const auto log_dir = Das::Utils::PathToUtf8(
+                        Das::Utils::ToStdPath(plugin_dir)
+                        / DAS_PATH_LITERAL("logs"));
                     // MaaGlobalSetOption is the cross-platform core MaaFW
                     // symbol (MaaGlobal.h:25, hard-linked direct call per
                     // the binding principle). value is the C-string path,

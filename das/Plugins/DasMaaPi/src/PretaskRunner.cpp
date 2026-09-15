@@ -1,6 +1,8 @@
 #include "PretaskRunner.h"
 
 #include <das/DasApi.h>
+#include <das/Utils/BoostPathBridge.h>
+#include <das/Utils/PathText.h>
 
 #include <utility>
 
@@ -30,13 +32,16 @@ namespace Das::Plugins::DasMaaPi
         PretaskRunResult result;
         try
         {
-            boost::asio::io_context     io_context;
+            boost::asio::io_context io_context;
+            // bp2 的 exe 与 start_dir 形参是 boost path：窄串经 ACP 构造
+            // 会双损（中文路径下启动错位）。exec 是 UTF-8 源，先物化成
+            // std path 再过桥；args 是窄 UTF-8 通道，保持直传。
             boost::process::v2::process child(
                 io_context,
-                request.exec,
+                Das::Utils::ToBoostPath(Das::Utils::PathFromUtf8(request.exec)),
                 request.args,
                 boost::process::v2::process_start_dir(
-                    request.working_directory.string()),
+                    Das::Utils::ToBoostPath(request.working_directory)),
                 boost::process::v2::process_stdio{{}, nullptr, nullptr});
             boost::system::error_code wait_ec;
             const auto                code = child.wait(wait_ec);

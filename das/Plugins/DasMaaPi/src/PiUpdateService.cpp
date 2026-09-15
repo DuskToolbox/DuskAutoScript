@@ -5,6 +5,7 @@
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 
 #include <algorithm>
@@ -165,13 +166,15 @@ namespace Das::Plugins::DasMaaPi
             InterfaceMetadata&           meta)
         {
             const auto parsed = ParseProjectInterface(
-                {.interface_path = pi_dir / "interface.json"});
+                {.interface_path =
+                     pi_dir / DAS_PATH_LITERAL("interface.json")});
             if (!parsed.ok)
             {
                 LogError(
                     "PiUpdateService: interface.json parse failed: "
-                    + std::filesystem::absolute(pi_dir / "interface.json")
-                          .string());
+                    + Das::Utils::PathToUtf8(
+                        std::filesystem::absolute(
+                            pi_dir / DAS_PATH_LITERAL("interface.json"))));
                 return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
             }
             const auto& catalog = parsed.catalog;
@@ -739,19 +742,28 @@ namespace Das::Plugins::DasMaaPi
                 c = next + 1;
             }
             // 规范化后必须在 extract_dir 内（双保险）。
-            const auto target = (extract_dir / entry_name).lexically_normal();
+            const auto target =
+                (extract_dir / Das::Utils::PathFromUtf8(entry_name))
+                    .lexically_normal();
             const auto normalized_extract = extract_dir.lexically_normal();
             const auto rel = target.lexically_relative(normalized_extract);
             if (rel.empty())
             {
                 return false;
             }
-            const std::string rel_str = rel.generic_string();
-            if (rel_str == ".." || rel_str.rfind("../", 0) == 0)
+            // 首分量是 ".." 即逃逸（覆盖 rel == ".." 单分量形态）。
+            if (*rel.begin() == std::filesystem::path{DAS_PATH_LITERAL("..")})
             {
                 return false;
             }
-            if (target.string().rfind(normalized_extract.string(), 0) != 0
+            // 字符串前缀判定有跨分量误匹配面（"dir_a" 前缀误中 "dir_ab"），
+            // 成分迭代器逐分量比较才与目录包含语义一致。
+            const auto prefix_mismatch = std::mismatch(
+                normalized_extract.begin(),
+                normalized_extract.end(),
+                target.begin(),
+                target.end());
+            if (prefix_mismatch.first != normalized_extract.end()
                 && target != normalized_extract)
             {
                 return false;
@@ -818,7 +830,8 @@ namespace Das::Plugins::DasMaaPi
             {
                 LogError(
                     "PiUpdateService: cannot create extract dir: "
-                    + extract_dir.string() + " error=" + ec.message());
+                    + Das::Utils::PathToUtf8(extract_dir)
+                    + " error=" + ec.message());
                 zip_discard(archive);
                 return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
             }
@@ -893,7 +906,8 @@ namespace Das::Plugins::DasMaaPi
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
                 }
                 const auto target =
-                    (extract_dir / entry_name).lexically_normal();
+                    (extract_dir / Das::Utils::PathFromUtf8(entry_name))
+                        .lexically_normal();
                 // 目录条目：libzip 约定名字以 '/' 结尾（zip_dir_add 语义）。
                 const bool is_directory =
                     !entry_name.empty() && entry_name.back() == '/';
@@ -930,7 +944,7 @@ namespace Das::Plugins::DasMaaPi
                 {
                     LogError(
                         "PiUpdateService: cannot create output parent dir: "
-                        + target.parent_path().string()
+                        + Das::Utils::PathToUtf8(target.parent_path())
                         + " error=" + ec.message());
                     zip_discard(archive);
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
@@ -1068,7 +1082,11 @@ namespace Das::Plugins::DasMaaPi
                 files.begin(),
                 files.end(),
                 [](const std::filesystem::path& p)
-                { return p.filename() == "interface.json"; });
+                {
+                    return p.filename()
+                           == std::filesystem::path{
+                               DAS_PATH_LITERAL("interface.json")};
+                });
 
             std::vector<std::string> pending_files;
             for (const auto& src : files)
@@ -1088,7 +1106,8 @@ namespace Das::Plugins::DasMaaPi
 
                 // 目标存在 → 先 rename 到侧备份（不直接删除），这样新文件
                 // rename 失败时仍能恢复原文件（WR-03 防文件丢失）。
-                const auto      backup = target.string() + ".update-backup";
+                auto backup = target;
+                backup += DAS_PATH_LITERAL(".update-backup");
                 std::error_code backup_ec;
                 if (std::filesystem::exists(target))
                 {
@@ -1106,7 +1125,9 @@ namespace Das::Plugins::DasMaaPi
                     }
                     continue;
                 }
-                if (rel == std::filesystem::path("interface.json"))
+                if (rel
+                    == std::filesystem::path{
+                        DAS_PATH_LITERAL("interface.json")})
                 {
                     // interface.json 最先处理：失败时无其他文件被替换，pi_dir
                     // 保持完整（恢复侧备份，若备份移动失败则原文件未动）。
@@ -1125,7 +1146,8 @@ namespace Das::Plugins::DasMaaPi
                     std::filesystem::rename(backup, target, ec);
                 }
                 // 被锁（sharing violation）→ 暂存 .pending/ + 警告。
-                const auto pending_path = pi_dir / ".pending" / rel;
+                const auto pending_path =
+                    pi_dir / DAS_PATH_LITERAL(".pending") / rel;
                 std::filesystem::create_directories(
                     pending_path.parent_path(),
                     ec);
@@ -1142,10 +1164,11 @@ namespace Das::Plugins::DasMaaPi
                     // 待下次生效」。
                     LogError(
                         "PiUpdateService: cannot stage to .pending: "
-                        + rel.string() + " error=" + copy_ec.message());
+                        + Das::Utils::PathToUtf8(rel)
+                        + " error=" + copy_ec.message());
                     continue;
                 }
-                pending_files.push_back(rel.string());
+                pending_files.push_back(Das::Utils::PathToUtf8(rel));
             }
             if (!pending_files.empty())
             {
@@ -1332,14 +1355,20 @@ namespace Das::Plugins::DasMaaPi
         // .update 临时目录放 pi_dir 的兄弟目录（不是 pi_dir 内）——否则备份
         // rename(pi_dir → backup) 会把 .update 一起移走，后续 replace rename
         // 的源路径失效。
-        const auto update_root =
-            pi_dir.parent_path() / (pi_dir.filename().string() + ".update");
+        // 版本号是外部数据（版本字符串 UTF-8 源），拼接留在 UTF-8 域后
+        // 一次物化；目录名的字面量后缀走原生追加。
+        auto update_dir_name = pi_dir.filename();
+        update_dir_name += DAS_PATH_LITERAL(".update");
+        const auto update_root = pi_dir.parent_path() / update_dir_name;
         const auto version_tag =
             info.version_name.empty() ? old_version : info.version_name;
-        const auto zip_path = update_root / (version_tag + ".zip");
-        const auto extract_dir = update_root / ("extract_" + version_tag);
-        const auto backup_dir =
-            std::filesystem::path(pi_dir.string() + "_backup_" + old_version);
+        const auto zip_path =
+            update_root / Das::Utils::PathFromUtf8(version_tag + ".zip");
+        const auto extract_dir =
+            update_root / Das::Utils::PathFromUtf8("extract_" + version_tag);
+        auto backup_dir = pi_dir;
+        backup_dir += DAS_PATH_LITERAL("_backup_");
+        backup_dir += Das::Utils::PathFromUtf8(old_version);
 
         // RAII：退出时清理 .update 临时目录（zip + extract）。
         struct UpdateCleanup
@@ -1438,7 +1467,7 @@ namespace Das::Plugins::DasMaaPi
                 "PiUpdateService: update download complete entryId={} zip={} "
                 "elapsedMs={}",
                 entry_id,
-                zip_path.filename().string(),
+                Das::Utils::PathToUtf8(zip_path.filename()),
                 download_elapsed_ms));
 
         // 流式下载完成后再读回 zip 文件供解压（此阶段一次性缓冲）。
@@ -1505,7 +1534,7 @@ namespace Das::Plugins::DasMaaPi
             DAS::fmt::format(
                 "PiUpdateService: update backup start entryId={} backup={}",
                 entry_id,
-                backup_dir.filename().string()));
+                Das::Utils::PathToUtf8(backup_dir.filename())));
         std::filesystem::remove_all(backup_dir, ec);
         std::filesystem::rename(pi_dir, backup_dir, ec);
         if (ec)
@@ -1537,7 +1566,7 @@ namespace Das::Plugins::DasMaaPi
             DAS::fmt::format(
                 "PiUpdateService: update backup complete entryId={} backup={}",
                 entry_id,
-                backup_dir.filename().string()));
+                Das::Utils::PathToUtf8(backup_dir.filename())));
         LogInfo(
             DAS::fmt::format(
                 "PiUpdateService: update replace start entryId={}",
@@ -1551,7 +1580,7 @@ namespace Das::Plugins::DasMaaPi
                     "PiUpdateService: update replace failed entryId={} rolling "
                     "back: {}",
                     entry_id,
-                    pi_dir.string()));
+                    Das::Utils::PathToUtf8(pi_dir)));
             std::error_code restore_ec;
             std::filesystem::rename(backup_dir, pi_dir, restore_ec);
             if (restore_ec)
@@ -1564,7 +1593,7 @@ namespace Das::Plugins::DasMaaPi
                         "backup={} error={} - old version can be restored "
                         "manually from the backup directory",
                         entry_id,
-                        backup_dir.string(),
+                        Das::Utils::PathToUtf8(backup_dir),
                         restore_ec.message()));
             }
             return DAS_E_MAAPI_UPDATE_APPLY_FAILED;

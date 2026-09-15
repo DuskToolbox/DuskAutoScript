@@ -1,6 +1,7 @@
 #include "AgentProcessRunner.h"
 
 #include <das/DasApi.h>
+#include <das/Utils/BoostPathBridge.h>
 
 #include <algorithm>
 #include <array>
@@ -268,12 +269,15 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 
                 if (request.capture_output)
                 {
+                    // bp2 的 exe 与 start_dir 形参是 boost path：窄串经
+                    // ACP 构造会双损（中文路径下启动错位），全程保 path
+                    // 进出；arguments 形参是窄 UTF-8 通道，保持直传。
                     process_ = std::make_unique<boost::process::v2::process>(
                         io_context_,
-                        request.executable.string(),
+                        Das::Utils::ToBoostPath(request.executable),
                         request.arguments,
                         boost::process::v2::process_start_dir(
-                            request.working_directory.string()),
+                            Das::Utils::ToBoostPath(request.working_directory)),
                         boost::process::v2::process_stdio{
                             {},
                             stdout_pipe_,
@@ -292,10 +296,10 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 {
                     process_ = std::make_unique<boost::process::v2::process>(
                         io_context_,
-                        request.executable.string(),
+                        Das::Utils::ToBoostPath(request.executable),
                         request.arguments,
                         boost::process::v2::process_start_dir(
-                            request.working_directory.string()),
+                            Das::Utils::ToBoostPath(request.working_directory)),
                         boost::process::v2::process_stdio{{}, nullptr, nullptr},
                         std::move(child_environment)
 #ifdef _WIN32
