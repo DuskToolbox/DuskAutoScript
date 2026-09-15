@@ -14,6 +14,7 @@
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
@@ -83,8 +84,9 @@ static std::string NormalizeUnixEndpoint(const std::string& endpoint)
     // 拼接绝对路径: temp_directory_path() / base
     // Linux: /tmp/das_ipc_xxx_yyy
     // Windows: C:\\Users\\xxx\\AppData\\Local\\Temp\\das_ipc_xxx_yyy
-    auto temp_dir = std::filesystem::temp_directory_path() / base;
-    return std::string{DAS::Utils::U8AsString(temp_dir.u8string())};
+    auto temp_dir =
+        std::filesystem::temp_directory_path() / Das::Utils::PathFromUtf8(base);
+    return Das::Utils::PathToUtf8(temp_dir);
 }
 
 UnixAsyncIpcTransport::UnixAsyncIpcTransport(

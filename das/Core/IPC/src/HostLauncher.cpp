@@ -21,7 +21,9 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncHandshakeOperation.h>
 #include <das/IDasAsyncOperation.h>
+#include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
@@ -499,15 +501,15 @@ namespace
         return DAS_S_OK;
     }
 
-    std::string DefaultWorkingDirectoryFor(const std::string& exe_path)
+    std::filesystem::path DefaultWorkingDirectoryFor(
+        const std::string& exe_path)
     {
-        const auto parent = std::filesystem::path(exe_path).parent_path();
+        const auto parent = Das::Utils::PathFromUtf8(exe_path).parent_path();
         if (!parent.empty())
         {
-            return std::string{DAS::Utils::U8AsString(parent.u8string())};
+            return parent;
         }
-        return std::string{
-            DAS::Utils::U8AsString(std::filesystem::current_path().u8string())};
+        return std::filesystem::current_path();
     }
 
 } // anonymous namespace
@@ -539,7 +541,7 @@ DasResult HostLauncher::Start(
     uint32_t           timeout_ms)
 {
     // 检查可执行文件是否存在
-    if (!std::filesystem::exists(host_exe_path))
+    if (!std::filesystem::exists(Das::Utils::PathFromUtf8(host_exe_path)))
     {
         const std::string msg =
             DAS_FMT_NS::format("Host executable not found: {}", host_exe_path);
@@ -1236,7 +1238,7 @@ DasResult HostLauncher::StartAsync(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    if (!std::filesystem::exists(host_exe_path))
+    if (!std::filesystem::exists(Das::Utils::PathFromUtf8(host_exe_path)))
     {
         const std::string msg =
             DAS_FMT_NS::format("Host executable not found: {}", host_exe_path);
@@ -1709,8 +1711,13 @@ DasResult HostLauncher::LaunchProcess(
 {
     try
     {
+        // bp2 的 exe 与 start_dir 形参是 boost path：窄串经 ACP 构造会
+        // 双损（中文路径下启动错位），全程保 path 进出；args 形参是窄
+        // UTF-8 通道，保持直传。
+        const auto exe_std_path = Das::Utils::PathFromUtf8(exe_path);
         const auto launch_working_directory =
-            working_directory.value_or(DefaultWorkingDirectoryFor(exe_path));
+            working_directory ? Das::Utils::PathFromUtf8(*working_directory)
+                              : DefaultWorkingDirectoryFor(exe_path);
 
         if (environment)
         {
@@ -1718,19 +1725,20 @@ DasResult HostLauncher::LaunchProcess(
                 *environment};
             impl_->process = std::make_unique<boost::process::v2::process>(
                 impl_->io_ctx,
-                exe_path,
+                Das::Utils::ToBoostPath(exe_std_path),
                 args,
-                boost::process::v2::process_start_dir(launch_working_directory),
+                boost::process::v2::process_start_dir(
+                    Das::Utils::ToBoostPath(launch_working_directory)),
                 std::move(child_environment));
         }
         else
         {
             impl_->process = std::make_unique<boost::process::v2::process>(
                 impl_->io_ctx,
-                exe_path,
+                Das::Utils::ToBoostPath(exe_std_path),
                 args,
                 boost::process::v2::process_start_dir(
-                    launch_working_directory));
+                    Das::Utils::ToBoostPath(launch_working_directory)));
         }
 
         impl_->pid = static_cast<uint32_t>(impl_->process->id());

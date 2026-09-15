@@ -4,6 +4,7 @@
 #include <string>
 
 #include "das/DasApi.h"
+#include "das/Utils/PathText.h"
 #include "das/Utils/ThreadUtils.h"
 #include "das/Utils/fmt.h"
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasLocaleService.hpp>
@@ -76,9 +77,10 @@ namespace Das::Http
 
         // Build settings_dir and plugin_dir as ABI-safe strings
         DasPtr<IDasReadOnlyString> p_settings_dir;
-        auto settings_dir_str = std::filesystem::path("settings").u8string();
+        auto                       settings_dir_str = Das::Utils::PathToUtf8(
+            std::filesystem::path{DAS_PATH_LITERAL("settings")});
         auto sd_cr = CreateIDasReadOnlyStringFromUtf8(
-            reinterpret_cast<const char*>(settings_dir_str.c_str()),
+            settings_dir_str.c_str(),
             p_settings_dir.Put());
         if (DAS::IsFailed(sd_cr))
         {
@@ -87,9 +89,9 @@ namespace Das::Http
         }
 
         DasPtr<IDasReadOnlyString> p_plugin_dir;
-        auto                       plugin_dir_str = plugin_dir.u8string();
-        auto                       pd_cr = CreateIDasReadOnlyStringFromUtf8(
-            reinterpret_cast<const char*>(plugin_dir_str.c_str()),
+        auto plugin_dir_str = Das::Utils::PathToUtf8(plugin_dir);
+        auto pd_cr = CreateIDasReadOnlyStringFromUtf8(
+            plugin_dir_str.c_str(),
             p_plugin_dir.Put());
         if (DAS::IsFailed(pd_cr))
         {
@@ -179,12 +181,16 @@ namespace Das::Http
         // 注入环境变量。cwd 兜底与 DasHostX main.cpp 用 current_path()
         // 解析 plugin_dir 的约定一致；调用方启动 DasHttp 时 cwd 即其
         // 部署目录，二者同目录部署。
-        const char* env_host_exe = std::getenv("DAS_HOST_EXE_PATH");
-        // 两个来源（getenv 返回值 / fallback 的 u8string.c_str()）均以
-        // NUL 结尾，data() 传 C API 安全
-        std::string_view host_exe_utf8{
-            env_host_exe != nullptr ? env_host_exe : ""};
-        std::u8string host_exe_fallback_u8;
+        // 环境变量值经原生宽度获取：Windows 窄 getenv 走 ACP，非 ASCII
+        // 路径会损坏
+        const auto env_host_exe =
+            Das::Utils::PathFromEnvironment("DAS_HOST_EXE_PATH");
+        // 两个来源（环境变量物化 / fallback）均以 NUL 结尾，data() 传
+        // C API 安全
+        std::string env_host_exe_text{
+            env_host_exe ? Das::Utils::PathToUtf8(*env_host_exe) : ""};
+        std::string_view host_exe_utf8{env_host_exe_text};
+        std::string      host_exe_fallback;
         if (host_exe_utf8.empty())
         {
 #if defined(_WIN32)
@@ -193,16 +199,12 @@ namespace Das::Http
 #else
             constexpr std::u8string_view HOST_EXECUTABLE_NAME = u8"DasHostX";
 #endif
-            host_exe_fallback_u8 =
-                (std::filesystem::current_path()
-                 / std::filesystem::path{HOST_EXECUTABLE_NAME})
-                    .u8string();
+            host_exe_fallback = Das::Utils::PathToUtf8(
+                std::filesystem::current_path()
+                / std::filesystem::path{HOST_EXECUTABLE_NAME});
             std::cout << "[DasHttp] DAS_HOST_EXE_PATH not set; falling back to "
-                      << reinterpret_cast<const char*>(
-                             host_exe_fallback_u8.c_str())
-                      << std::endl;
-            host_exe_utf8 =
-                reinterpret_cast<const char*>(host_exe_fallback_u8.c_str());
+                      << host_exe_fallback << std::endl;
+            host_exe_utf8 = host_exe_fallback;
         }
 
         if (!host_exe_utf8.empty())
@@ -289,9 +291,8 @@ namespace Das::Http
 
             // Register computer vision services (cv.cpu / cv.cuda)
             {
-                auto                     debug_dir_str = debug_dir.u8string();
-                const DasCoreInitOptions init_options{
-                    reinterpret_cast<const char*>(debug_dir_str.c_str())};
+                const auto debug_dir_str = Das::Utils::PathToUtf8(debug_dir);
+                const DasCoreInitOptions init_options{debug_dir_str.c_str()};
                 auto init_cv_result = InitializeDasCoreWithOptions(
                     ipc_owner.Get(),
                     &init_options);
@@ -323,10 +324,10 @@ namespace Das::Http
         DasPtr<Das::ExportInterface::IDasLogNotifier>        log_notifier;
         DasPtr<Das::ExportInterface::IDasProcessLogRecorder> log_recorder_main;
         {
-            const auto                 debug_dir_str = debug_dir.u8string();
+            const auto debug_dir_str = Das::Utils::PathToUtf8(debug_dir);
             DasPtr<IDasReadOnlyString> debug_dir_param;
             const auto dir_cr = CreateIDasReadOnlyStringFromUtf8(
-                reinterpret_cast<const char*>(debug_dir_str.c_str()),
+                debug_dir_str.c_str(),
                 debug_dir_param.Put());
             if (DAS::IsFailed(dir_cr))
             {
@@ -1034,8 +1035,10 @@ int main(int argc, const char* argv[])
         vm);
     boost::program_options::notify(vm);
 
-    const std::filesystem::path plugin_dir = vm["plugin-dir"].as<std::string>();
-    const std::filesystem::path debug_dir = vm["debug-dir"].as<std::string>();
+    const std::filesystem::path plugin_dir =
+        Das::Utils::PathFromUtf8(vm["plugin-dir"].as<std::string>());
+    const std::filesystem::path debug_dir =
+        Das::Utils::PathFromUtf8(vm["debug-dir"].as<std::string>());
 
     std::optional<DAS::Core::IPC::MainProcess::WebSocketConfig> ws_config;
     if (vm.count("ipc-ws"))

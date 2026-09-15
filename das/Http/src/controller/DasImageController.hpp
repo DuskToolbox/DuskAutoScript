@@ -7,6 +7,7 @@
 #include "beast/Request.hpp"
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasLogRecorder.h>
 
 #include <cstdint>
@@ -107,7 +108,7 @@ namespace Das::Http
             {
                 return std::nullopt;
             }
-            const std::filesystem::path rel{file};
+            const std::filesystem::path rel = Das::Utils::PathFromUtf8(file);
             // 绝对路径或带盘符（如 C:foo）直接拒绝——盘符路径拼接会覆盖
             // session_dir 的根。
             if (rel.is_absolute() || rel.has_root_name())
@@ -116,7 +117,7 @@ namespace Das::Http
             }
             for (const auto& part : rel)
             {
-                if (part == "..")
+                if (part == DAS_PATH_LITERAL(".."))
                 {
                     return std::nullopt;
                 }
@@ -124,14 +125,14 @@ namespace Das::Http
 
             const auto  base = session_dir.lexically_normal();
             const auto  resolved = (base / rel).lexically_normal();
-            std::string base_str = base.string();
+            std::string base_str = Das::Utils::PathToUtf8(base);
             if (!base_str.empty()
                 && base_str.back()
                        != std::filesystem::path::preferred_separator)
             {
                 base_str.push_back(std::filesystem::path::preferred_separator);
             }
-            const auto resolved_str = resolved.string();
+            const auto resolved_str = Das::Utils::PathToUtf8(resolved);
             if (resolved_str.size() <= base_str.size()
                 || !resolved_str.starts_with(base_str))
             {
