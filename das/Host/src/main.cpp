@@ -24,7 +24,7 @@
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <filesystem>
@@ -64,7 +64,7 @@ namespace
         {
             const std::string msg = DAS_FMT_NS::format(
                 "无法打开 manifest 文件: {}",
-                DAS::Utils::U8AsString(manifest_path.u8string()));
+                Das::Utils::PathToUtf8(manifest_path));
             DAS_LOG_ERROR(msg.c_str());
             return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
         }
@@ -78,7 +78,7 @@ namespace
         {
             const std::string msg = DAS_FMT_NS::format(
                 "解析 manifest JSON 失败: {}",
-                DAS::Utils::U8AsString(manifest_path.u8string()));
+                Das::Utils::PathToUtf8(manifest_path));
             DAS_LOG_ERROR(msg.c_str());
             return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
         }
@@ -170,7 +170,7 @@ namespace
         {
             const std::string err_msg = DAS_FMT_NS::format(
                 "Plugin load failed: {}",
-                DAS::Utils::U8AsString(manifest_path.u8string()));
+                Das::Utils::PathToUtf8(manifest_path));
             DAS_LOG_ERROR(err_msg.c_str());
             return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
         }
@@ -381,7 +381,7 @@ int main(int argc, char* argv[])
         if (vm.count("plugin-dir"))
         {
             handler_options.plugin_dir =
-                std::filesystem::path(vm["plugin-dir"].as<std::string>());
+                Das::Utils::PathFromUtf8(vm["plugin-dir"].as<std::string>());
         }
         else
         {
@@ -390,8 +390,7 @@ int main(int argc, char* argv[])
                 std::format(
                     "--plugin-dir not specified, falling back to working "
                     "directory: {}",
-                    DAS::Utils::U8AsString(
-                        handler_options.plugin_dir.u8string()))
+                    Das::Utils::PathToUtf8(handler_options.plugin_dir))
                     .c_str());
         }
 

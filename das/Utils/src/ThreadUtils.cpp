@@ -1,4 +1,5 @@
 #include <boost/dll.hpp>
+#include <das/Utils/PathText.h>
 #include <das/Utils/ThreadUtils.h>
 #include <iostream>
 
@@ -23,7 +24,9 @@ void SetCurrentThreadName(const wchar_t* name)
     {
         auto fnSetThreadDescription =
             boost::dll::import_symbol<SetThreadDescriptionFunction>(
-                "Kernel32.dll",
+                // dll 路径形参是 boost path（value_type 与 std path 同型），
+                // 按平台宽度给字面量，不走窄串 ACP 构造
+                DAS_PATH_LITERAL("Kernel32.dll"),
                 "SetThreadDescription",
                 boost::dll::load_mode::search_system_folders);
         fnSetThreadDescription(::GetCurrentThread(), name);

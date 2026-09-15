@@ -2,6 +2,7 @@
 
 #include <boost/dll.hpp>
 #include <das/Gateway/Logger.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 
@@ -11,7 +12,10 @@ DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
 auto GetDasCore() -> boost::dll::shared_library
 {
-    static const boost::dll::shared_library result{DAS_CORE_DLL};
+    // shared_library 形参是 boost path：窄串经 ACP 构造会双损（非
+    // ASCII 部署路径下加载错位），按平台宽度直构。
+    static const boost::dll::shared_library result{
+        boost::dll::fs::path{DAS_PATH_LITERAL(DAS_CORE_DLL)}};
     return result;
 }
 

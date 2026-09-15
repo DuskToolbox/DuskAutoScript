@@ -33,7 +33,9 @@ DAS_IGNORE_BOOST_PROCESS_WARNING
 #include <boost/process/v2/stdio.hpp>
 #include <chrono>
 #include <das/DasApi.h>
+#include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
@@ -91,15 +93,15 @@ AdbCapture::AdbCapture(
     std::string_view             adb_device_serial)
     : capture_png_command_{DAS::fmt::format(
           "{} -s {} exec-out screencap -p",
-          DAS::Utils::U8AsString(adb_path.u8string()),
+          Das::Utils::PathToUtf8(adb_path),
           adb_device_serial)},
       capture_gzip_raw_command_{DAS::fmt::format(
           R"({} -s {} exec-out "screencap | gzip -1")",
-          DAS::Utils::U8AsString(adb_path.u8string()),
+          Das::Utils::PathToUtf8(adb_path),
           adb_device_serial)},
       get_screen_size_command_{DAS::fmt::format(
           R"({} -s {} shell dumpsys window displays | grep -o -E cur=+[^\\ ]+ | grep -o -E [0-9]+)",
-          DAS::Utils::U8AsString(adb_path.u8string()),
+          Das::Utils::PathToUtf8(adb_path),
           adb_device_serial)}
 {
 }
@@ -476,10 +478,11 @@ public:
           result_{DAS_E_UNDEFINED_RETURN_VALUE}, buffer_{}, stdout_pipe_{ioc_}
     {
         // Launch child process; pipe write end → child stdout, read end →
-        // stdout_pipe_
+        // stdout_pipe_。bp2 的 exe 形参是 boost path，窄串经 ACP 构造
+        // 会双损（中文路径下启动错位），经桥全程保 path。
         boost::process::v2::process child_process{
             ioc_,
-            command_,
+            Das::Utils::ToBoostPath(Das::Utils::PathFromUtf8(command_)),
             {},
             boost::process::v2::process_stdio{{}, stdout_pipe_, {}}};
 

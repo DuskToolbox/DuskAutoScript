@@ -12,9 +12,11 @@
 
 /// path 字面量的平台宽度分流：给字面量加 L 前缀只能由预处理完成，
 /// 函数与模板都接触不到字面量的词法形态，这是 helper 家族唯一的宏
-/// 成员。
+/// 成员。双层展开让参数先求值再拼接，宏字面量（如构建系统注入的
+/// DLL 名）也能作入参。
 #ifdef DAS_WINDOWS
-#define DAS_PATH_LITERAL(text) L##text
+#define DAS_PATH_LITERAL_IMPL(text) L##text
+#define DAS_PATH_LITERAL(text) DAS_PATH_LITERAL_IMPL(text)
 #else
 #define DAS_PATH_LITERAL(text) text
 #endif

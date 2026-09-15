@@ -10,7 +10,9 @@
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
+#include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/TaskComponentPorts.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasSettingsChangeBuilder.h>
@@ -760,12 +762,16 @@ namespace
         {
             try
             {
+                // bp2 的 exe 与 start_dir 形参是 boost path：窄串经 ACP
+                // 构造会双损（中文路径下启动错位），全程保 path 进出；
+                // arguments 形参是窄 UTF-8 通道，保持直传。
                 boost::asio::io_context io_context;
                 if (working_directory.empty())
                 {
                     boost::process::v2::process child(
                         io_context,
-                        exe_path,
+                        Das::Utils::ToBoostPath(
+                            Das::Utils::PathFromUtf8(exe_path)),
                         arguments,
                         boost::process::v2::process_stdio{
                             {},
@@ -776,9 +782,11 @@ namespace
                 }
                 boost::process::v2::process child(
                     io_context,
-                    exe_path,
+                    Das::Utils::ToBoostPath(Das::Utils::PathFromUtf8(exe_path)),
                     arguments,
-                    boost::process::v2::process_start_dir(working_directory),
+                    boost::process::v2::process_start_dir(
+                        Das::Utils::ToBoostPath(
+                            Das::Utils::PathFromUtf8(working_directory))),
                     boost::process::v2::process_stdio{{}, nullptr, nullptr});
                 (void)child.detach();
                 return true;

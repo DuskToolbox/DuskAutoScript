@@ -1,6 +1,8 @@
 #include "AdbTouch.h"
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
+#include <das/Utils/BoostPathBridge.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
@@ -58,8 +60,13 @@ public:
           timeout_in_ms_{timeout_in_ms}, command_{cmd},
           result_{DAS_E_UNDEFINED_RETURN_VALUE}
     {
+        // bp2 的 exe 形参是 boost path，窄串经 ACP 构造会双损（中文
+        // 路径下启动错位），经桥全程保 path。
         boost::process::v2::async_execute(
-            boost::process::v2::process{ctx_, cmd, {}},
+            boost::process::v2::process{
+                ctx_,
+                Das::Utils::ToBoostPath(Das::Utils::PathFromUtf8(cmd)),
+                {}},
             boost::asio::bind_cancellation_slot(
                 sig_.slot(),
                 [this](boost::system::error_code ec, int exit_code)
