@@ -3,6 +3,7 @@
 
 #include <das/Utils/Config.h>
 #include <das/Utils/Expected.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
 #include <string>
@@ -126,42 +127,12 @@ inline std::string ToString(IDasReadOnlyString* p_str)
 }
 
 /**
- * @brief Borrowing overload: reinterprets an lvalue std::u8string's bytes as
- *        a std::string_view without copying.
- *
- * Usage (read-only, no ownership):
- *   auto u8 = path.u8string();
- *   SomeFunc(U8AsString(u8));
- *
- * The returned string_view borrows from the u8string argument.
- * The u8string must outlive the returned string_view.
- *
- * @note Deliberately takes `const std::u8string&` (not `std::u8string_view`)
- *       so that passing a temporary or a dangling view is rejected at the
- *       call site. Rvalue std::u8string (e.g. `path.u8string()`) is routed
- *       to the owning overload defined after the U8String class below, which
- *       moves the data into a U8String and prevents dangling references.
- */
-[[nodiscard]]
-inline std::string_view U8AsString(const std::u8string& str) noexcept
-{
-    return {reinterpret_cast<const char*>(str.data()), str.size()};
-}
-
-/**
  * @brief Owning wrapper that stores a std::u8string and exposes char-based
  * accessors.
  *
- * Only accepts rvalue std::u8string (zero-copy move).
- * Use when you need ownership of the UTF-8 path string:
- *
- *   U8String u8{path.u8string()};   // OK: rvalue, zero-copy move
- *   auto s = path.u8string();
- *   U8String u8{s};                  // Error: lvalue, deleted
- *   U8String u8{std::move(s)};       // OK: explicit move
- *
- * Private constructors (const std::u8string&, const std::string&) are
- * accessible only to the free function ToString(std::string_view).
+ * 只服务于 native(narrow/ACP)→UTF-8 转码（ToString(std::string_view) 的
+ * 持有载体）——path 出向一律走 das/Utils/PathText.h 的 helper 家族，不经
+ * 本类。
  */
 class U8String
 {
@@ -217,45 +188,8 @@ public:
     }
 
 private:
-    // Private constructor from native-encoded std::string (assumes UTF-8 bytes)
-    explicit U8String(const std::string& str) noexcept
-        : value_(reinterpret_cast<const char8_t*>(str.data()), str.size())
-    {
-    }
-
-    // Grant access to ToString(std::string_view)
-    friend U8String ToString(std::string_view str);
-
     std::u8string value_;
 };
-
-/**
- * @brief Owning overload of U8AsString: moves an rvalue std::u8string into a
- *        U8String and exposes it as a char-based view.
- *
- * Automatically selected for prvalue/xvalue arguments (e.g. `path.u8string()`,
- * `std::move(u8str)`), eliminating the dangling-reference pitfall of passing
- * temporaries to the borrowing overload above.
- *
- * Zero-overhead: the source std::u8string is moved (no copy) into the returned
- * U8String, which itself exposes `operator std::string_view()` and a fmt
- * formatter specialization, so it can be passed directly to fmt::format /
- * DAS_CORE_LOG_* / std::string construction without any extra ceremony.
- *
- * Example:
- *   DAS_CORE_LOG_ERROR("path: {}", DAS::Utils::U8AsString(path.u8string()));
- *   // → U8String temporary owns the bytes for the duration of the full
- *   //   expression; fmt consumes it via operator string_view(); no UB.
- *
- *   const std::string owned{DAS::Utils::U8AsString(path.u8string())};
- *   // → U8String temporary feeds std::string constructor via
- *   //   operator string_view(), then dies; owned has its own copy.
- */
-[[nodiscard]]
-inline U8String U8AsString(std::u8string&& str) noexcept
-{
-    return U8String{std::move(str)};
-}
 
 DAS_UTILS_NS_END
 
@@ -268,11 +202,18 @@ constexpr auto& operator""_das_as_char()
         std::make_index_sequence<decltype(L)::size>());
 }
 
-// Convert native-encoded string (e.g., Windows GBK) to UTF-8 encoded U8String
-// Uses std::filesystem::path for the encoding conversion
+// Convert native-encoded string (e.g., Windows GBK) to UTF-8 encoded U8String.
+// path 的窄构造承担 ACP 解码半步（转码引擎语义即目的），UTF-8 编码半步
+// 走公共 PathToUtf8，char8_t 1:1 回拷经公有 u8string 构造。全局命名空间
+// 是既有非限定调用点（string_view 实参无 ADL）的解析目标，且与
+// using Das::Utils::ToString 的消费面共存不冲突，不可挪入命名空间。
 inline DAS::Utils::U8String ToString(std::string_view str)
 {
-    return DAS::Utils::U8String{std::filesystem::path{str}.u8string()};
+    const std::string utf8_text =
+        DAS::Utils::PathToUtf8(std::filesystem::path{str});
+    return DAS::Utils::U8String{std::u8string{
+        reinterpret_cast<const char8_t*>(utf8_text.data()),
+        utf8_text.size()}};
 }
 
 template <>
