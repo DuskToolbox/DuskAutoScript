@@ -35,6 +35,7 @@
 #include <das/DasTypes.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <das/IDasBase.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasLogRecorder.h>
 
 #include <das/Core/IPC/DasAsyncSender.h>
@@ -85,7 +86,7 @@ namespace
     class ProcessLogRecorderIpcE2ETest : public ::testing::Test
     {
     protected:
-        std::string                      host_exe_path_;
+        std::filesystem::path            host_exe_path_;
         DasPtr<MainProcess::IIpcContext> ctx_;
         DasPtr<IHostLauncher>            launcher_;
         std::thread                      run_thread_;
@@ -109,16 +110,18 @@ namespace
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
             debug_directory_ =
-                std::filesystem::current_path() / "ipc-log-test-output"
-                / ("ProcessLogRecorderIpc-" + std::to_string(stamp));
+                std::filesystem::current_path()
+                / DAS_PATH_LITERAL("ipc-log-test-output")
+                / Das::Utils::PathFromUtf8(
+                    "ProcessLogRecorderIpc-" + std::to_string(stamp));
             std::filesystem::remove_all(debug_directory_);
 
             // 创建 session + recorder（注入式）。
-            const auto directory_str = debug_directory_.u8string();
+            const auto directory_str = Das::Utils::PathToUtf8(debug_directory_);
             DasPtr<IDasReadOnlyString> directory_param;
             ASSERT_EQ(
                 CreateIDasReadOnlyStringFromUtf8(
-                    reinterpret_cast<const char*>(directory_str.c_str()),
+                    directory_str.c_str(),
                     directory_param.Put()),
                 DAS_S_OK);
             ASSERT_EQ(
@@ -178,7 +181,8 @@ namespace
         {
             uint16_t   session_id = 0;
             const auto result = launcher_->Start(
-                host_exe_path_,
+                // ABI 边界收 const std::string&，path 在调用点物化为 UTF-8
+                Das::Utils::PathToUtf8(host_exe_path_),
                 session_id,
                 IpcTestConfig::GetHostStartTimeoutMs());
             return result;
@@ -187,7 +191,7 @@ namespace
         // 加载 IpcTestPlugin1 并创建 IDasComponent（index=1 工厂）。
         DasPtr<Das::PluginInterface::IDasComponent> LoadComponent()
         {
-            std::string plugin_json_path;
+            std::filesystem::path plugin_json_path;
             try
             {
                 plugin_json_path =
@@ -202,7 +206,8 @@ namespace
             DasPtr<IDasAsyncLoadPluginOperation> op;
             const auto load_result = ctx_->LoadPluginAsync(
                 launcher_.Get(),
-                plugin_json_path.c_str(),
+                // ABI 边界收 const char*，path 在调用点物化为 UTF-8
+                Das::Utils::PathToUtf8(plugin_json_path).c_str(),
                 op.Put(),
                 IpcTestConfig::GetPluginLoadTimeout());
             if (DAS::IsFailed(load_result) || !op)
@@ -265,7 +270,8 @@ TEST_F(ProcessLogRecorderIpcE2ETest, ProxyRecordRoundTripWritesUserJsonl)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     ASSERT_EQ(StartHost(), DAS_S_OK);

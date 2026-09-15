@@ -28,6 +28,7 @@
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
 #include <das/Plugins/SchedulerTestPlugin/SchedulerTestSharedState.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -68,7 +69,8 @@ namespace
         static std::atomic<int> counter{0};
         auto                    name = "scheduler_authoring_cache_test_"
                                        + std::to_string(counter.fetch_add(1));
-        auto                    path = std::filesystem::current_path() / name;
+        auto                    path =
+            std::filesystem::current_path() / Das::Utils::PathFromUtf8(name);
         std::filesystem::remove_all(path);
         return path;
     }
@@ -335,11 +337,11 @@ protected:
     {
         test_dir_ = UniqueTestDir();
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         std::filesystem::create_directories(settings_dir_);
-        plugin_dir_ = test_dir_ / "plugins";
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
         std::filesystem::create_directories(plugin_dir_);
-        manifest_path_ = plugin_dir_ / "FactoryPlugin.json";
+        manifest_path_ = plugin_dir_ / DAS_PATH_LITERAL("FactoryPlugin.json");
         WriteFactoryPluginManifest(manifest_path_);
 
         CreateSharedStateSegment();
@@ -361,7 +363,9 @@ protected:
             const auto host_path = IpcTestConfig::GetDasHostPath();
             if (std::filesystem::exists(host_path))
             {
-                plugin_manager_->SetHostExePath(host_path);
+                // ABI 边界收 const std::string&，path 在调用点物化为 UTF-8
+                plugin_manager_->SetHostExePath(
+                    Das::Utils::PathToUtf8(host_path));
             }
         }
         catch (const std::exception&)
@@ -413,17 +417,19 @@ protected:
     void DeploySchedulerTestPlugin()
     {
         namespace fs = std::filesystem;
-        const fs::path build_plugin_dir{IpcTestConfig::GetPluginDir()};
+        const fs::path build_plugin_dir = IpcTestConfig::GetPluginDir();
 #ifndef DAS_SCHEDULER_TEST_PLUGIN_FILENAME
 #error "DAS_SCHEDULER_TEST_PLUGIN_FILENAME must be defined via CMake"
 #endif
         const fs::path src_dll =
-            build_plugin_dir / DAS_SCHEDULER_TEST_PLUGIN_FILENAME;
+            build_plugin_dir
+            / DAS_PATH_LITERAL(DAS_SCHEDULER_TEST_PLUGIN_FILENAME);
         ASSERT_TRUE(fs::exists(src_dll))
             << "SchedulerTestPlugin artifact not found at: "
-            << src_dll.string();
+            << Das::Utils::PathToUtf8(src_dll);
 
-        const fs::path dst_dll = plugin_dir_ / "FactoryPlugin.dll";
+        const fs::path dst_dll =
+            plugin_dir_ / DAS_PATH_LITERAL("FactoryPlugin.dll");
         fs::copy_file(src_dll, dst_dll, fs::copy_options::overwrite_existing);
     }
 

@@ -17,6 +17,7 @@
 #include <das/IDasSettingsService.h>
 #include <das/Plugins/SchedulerTestPlugin/SchedulerTestSharedState.h>
 #include <das/Utils/Expected.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <das/_autogen/idl/abi/IDasLogRecorder.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
@@ -68,7 +69,8 @@ namespace
     {
         static std::atomic<int> counter{0};
         auto name = "scheduler_test_" + std::to_string(counter.fetch_add(1));
-        auto path = std::filesystem::current_path() / name;
+        auto path =
+            std::filesystem::current_path() / Das::Utils::PathFromUtf8(name);
         std::filesystem::remove_all(path);
         return path;
     }
@@ -240,9 +242,9 @@ protected:
     {
         test_dir_ = UniqueTestDir();
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         std::filesystem::create_directories(settings_dir_);
-        plugin_dir_ = test_dir_ / "plugins";
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
         std::filesystem::create_directories(plugin_dir_);
 
         settings_manager_ =
@@ -304,7 +306,7 @@ TEST_F(SchedulerServiceTest, Disable_WhenStopped_ReturnsError)
 
 TEST_F(SchedulerServiceTest, Initialize_NonExistentDir_ReturnsError)
 {
-    auto bad_dir = test_dir_ / "nonexistent_plugins";
+    auto bad_dir = test_dir_ / DAS_PATH_LITERAL("nonexistent_plugins");
     auto result = scheduler_->Initialize(bad_dir, {});
     EXPECT_EQ(result, DAS_E_FAIL);
 }
@@ -444,7 +446,8 @@ TEST_F(SchedulerServiceTest, Initialize_CorruptTaskFile_VisibleAsInvalid)
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
-    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    auto task_file = settings_dir_ / DAS_PATH_LITERAL("0")
+                     / DAS_PATH_LITERAL("taskId0.json");
     {
         std::ofstream ofs{task_file};
         ofs << "CORRUPT DATA {{{";
@@ -613,7 +616,8 @@ TEST_F(SchedulerServiceTest, Get_CorruptTaskFile_VisibleWithInvalidMarker)
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     // Task 0: corrupt file
-    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    auto task_file = settings_dir_ / DAS_PATH_LITERAL("0")
+                     / DAS_PATH_LITERAL("taskId0.json");
     {
         std::ofstream ofs{task_file};
         ofs << "{broken json";
@@ -735,8 +739,14 @@ TEST_F(SchedulerServiceTest, DeleteTask_PersistsRemoval)
         1);
 
     // Verify persisted state: taskId0.json should be deleted
-    EXPECT_FALSE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
-    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
+    EXPECT_FALSE(
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskId0.json")));
+    EXPECT_TRUE(
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskId1.json")));
 
     auto index = settings_manager_->GetSchedulerIndexJson("0");
     ASSERT_EQ(
@@ -772,7 +782,8 @@ TEST_F(SchedulerServiceTest, DeleteTask_InvalidInstance_Succeeds)
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     // Corrupt task file
-    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    auto task_file = settings_dir_ / DAS_PATH_LITERAL("0")
+                     / DAS_PATH_LITERAL("taskId0.json");
     {
         std::ofstream ofs{task_file};
         ofs << "corrupt";
@@ -861,7 +872,7 @@ TEST_F(SchedulerServiceTest, DeleteTask_PersistenceFailure_RollsBack)
 
     // Replace the profile directory with a regular file so that
     // create_directories fails and WriteJsonFile returns an error.
-    auto profile_dir = settings_dir_ / "0";
+    auto profile_dir = settings_dir_ / DAS_PATH_LITERAL("0");
     std::filesystem::remove_all(profile_dir);
     {
         std::ofstream ofs{profile_dir};
@@ -1053,7 +1064,8 @@ TEST_F(SchedulerServiceTest, UpdateProperties_InvalidInstance_ReturnsError)
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
-    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    auto task_file = settings_dir_ / DAS_PATH_LITERAL("0")
+                     / DAS_PATH_LITERAL("taskId0.json");
     {
         std::ofstream ofs{task_file};
         ofs << "corrupt";
@@ -1226,9 +1238,9 @@ protected:
     {
         test_dir_ = UniqueTestDir();
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         std::filesystem::create_directories(settings_dir_);
-        plugin_dir_ = test_dir_ / "plugins";
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
         std::filesystem::create_directories(plugin_dir_);
 
         settings_manager_ =
@@ -2040,9 +2052,9 @@ protected:
     {
         test_dir_ = UniqueTestDir();
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         std::filesystem::create_directories(settings_dir_);
-        plugin_dir_ = test_dir_ / "plugins";
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
         std::filesystem::create_directories(plugin_dir_);
 
         settings_manager_ =
@@ -2108,11 +2120,11 @@ protected:
 
         test_dir_ = UniqueTestDir();
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         std::filesystem::create_directories(settings_dir_);
-        plugin_dir_ = test_dir_ / "plugins";
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
         std::filesystem::create_directories(plugin_dir_);
-        manifest_path_ = plugin_dir_ / "FactoryPlugin.json";
+        manifest_path_ = plugin_dir_ / DAS_PATH_LITERAL("FactoryPlugin.json");
         WriteFactoryPluginManifest(manifest_path_);
 
         // 先创建共享内存段并构造 FactoryTaskSharedState，
@@ -2141,7 +2153,9 @@ protected:
             const auto host_path = IpcTestConfig::GetDasHostPath();
             if (std::filesystem::exists(host_path))
             {
-                plugin_manager_->SetHostExePath(host_path);
+                // ABI 边界收 const std::string&，path 在调用点物化为 UTF-8
+                plugin_manager_->SetHostExePath(
+                    Das::Utils::PathToUtf8(host_path));
             }
         }
         catch (const std::exception&)
@@ -2210,17 +2224,19 @@ protected:
     void DeploySchedulerTestPlugin()
     {
         namespace fs = std::filesystem;
-        const fs::path build_plugin_dir{IpcTestConfig::GetPluginDir()};
+        const fs::path build_plugin_dir = IpcTestConfig::GetPluginDir();
 #ifndef DAS_SCHEDULER_TEST_PLUGIN_FILENAME
 #error "DAS_SCHEDULER_TEST_PLUGIN_FILENAME must be defined via CMake"
 #endif
         const fs::path src_dll =
-            build_plugin_dir / DAS_SCHEDULER_TEST_PLUGIN_FILENAME;
+            build_plugin_dir
+            / DAS_PATH_LITERAL(DAS_SCHEDULER_TEST_PLUGIN_FILENAME);
         ASSERT_TRUE(fs::exists(src_dll))
             << "SchedulerTestPlugin artifact not found at: "
-            << src_dll.string();
+            << Das::Utils::PathToUtf8(src_dll);
 
-        const fs::path dst_dll = plugin_dir_ / "FactoryPlugin.dll";
+        const fs::path dst_dll =
+            plugin_dir_ / DAS_PATH_LITERAL("FactoryPlugin.dll");
         fs::copy_file(src_dll, dst_dll, fs::copy_options::overwrite_existing);
     }
 
@@ -2234,24 +2250,27 @@ protected:
         bool               force_ipc)
     {
         namespace fs = std::filesystem;
-        const fs::path build_plugin_dir{IpcTestConfig::GetPluginDir()};
+        const fs::path build_plugin_dir = IpcTestConfig::GetPluginDir();
 
-        const fs::path src_dll = build_plugin_dir / dll_name;
+        const fs::path src_dll =
+            build_plugin_dir / Das::Utils::PathFromUtf8(dll_name);
         ASSERT_TRUE(fs::exists(src_dll))
-            << "plugin dll not found at: " << src_dll.string();
+            << "plugin dll not found at: " << Das::Utils::PathToUtf8(src_dll);
         fs::copy_file(
             src_dll,
-            plugin_dir_ / dll_name,
+            plugin_dir_ / Das::Utils::PathFromUtf8(dll_name),
             fs::copy_options::overwrite_existing);
 
-        const fs::path src_manifest = build_plugin_dir / manifest_name;
+        const fs::path src_manifest =
+            build_plugin_dir / Das::Utils::PathFromUtf8(manifest_name);
         ASSERT_TRUE(fs::exists(src_manifest))
-            << "plugin manifest not found at: " << src_manifest.string();
+            << "plugin manifest not found at: "
+            << Das::Utils::PathToUtf8(src_manifest);
         if (!force_ipc)
         {
             fs::copy_file(
                 src_manifest,
-                plugin_dir_ / manifest_name,
+                plugin_dir_ / Das::Utils::PathFromUtf8(manifest_name),
                 fs::copy_options::overwrite_existing);
             return;
         }
@@ -2265,7 +2284,9 @@ protected:
         auto parsed_obj = parsed->as_object();
         ASSERT_TRUE(parsed_obj.has_value());
         (*parsed_obj)[std::string_view("loadMode")] = "ipc";
-        std::ofstream ofs(plugin_dir_ / manifest_name, std::ios::trunc);
+        std::ofstream ofs(
+            plugin_dir_ / Das::Utils::PathFromUtf8(manifest_name),
+            std::ios::trunc);
         ofs << Das::Utils::SerializeYyjsonValue(*parsed).value();
     }
 
@@ -2382,7 +2403,8 @@ TEST_F(SchedulerServiceTest, OnTick_SkipsInvalidInstance)
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
-    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    auto task_file = settings_dir_ / DAS_PATH_LITERAL("0")
+                     / DAS_PATH_LITERAL("taskId0.json");
     {
         std::ofstream ofs{task_file};
         ofs << "CORRUPT DATA";
@@ -3405,7 +3427,8 @@ namespace
         EXPECT_EQ(scheduler.DeleteRepositoryEntry(0), DAS_S_OK);
         EXPECT_FALSE(
             std::filesystem::exists(
-                settings_dir / "0" / "taskRepository0.json"));
+                settings_dir / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL("taskRepository0.json")));
         auto repository = scheduler.GetTaskRepository();
         auto entries =
             (*repository.as_object())[std::string_view("entries")].as_array();
@@ -6964,7 +6987,8 @@ TEST_F(
             -1),
         0);
 
-    auto entry_path = settings_dir_ / "0" / "taskRepository0.json";
+    auto entry_path = settings_dir_ / DAS_PATH_LITERAL("0")
+                      / DAS_PATH_LITERAL("taskRepository0.json");
     std::filesystem::remove(entry_path);
     std::filesystem::create_directory(entry_path);
 
@@ -7073,9 +7097,13 @@ TEST_F(
     EXPECT_EQ(scheduler_->DeleteRepositoryEntry(0), DAS_S_OK);
 
     EXPECT_FALSE(
-        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskRepository0.json")));
     EXPECT_TRUE(
-        std::filesystem::exists(settings_dir_ / "0" / "taskRepository1.json"));
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskRepository1.json")));
 
     auto repository = scheduler_->GetTaskRepository();
     auto entries =
@@ -7200,7 +7228,9 @@ TEST_F(
     auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
     ExpectRepositoryAvailability(entry, "pluginUnavailable");
     EXPECT_TRUE(
-        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskRepository0.json")));
     ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
 }
 
@@ -7222,7 +7252,9 @@ TEST_F(
     auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
     ExpectRepositoryAvailability(entry, "pluginUnavailable");
     EXPECT_TRUE(
-        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskRepository0.json")));
     ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
 }
 
@@ -7230,14 +7262,14 @@ TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerRepositoryUnavailableBannedPluginReason)
 {
-    auto banned_dir = plugin_dir_ / "BannedPlugin";
+    auto banned_dir = plugin_dir_ / DAS_PATH_LITERAL("BannedPlugin");
     std::filesystem::create_directories(banned_dir);
     WriteFactoryPluginManifest(
-        banned_dir / "BannedPlugin.json",
+        banned_dir / DAS_PATH_LITERAL("BannedPlugin.json"),
         BannedPluginGuidString);
     {
         std::ofstream marker(
-            banned_dir / "BannedPlugin.willBeDelete",
+            banned_dir / DAS_PATH_LITERAL("BannedPlugin.willBeDelete"),
             std::ios::trunc);
         marker << "pending deletion";
     }
@@ -7253,7 +7285,9 @@ TEST_F(
     auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
     ExpectRepositoryAvailability(entry, "pluginUnavailable");
     EXPECT_TRUE(
-        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskRepository0.json")));
     ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
 }
 
@@ -7262,7 +7296,7 @@ TEST_F(
     SchedulerRepositoryUnavailableLoadFailedReason)
 {
     WriteFactoryPluginManifest(
-        plugin_dir_ / "LoadFailedPlugin.json",
+        plugin_dir_ / DAS_PATH_LITERAL("LoadFailedPlugin.json"),
         LoadFailedPluginGuidString,
         FactoryTaskGuidString,
         true,
@@ -7279,7 +7313,9 @@ TEST_F(
     auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
     ExpectRepositoryAvailability(entry, "pluginLoadFailed");
     EXPECT_TRUE(
-        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskRepository0.json")));
     ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
 }
 
@@ -7299,7 +7335,9 @@ TEST_F(
     auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
     ExpectRepositoryAvailability(entry, "taskTypeUnavailable");
     EXPECT_TRUE(
-        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskRepository0.json")));
     ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
 }
 
@@ -7324,7 +7362,9 @@ TEST_F(
     auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
     ExpectRepositoryAvailability(entry, "capabilityMissing");
     EXPECT_TRUE(
-        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskRepository0.json")));
     ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
 }
 
@@ -7389,14 +7429,14 @@ TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerRepositoryBannedPluginAuthoringNoProviderCall)
 {
-    auto banned_dir = plugin_dir_ / "BannedPlugin";
+    auto banned_dir = plugin_dir_ / DAS_PATH_LITERAL("BannedPlugin");
     std::filesystem::create_directories(banned_dir);
     WriteFactoryPluginManifest(
-        banned_dir / "BannedPlugin.json",
+        banned_dir / DAS_PATH_LITERAL("BannedPlugin.json"),
         BannedPluginGuidString);
     {
         std::ofstream marker(
-            banned_dir / "BannedPlugin.willBeDelete",
+            banned_dir / DAS_PATH_LITERAL("BannedPlugin.willBeDelete"),
             std::ios::trunc);
         marker << "pending deletion";
     }
@@ -7420,7 +7460,7 @@ TEST_F(
     SchedulerRepositoryLoadFailedAuthoringNoProviderCall)
 {
     WriteFactoryPluginManifest(
-        plugin_dir_ / "LoadFailedPlugin.json",
+        plugin_dir_ / DAS_PATH_LITERAL("LoadFailedPlugin.json"),
         LoadFailedPluginGuidString,
         FactoryTaskGuidString,
         true,
@@ -7527,14 +7567,14 @@ TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerRepositoryBannedPluginCompileNoProviderCall)
 {
-    auto banned_dir = plugin_dir_ / "BannedPlugin";
+    auto banned_dir = plugin_dir_ / DAS_PATH_LITERAL("BannedPlugin");
     std::filesystem::create_directories(banned_dir);
     WriteFactoryPluginManifest(
-        banned_dir / "BannedPlugin.json",
+        banned_dir / DAS_PATH_LITERAL("BannedPlugin.json"),
         BannedPluginGuidString);
     {
         std::ofstream marker(
-            banned_dir / "BannedPlugin.willBeDelete",
+            banned_dir / DAS_PATH_LITERAL("BannedPlugin.willBeDelete"),
             std::ios::trunc);
         marker << "pending deletion";
     }
@@ -7558,7 +7598,7 @@ TEST_F(
     SchedulerRepositoryLoadFailedCompileNoProviderCall)
 {
     WriteFactoryPluginManifest(
-        plugin_dir_ / "LoadFailedPlugin.json",
+        plugin_dir_ / DAS_PATH_LITERAL("LoadFailedPlugin.json"),
         LoadFailedPluginGuidString,
         FactoryTaskGuidString,
         true,
@@ -8009,14 +8049,14 @@ TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerRepositoryUnavailableBannedDeleteRenameNoProviderCall)
 {
-    auto banned_dir = plugin_dir_ / "BannedPlugin";
+    auto banned_dir = plugin_dir_ / DAS_PATH_LITERAL("BannedPlugin");
     std::filesystem::create_directories(banned_dir);
     WriteFactoryPluginManifest(
-        banned_dir / "BannedPlugin.json",
+        banned_dir / DAS_PATH_LITERAL("BannedPlugin.json"),
         BannedPluginGuidString);
     {
         std::ofstream marker(
-            banned_dir / "BannedPlugin.willBeDelete",
+            banned_dir / DAS_PATH_LITERAL("BannedPlugin.willBeDelete"),
             std::ios::trunc);
         marker << "pending deletion";
     }
@@ -8041,7 +8081,7 @@ TEST_F(
     SchedulerRepositoryUnavailableLoadFailedDeleteRenameNoProviderCall)
 {
     WriteFactoryPluginManifest(
-        plugin_dir_ / "LoadFailedPlugin.json",
+        plugin_dir_ / DAS_PATH_LITERAL("LoadFailedPlugin.json"),
         LoadFailedPluginGuidString,
         FactoryTaskGuidString,
         true,
@@ -8468,7 +8508,7 @@ protected:
         fake_svc_->AddRef();
         controller_ = std::make_unique<Das::Http::DasSchedulerController>(
             *fake_svc_,
-            std::filesystem::current_path() / "plugins");
+            std::filesystem::current_path() / DAS_PATH_LITERAL("plugins"));
     }
 
     void TearDown() override
@@ -8880,7 +8920,7 @@ TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringErrorKind_Data)
     error_svc->AddRef();
     Das::Http::DasSchedulerController controller(
         *error_svc,
-        std::filesystem::current_path() / "plugins");
+        std::filesystem::current_path() / DAS_PATH_LITERAL("plugins"));
 
     auto req = MakeRequest(
         "/api/v1/scheduler/0/tasks/42/authoring/apply",
@@ -9484,7 +9524,9 @@ TEST(ProfileControllerTest, GetPluginSettings_SFalseReportsEmptyObjectRecovery)
     ASSERT_EQ(settings_manager.CreateProfile("0"), DAS_S_OK);
 
     auto plugin_settings_path =
-        test_dir / "0" / (std::string(FactoryPluginGuidString) + ".json");
+        test_dir / DAS_PATH_LITERAL("0")
+        / Das::Utils::PathFromUtf8(
+            std::string(FactoryPluginGuidString) + ".json");
     {
         std::ofstream ofs(plugin_settings_path);
         ofs << "{corrupt";
@@ -9524,9 +9566,9 @@ protected:
     {
         test_dir_ = UniqueTestDir();
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         std::filesystem::create_directories(settings_dir_);
-        plugin_dir_ = test_dir_ / "plugins";
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
         std::filesystem::create_directories(plugin_dir_);
 
         settings_manager_ =
@@ -9631,8 +9673,14 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
         1);
 
     //    taskId{taskId}.json is created for each task instance
-    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
-    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
+    EXPECT_TRUE(
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskId0.json")));
+    EXPECT_TRUE(
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskId1.json")));
 
     //    Verify task instance file content
     auto task0_json = settings_manager_->GetTaskInstanceJson("0", 0);
@@ -9722,8 +9770,14 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
         WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
 
     // Split files should still exist after Disable
-    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
-    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
+    EXPECT_TRUE(
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskId0.json")));
+    EXPECT_TRUE(
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskId1.json")));
     auto index_after_stop = settings_manager_->GetSchedulerIndexJson("0");
     EXPECT_EQ(
         (*index_after_stop.as_object())[std::string_view("nextTaskId")]
@@ -9772,8 +9826,14 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
 
     //    delete removes only the selected taskId{taskId}.json and queue-order
     //    entry
-    EXPECT_FALSE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
-    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
+    EXPECT_FALSE(
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskId0.json")));
+    EXPECT_TRUE(
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskId1.json")));
 
     auto index_after_delete = settings_manager_->GetSchedulerIndexJson("0");
     ASSERT_EQ(
@@ -9907,9 +9967,9 @@ protected:
     {
         test_dir_ = UniqueTestDir();
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         std::filesystem::create_directories(settings_dir_);
-        plugin_dir_ = test_dir_ / "plugins";
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
         std::filesystem::create_directories(plugin_dir_);
 
         settings_manager_ =
@@ -9980,7 +10040,8 @@ TEST_F(SchedulerUnavailableTest, UnavailableAndCorruptInstances_VisibleInGet)
     settings_manager_->UpdateTaskInstanceJson("0", 0, task0);
 
     // Task 1: corrupt task-instance JSON file
-    auto task1_file = settings_dir_ / "0" / "taskId1.json";
+    auto task1_file = settings_dir_ / DAS_PATH_LITERAL("0")
+                      / DAS_PATH_LITERAL("taskId1.json");
     {
         std::ofstream ofs{task1_file};
         ofs << "CORRUPT DATA {{{{";
@@ -10076,7 +10137,8 @@ TEST_F(SchedulerUnavailableTest, CorruptInstance_NotExecutedOnStart)
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
-    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    auto task_file = settings_dir_ / DAS_PATH_LITERAL("0")
+                     / DAS_PATH_LITERAL("taskId0.json");
     {
         std::ofstream ofs{task_file};
         ofs << "CORRUPT";
@@ -10124,7 +10186,10 @@ TEST_F(SchedulerUnavailableTest, DeleteUnavailableInstance_Succeeds)
         0u);
 
     // Verify persisted removal
-    EXPECT_FALSE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
+    EXPECT_FALSE(
+        std::filesystem::exists(
+            settings_dir_ / DAS_PATH_LITERAL("0")
+            / DAS_PATH_LITERAL("taskId0.json")));
     auto index = settings_manager_->GetSchedulerIndexJson("0");
     EXPECT_EQ(
         (*index.as_object())[std::string_view("taskOrder")].as_array()->size(),
@@ -10143,7 +10208,8 @@ TEST_F(SchedulerUnavailableTest, DeleteCorruptInstance_Succeeds)
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
-    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    auto task_file = settings_dir_ / DAS_PATH_LITERAL("0")
+                     / DAS_PATH_LITERAL("taskId0.json");
     {
         std::ofstream ofs{task_file};
         ofs << "corrupt";

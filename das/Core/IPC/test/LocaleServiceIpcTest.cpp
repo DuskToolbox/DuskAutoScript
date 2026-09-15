@@ -38,6 +38,7 @@
 #include <das/DasTypes.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <das/IDasBase.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasLocaleService.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasLocaleService.Implements.hpp>
 
@@ -242,7 +243,8 @@ namespace
         {
             uint16_t   session_id = 0;
             const auto result = launcher_->Start(
-                host_exe_path_,
+                // ABI 边界收 const std::string&，path 在调用点物化为 UTF-8
+                Das::Utils::PathToUtf8(host_exe_path_),
                 session_id,
                 IpcTestConfig::GetHostStartTimeoutMs());
             return result;
@@ -253,7 +255,7 @@ namespace
         // 加载 IpcTestPlugin1 并创建 IDasComponent（index=1 工厂）。
         DasPtr<Das::PluginInterface::IDasComponent> LoadComponent()
         {
-            std::string plugin_json_path;
+            std::filesystem::path plugin_json_path;
             try
             {
                 plugin_json_path =
@@ -268,7 +270,8 @@ namespace
             DasPtr<IDasAsyncLoadPluginOperation> op;
             const auto load_result = ctx_->LoadPluginAsync(
                 launcher_.Get(),
-                plugin_json_path.c_str(),
+                // ABI 边界收 const char*，path 在调用点物化为 UTF-8
+                Das::Utils::PathToUtf8(plugin_json_path).c_str(),
                 op.Put(),
                 IpcTestConfig::GetPluginLoadTimeout());
             if (DAS::IsFailed(load_result) || !op)
@@ -319,7 +322,7 @@ namespace
             return component;
         }
 
-        std::string                      host_exe_path_;
+        std::filesystem::path            host_exe_path_;
         DasPtr<MainProcess::IIpcContext> ctx_;
         DasPtr<IHostLauncher>            launcher_;
         std::thread                      run_thread_;
@@ -334,7 +337,8 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     // 注册 fake service 按名（IDasLocaleService）。

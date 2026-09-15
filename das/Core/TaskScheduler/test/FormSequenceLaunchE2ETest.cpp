@@ -22,6 +22,7 @@
 #include <das/DasRef.hpp>
 #include <das/Plugins/SchedulerTestPlugin/SchedulerTestSharedState.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -79,7 +80,8 @@ namespace
         static std::atomic<int> counter{0};
         const auto              name =
             "formseq_launch_e2e_" + std::to_string(counter.fetch_add(1));
-        auto path = std::filesystem::current_path() / name;
+        auto path =
+            std::filesystem::current_path() / Das::Utils::PathFromUtf8(name);
         std::filesystem::remove_all(path);
         return path;
     }
@@ -90,7 +92,7 @@ namespace
     {
         namespace fs = std::filesystem;
         const fs::path from_working_dir =
-            fs::current_path() / "StubWindowTarget.exe";
+            fs::current_path() / DAS_PATH_LITERAL("StubWindowTarget.exe");
         if (fs::exists(from_working_dir))
         {
             return from_working_dir;
@@ -99,7 +101,8 @@ namespace
         if (GetModuleFileNameW(nullptr, module_path, MAX_PATH) > 0)
         {
             const fs::path fallback =
-                fs::path(module_path).parent_path() / "StubWindowTarget.exe";
+                fs::path(module_path).parent_path()
+                / DAS_PATH_LITERAL("StubWindowTarget.exe");
             if (fs::exists(fallback))
             {
                 return fallback;
@@ -286,11 +289,12 @@ namespace
         {
             test_dir_ = UniqueE2ETestDir();
             std::filesystem::create_directories(test_dir_);
-            settings_dir_ = test_dir_ / "settings";
+            settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
             std::filesystem::create_directories(settings_dir_);
-            plugin_dir_ = test_dir_ / "plugins";
+            plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
             std::filesystem::create_directories(plugin_dir_);
-            manifest_path_ = plugin_dir_ / "FactoryPlugin.json";
+            manifest_path_ =
+                plugin_dir_ / DAS_PATH_LITERAL("FactoryPlugin.json");
             WriteLaunchE2EFactoryManifest(manifest_path_);
 
             // 先建共享内存段并构造 FactoryTaskSharedState，再经环境变量
@@ -314,7 +318,9 @@ namespace
                 const auto host_path = IpcTestConfig::GetDasHostPath();
                 if (std::filesystem::exists(host_path))
                 {
-                    plugin_manager_->SetHostExePath(host_path);
+                    // ABI 边界收 const std::string&，path 在调用点物化为 UTF-8
+                    plugin_manager_->SetHostExePath(
+                        Das::Utils::PathToUtf8(host_path));
                 }
             }
             catch (const std::exception&)
@@ -363,17 +369,19 @@ namespace
         void DeploySchedulerTestPlugin()
         {
             namespace fs = std::filesystem;
-            const fs::path build_plugin_dir{IpcTestConfig::GetPluginDir()};
+            const fs::path build_plugin_dir = IpcTestConfig::GetPluginDir();
 #ifndef DAS_SCHEDULER_TEST_PLUGIN_FILENAME
 #error "DAS_SCHEDULER_TEST_PLUGIN_FILENAME must be defined via CMake"
 #endif
             const fs::path source_dll =
-                build_plugin_dir / DAS_SCHEDULER_TEST_PLUGIN_FILENAME;
+                build_plugin_dir
+                / DAS_PATH_LITERAL(DAS_SCHEDULER_TEST_PLUGIN_FILENAME);
             ASSERT_TRUE(fs::exists(source_dll))
                 << "SchedulerTestPlugin artifact not found at: "
-                << source_dll.string();
+                << Das::Utils::PathToUtf8(source_dll);
 
-            const fs::path target_dll = plugin_dir_ / "FactoryPlugin.dll";
+            const fs::path target_dll =
+                plugin_dir_ / DAS_PATH_LITERAL("FactoryPlugin.dll");
             fs::copy_file(
                 source_dll,
                 target_dll,
@@ -389,24 +397,28 @@ namespace
             bool               force_ipc)
         {
             namespace fs = std::filesystem;
-            const fs::path build_plugin_dir{IpcTestConfig::GetPluginDir()};
+            const fs::path build_plugin_dir = IpcTestConfig::GetPluginDir();
 
-            const fs::path source_dll = build_plugin_dir / dll_name;
+            const fs::path source_dll =
+                build_plugin_dir / Das::Utils::PathFromUtf8(dll_name);
             ASSERT_TRUE(fs::exists(source_dll))
-                << "plugin dll not found at: " << source_dll.string();
+                << "plugin dll not found at: "
+                << Das::Utils::PathToUtf8(source_dll);
             fs::copy_file(
                 source_dll,
-                plugin_dir_ / dll_name,
+                plugin_dir_ / Das::Utils::PathFromUtf8(dll_name),
                 fs::copy_options::overwrite_existing);
 
-            const fs::path source_manifest = build_plugin_dir / manifest_name;
+            const fs::path source_manifest =
+                build_plugin_dir / Das::Utils::PathFromUtf8(manifest_name);
             ASSERT_TRUE(fs::exists(source_manifest))
-                << "plugin manifest not found at: " << source_manifest.string();
+                << "plugin manifest not found at: "
+                << Das::Utils::PathToUtf8(source_manifest);
             if (!force_ipc)
             {
                 fs::copy_file(
                     source_manifest,
-                    plugin_dir_ / manifest_name,
+                    plugin_dir_ / Das::Utils::PathFromUtf8(manifest_name),
                     fs::copy_options::overwrite_existing);
                 return;
             }
@@ -421,7 +433,7 @@ namespace
             ASSERT_TRUE(parsed_object.has_value());
             (*parsed_object)[std::string_view("loadMode")] = "ipc";
             std::ofstream output_stream(
-                plugin_dir_ / manifest_name,
+                plugin_dir_ / Das::Utils::PathFromUtf8(manifest_name),
                 std::ios::trunc);
             output_stream << Das::Utils::SerializeYyjsonValue(*parsed).value();
         }
@@ -504,7 +516,8 @@ namespace
 
         const std::filesystem::path stub_exe = ResolveStubWindowTargetPath();
         ASSERT_TRUE(std::filesystem::exists(stub_exe))
-            << "StubWindowTarget.exe not found at: " << stub_exe.string();
+            << "StubWindowTarget.exe not found at: "
+            << Das::Utils::PathToUtf8(stub_exe);
 
         const std::string  window_token = MakeUniqueWindowToken();
         const std::string  window_class = "DasE2ELaunchStub_" + window_token;
