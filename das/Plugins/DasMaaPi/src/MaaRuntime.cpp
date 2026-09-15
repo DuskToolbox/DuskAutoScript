@@ -23,6 +23,7 @@
 // boost::dll::this_line_location() 不依赖 MaaFW，测试构建（守卫生效）也要
 // 可用，否则 AgentOutputLogger 在测试 target 编译时解析不到 plugin_dir。
 #include <boost/dll/runtime_symbol_info.hpp>
+#include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/FileUtils.hpp>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/spdlog.h>
@@ -1314,22 +1315,6 @@ namespace Das::Plugins::DasMaaPi
         // pattern），不进 registry，spdlog::get 命中不了；Gateway/Logger.cpp:27
         // 既有范式同此事。
 
-        // boost::filesystem::path（boost::dll::this_line_location() 返回）与
-        // std::filesystem::path 不能直接互转；boost::filesystem::path 也没有
-        // u8string()（那是 std::filesystem::path 的方法）。Windows 上 .string()
-        // 是 ACP narrow（中文 plugin 路径会乱码），经 wstring() 取 UTF-16 wide
-        // 再让 std::filesystem::path 走 native wide 解码；Unix native narrow
-        // 通常 即 UTF-8，直接 string()。
-        std::filesystem::path ToStdPath(
-            const boost::filesystem::path& boost_path)
-        {
-#ifdef _WIN32
-            return std::filesystem::path{boost_path.wstring()};
-#else
-            return std::filesystem::path{boost_path.string()};
-#endif
-        }
-
         std::shared_ptr<spdlog::logger> AgentOutputLogger()
         {
             try
@@ -1344,7 +1329,7 @@ namespace Das::Plugins::DasMaaPi
                 const auto log_dir = plugin_dir / "logs";
                 std::error_code error_code;
                 if (!Das::Utils::CreateDirectoryRecursive(
-                        ToStdPath(log_dir),
+                        Das::Utils::ToStdPath(log_dir),
                         error_code))
                 {
                     return nullptr;
