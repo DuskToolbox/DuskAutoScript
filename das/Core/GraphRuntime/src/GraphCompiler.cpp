@@ -14,7 +14,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <functional>
+#include <string>
 #include <utility>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -1853,6 +1855,59 @@ yyjson::value GraphCompiler::DiagnosticToJson(const CompileEdgeDiagnostic& diag)
     obj[std::string_view("actual_type")] =
         std::make_pair(std::string_view(diag.actual_type), yyjson::copy_string);
 
+    return payload;
+}
+
+yyjson::value GraphCompiler::DiagnosticToWireContract(
+    const yyjson::value& diagnostic)
+{
+    auto payload = Das::Utils::MakeYyjsonObject();
+    auto obj_o = payload.as_object();
+    if (!obj_o)
+    {
+        return payload;
+    }
+    auto obj = *obj_o;
+
+    // kind 在 plan 内部形状里是枚举整数的十进制文本（E2E 契约固化），
+    // 投影侧解析回整数以映射 severity 并填可选 code。
+    int  kind_value = -1;
+    auto source_o = diagnostic.as_object();
+    if (source_o && source_o->contains(std::string_view("kind")))
+    {
+        if (const auto kind_text =
+                (*source_o)[std::string_view("kind")].as_string())
+        {
+            std::from_chars(
+                kind_text->data(),
+                kind_text->data() + kind_text->size(),
+                kind_value);
+        }
+    }
+    const bool is_non_blocking_lint =
+        kind_value == static_cast<int>(CompileDiagnosticKind::UnknownPortType)
+        || kind_value
+               == static_cast<int>(CompileDiagnosticKind::LoopBodyDataLeak);
+    obj[std::string_view("severity")] = std::make_pair(
+        std::string_view{is_non_blocking_lint ? "warning" : "error"},
+        yyjson::copy_string);
+
+    std::string message_text;
+    if (source_o && source_o->contains(std::string_view("message")))
+    {
+        if (const auto message =
+                (*source_o)[std::string_view("message")].as_string())
+        {
+            message_text = std::string(*message);
+        }
+    }
+    obj[std::string_view("message")] =
+        std::make_pair(std::string_view{message_text}, yyjson::copy_string);
+
+    if (kind_value >= 0)
+    {
+        obj[std::string_view("code")] = static_cast<std::int64_t>(kind_value);
+    }
     return payload;
 }
 

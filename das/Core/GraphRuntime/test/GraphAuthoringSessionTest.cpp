@@ -2196,7 +2196,6 @@ namespace
         const SessionCompileOutcome&                   outcome,
         Das::Core::GraphRuntime::CompileDiagnosticKind kind)
     {
-        const std::string kind_text = std::to_string(static_cast<int>(kind));
         for (const auto& diagnostic : outcome.diagnostics)
         {
             auto diagnostic_obj = diagnostic.as_object();
@@ -2204,10 +2203,9 @@ namespace
             {
                 continue;
             }
-            if ((*diagnostic_obj)[std::string_view("kind")]
-                    .as_string()
-                    .value_or("")
-                == kind_text)
+            if ((*diagnostic_obj)[std::string_view("code")].as_sint().value_or(
+                    -1)
+                == static_cast<std::int64_t>(kind))
             {
                 return true;
             }
@@ -2219,7 +2217,6 @@ namespace
         const SessionCompileOutcome&                   outcome,
         Das::Core::GraphRuntime::CompileDiagnosticKind kind)
     {
-        const std::string kind_text = std::to_string(static_cast<int>(kind));
         for (const auto& diagnostic : outcome.diagnostics)
         {
             auto diagnostic_obj = diagnostic.as_object();
@@ -2227,10 +2224,9 @@ namespace
             {
                 continue;
             }
-            if ((*diagnostic_obj)[std::string_view("kind")]
-                    .as_string()
-                    .value_or("")
-                == kind_text)
+            if ((*diagnostic_obj)[std::string_view("code")].as_sint().value_or(
+                    -1)
+                == static_cast<std::int64_t>(kind))
             {
                 return std::string(
                     (*diagnostic_obj)[std::string_view("message")]

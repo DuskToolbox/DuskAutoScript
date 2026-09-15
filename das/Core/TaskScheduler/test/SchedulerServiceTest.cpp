@@ -4853,7 +4853,9 @@ TEST_F(SchedulerRuntimeBackedTest, GraphTaskShellExecutionInputPassesThrough)
         /*force_ipc=*/true);
 
     // graph 任务实例：单 componentRef 探针节点（短字符串节点 id，节点
-    // 标识统一后的生产形态）。
+    // 标识统一后的生产形态）。graph 视图契约要求恰一个 Begin 边界
+    // 节点（缺席即 BeginNodeMissing fatal，编译产物无执行序），预置
+    // n_begin 与空图会话的播种形状一致。
     {
         yyjson::value task0(Das::Utils::MakeYyjsonObject());
         (*task0.as_object())[std::string_view("id")] = 0;
@@ -4869,6 +4871,18 @@ TEST_F(SchedulerRuntimeBackedTest, GraphTaskShellExecutionInputPassesThrough)
             "documentId": "shell-passthrough-graph",
             "version": 1,
             "nodes": [
+                {
+                    "nodeId": "n_begin",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {}
+                },
                 {
                     "nodeId": "probe",
                     "target": {
@@ -5081,10 +5095,32 @@ TEST_F(
     ASSERT_TRUE(graph->contains(std::string_view("nodes")));
     auto nodes = (*graph)[std::string_view("nodes")].as_array();
     ASSERT_TRUE(nodes.has_value());
-    ASSERT_EQ(nodes->size(), 1u);
-
-    // fields[] 里 exePath 声明 required:true，未声明的 args 保持 false。
-    auto node_obj = (*nodes)[0].as_object();
+    // 空图会话预置 begin/end（n_0/n_1）两边界节点，addGraphNode 之后
+    // 共 3 个；action 节点按 componentGuid 定位，不依赖节点位置。
+    ASSERT_EQ(nodes->size(), 3u);
+    yyjson::value action_node(Das::Utils::MakeYyjsonObject());
+    bool          action_found = false;
+    for (const auto& node : *nodes)
+    {
+        auto candidate = node.as_object();
+        if (!candidate)
+        {
+            continue;
+        }
+        const auto component_guid =
+            (*candidate)[std::string_view("componentGuid")]
+                .as_string()
+                .value_or("");
+        if (component_guid
+            == std::string_view("95FD2FFA-88F2-4F85-A536-C708D25B641F"))
+        {
+            action_node  = Das::Utils::CloneYyjsonValue(node);
+            action_found = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(action_found);
+    auto node_obj = action_node.as_object();
     ASSERT_TRUE(node_obj.has_value());
     ASSERT_TRUE(node_obj->contains(std::string_view("fields")));
     auto fields = (*node_obj)[std::string_view("fields")].as_array();

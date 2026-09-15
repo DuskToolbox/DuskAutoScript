@@ -1854,12 +1854,17 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
             std::move(compile_section);
 
         // The validator requires diagnostics to be an array even when empty.
+        // 顶层 diagnostics 是调度器边界的严格诊断契约（severity/
+        // message/code，拒绝其它键）；plan 内部的 kind/node_id 私有形状
+        // 留在 executionInput 透传域（GraphRuntime 测试固化），出口投影
+        // 而非克隆——否则编译器诊断缺 severity 必被调度器拒收。
         yyjson::value diagnostics(Das::Utils::MakeYyjsonArray());
         auto          diagnostics_arr = diagnostics.as_array();
         for (const auto& diagnostic : plan.diagnostics)
         {
             diagnostics_arr->emplace_back(
-                Das::Utils::CloneYyjsonValue(diagnostic));
+                Das::Core::GraphRuntime::GraphCompiler::
+                    DiagnosticToWireContract(diagnostic));
         }
         (*envelope_obj)[std::string_view("diagnostics")] =
             std::move(diagnostics);

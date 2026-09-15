@@ -213,6 +213,14 @@ public:
     /// diagnostics.
     static yyjson::value DiagnosticToJson(const CompileEdgeDiagnostic& diag);
 
+    /// Project an internal plan diagnostic (kind/message shape) into the
+    /// strict scheduler diagnostic contract ({severity, message, code}) for
+    /// envelopes crossing the scheduler boundary. severity derives from the
+    /// kind semantics: the two non-blocking lint families (UnknownPortType /
+    /// LoopBodyDataLeak) surface as warnings, everything else is an error.
+    static yyjson::value DiagnosticToWireContract(
+        const yyjson::value& diagnostic);
+
     /// Unified compile entry point: runs all phases and produces a
     /// CompiledGraphPlanDto. Steps: ValidateEdgePorts ->
     /// ComputeExecutionOrder -> GeneratePortBindingPlan.
