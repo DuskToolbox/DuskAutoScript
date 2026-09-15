@@ -286,7 +286,8 @@ DasResult MarkForDeletion(
         if (sr.desc.guid == guid)
         {
             // Determine plugin mode: directory or flat-file
-            auto                  plugin_subdir = plugin_dir / sr.desc.name;
+            auto plugin_subdir =
+                plugin_dir / Das::Utils::PathFromUtf8(sr.desc.name);
             std::filesystem::path marker_path;
             if (std::filesystem::exists(plugin_subdir)
                 && std::filesystem::is_directory(plugin_subdir))
