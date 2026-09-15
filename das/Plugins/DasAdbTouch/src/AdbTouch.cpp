@@ -50,23 +50,34 @@ class ProcessExecutor
     boost::asio::cancellation_signal sig_;
     std::chrono::milliseconds        timeout_in_ms_;
     std::string                      command_;
+    std::vector<std::string>         arguments_;
     DasResult                        result_;
 
 public:
     ProcessExecutor(
-        std::string_view          cmd,
-        std::chrono::milliseconds timeout_in_ms)
+        const std::filesystem::path& exe_path,
+        std::vector<std::string>     arguments,
+        std::chrono::milliseconds    timeout_in_ms)
         : ctx_{}, timeout_timer_{ctx_, timeout_in_ms}, sig_{},
-          timeout_in_ms_{timeout_in_ms}, command_{cmd},
+          timeout_in_ms_{timeout_in_ms}, arguments_{std::move(arguments)},
           result_{DAS_E_UNDEFINED_RETURN_VALUE}
     {
-        // bp2 的 exe 形参是 boost path，窄串经 ACP 构造会双损（中文
-        // 路径下启动错位），经桥全程保 path。
+        // 日志文本由 exe 与参数空格连接重建（转义细节对日志无价值）。
+        command_ = Das::Utils::PathToUtf8(exe_path);
+        for (const auto& argument : arguments_)
+        {
+            command_ += ' ';
+            command_ += argument;
+        }
+        // bp2 的 exe 形参是 boost path（经桥全程保 path，窄串经 ACP
+        // 构造会双损）；args 形参是窄 UTF-8 逐参数通道。整条命令文本
+        // 物化成 exe path 会把带参数文本当精确文件名，CreateProcess
+        // 按字面找不到文件（ERROR_FILE_NOT_FOUND）。
         boost::process::v2::async_execute(
             boost::process::v2::process{
                 ctx_,
-                Das::Utils::ToBoostPath(Das::Utils::PathFromUtf8(cmd)),
-                {}},
+                Das::Utils::ToBoostPath(exe_path),
+                arguments_},
             boost::asio::bind_cancellation_slot(
                 sig_.slot(),
                 [this](boost::system::error_code ec, int exit_code)
@@ -132,7 +143,8 @@ public:
 DAS_NS_ANONYMOUS_DETAILS_END
 
 AdbTouch::AdbTouch(std::string_view adb_path, std::string_view adb_serial)
-    : adb_cmd_{fmt::format("{} -s {} ", adb_path, adb_serial)}
+    : adb_exe_path_{Das::Utils::PathFromUtf8(adb_path)},
+      adb_arguments_{"-s", std::string{adb_serial}}
 {
 }
 
@@ -187,8 +199,13 @@ DAS_IMPL AdbTouch::GetRuntimeClassName(IDasReadOnlyString** pp_out_name)
 
 DAS_IMPL AdbTouch::Click(int32_t x, int32_t y)
 {
-    const auto cmd = fmt::format("{} shell input tap {} {}", adb_cmd_, x, y);
-    Details::ProcessExecutor executor{cmd, 5000ms};
+    std::vector<std::string> arguments = adb_arguments_;
+    arguments.emplace_back("shell");
+    arguments.emplace_back(fmt::format("input tap {} {}", x, y));
+    Details::ProcessExecutor executor{
+        adb_exe_path_,
+        std::move(arguments),
+        5000ms};
     return executor.Run();
 }
 
@@ -197,15 +214,13 @@ DAS_IMPL AdbTouch::Swipe(
     Das::PluginInterface::DasPoint to,
     int32_t                        duration_ms)
 {
-    const auto cmd = fmt::format(
-        "{} shell input swipe {} {} {} {}",
-        adb_cmd_,
-        from.x,
-        from.y,
-        to.x,
-        to.y);
+    std::vector<std::string> arguments = adb_arguments_;
+    arguments.emplace_back("shell");
+    arguments.emplace_back(
+        fmt::format("input swipe {} {} {} {}", from.x, from.y, to.x, to.y));
     Details::ProcessExecutor executor{
-        cmd,
+        adb_exe_path_,
+        std::move(arguments),
         std::chrono::milliseconds{duration_ms}};
     return executor.Run();
 }

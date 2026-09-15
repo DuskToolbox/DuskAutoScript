@@ -9,6 +9,8 @@
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
 #include <filesystem>
+#include <string>
+#include <vector>
 
 // {C2300184-A311-4880-8966-53F57519F32A}
 DAS_DEFINE_CLASS_IN_NAMESPACE(
@@ -31,10 +33,9 @@ DAS_NS_BEGIN
 class AdbCapture final : public PluginInterface::DasCaptureImplBase<AdbCapture>
 {
 private:
-    std::string capture_png_command_;
-    std::string capture_raw_by_nc_command_;
-    std::string capture_gzip_raw_command_;
-    std::string get_screen_size_command_;
+    std::filesystem::path    adb_path_;
+    std::vector<std::string> capture_gzip_raw_arguments_;
+    std::vector<std::string> get_screen_size_arguments_;
 
     enum class Type
     {

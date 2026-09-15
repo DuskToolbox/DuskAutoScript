@@ -3,15 +3,19 @@
 
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasInput.h>
+#include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 DAS_NS_BEGIN
 
 class AdbTouch final : public Das::PluginInterface::IDasTouch
 {
-    // should be f"{adb_path} -s {adb_serial} "
-    std::string adb_cmd_;
+    // adb 可执行文件与公共参数（-s 设备序列）：exe 走 path 通道，参数走
+    // bp2 窄 UTF-8 逐参数通道（设备端 shell 命令段单参数成组）。
+    std::filesystem::path    adb_exe_path_;
+    std::vector<std::string> adb_arguments_;
 
 public:
     AdbTouch(std::string_view adb_path, std::string_view adb_serial);

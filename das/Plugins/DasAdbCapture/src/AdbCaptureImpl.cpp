@@ -91,18 +91,17 @@ static_assert(offsetof(AdbCaptureHeader, dataspace) == 12);
 AdbCapture::AdbCapture(
     const std::filesystem::path& adb_path,
     std::string_view             adb_device_serial)
-    : capture_png_command_{DAS::fmt::format(
-          "{} -s {} exec-out screencap -p",
-          Das::Utils::PathToUtf8(adb_path),
-          adb_device_serial)},
-      capture_gzip_raw_command_{DAS::fmt::format(
-          R"({} -s {} exec-out "screencap | gzip -1")",
-          Das::Utils::PathToUtf8(adb_path),
-          adb_device_serial)},
-      get_screen_size_command_{DAS::fmt::format(
-          R"({} -s {} shell dumpsys window displays | grep -o -E cur=+[^\\ ]+ | grep -o -E [0-9]+)",
-          Das::Utils::PathToUtf8(adb_path),
-          adb_device_serial)}
+    : adb_path_{adb_path},
+      capture_gzip_raw_arguments_{
+          "-s",
+          std::string{adb_device_serial},
+          "exec-out",
+          "screencap | gzip -1"},
+      get_screen_size_arguments_{
+          "-s",
+          std::string{adb_device_serial},
+          "shell",
+          R"(dumpsys window displays | grep -o -E cur=+[^\\ ]+ | grep -o -E [0-9]+)"}
 {
 }
 
@@ -465,25 +464,37 @@ private:
     boost::asio::cancellation_signal sig_;
     std::chrono::milliseconds        timeout_in_ms_;
     std::string                      command_;
+    std::vector<std::string>         arguments_;
     DasResult                        result_;
     Buffer                           buffer_;
     boost::asio::readable_pipe       stdout_pipe_;
 
 public:
     CommandExecutorContext(
-        std::string_view    command,
-        const std::uint32_t timeout)
+        const std::filesystem::path& exe_path,
+        std::vector<std::string>     arguments,
+        const std::uint32_t          timeout)
         : ioc_{}, timeout_timer_{ioc_, std::chrono::seconds(timeout)}, sig_{},
-          timeout_in_ms_{timeout * 1000}, command_{command},
+          timeout_in_ms_{timeout * 1000}, arguments_{std::move(arguments)},
           result_{DAS_E_UNDEFINED_RETURN_VALUE}, buffer_{}, stdout_pipe_{ioc_}
     {
+        // 日志文本由 exe 与参数空格连接重建（转义细节对日志无价值）。
+        command_ = Das::Utils::PathToUtf8(exe_path);
+        for (const auto& argument : arguments_)
+        {
+            command_ += ' ';
+            command_ += argument;
+        }
+
         // Launch child process; pipe write end → child stdout, read end →
-        // stdout_pipe_。bp2 的 exe 形参是 boost path，窄串经 ACP 构造
-        // 会双损（中文路径下启动错位），经桥全程保 path。
+        // stdout_pipe_。bp2 的 exe 形参是 boost path（经桥全程保 path，
+        // 窄串经 ACP 构造会双损）；args 形参是窄 UTF-8 逐参数通道。
+        // 整条命令文本物化成 exe path 会把带参数文本当精确文件名，
+        // CreateProcess 按字面找不到文件（ERROR_FILE_NOT_FOUND）。
         boost::process::v2::process child_process{
             ioc_,
-            Das::Utils::ToBoostPath(Das::Utils::PathFromUtf8(command_)),
-            {},
+            Das::Utils::ToBoostPath(exe_path),
+            arguments_,
             boost::process::v2::process_stdio{{}, stdout_pipe_, {}}};
 
         // Drain stdout into memory buffer via async_read
@@ -567,6 +578,8 @@ public:
                     });
             });
     }
+
+    const std::string& CommandText() const { return command_; }
 
     DasResult Run()
     {
@@ -663,32 +676,18 @@ DAS::Utils::Expected<ExportInterface::DasImageFormat> Convert(
 
 DAS_NS_ANONYMOUS_DETAILS_END
 
-/**
- *
- * @tparam T buffer type
- * @param command
- * @param timeout timeout in seconds.
- * @return a CommandExecutorContext object.
- */
-template <class T>
-auto MakeCommandExecutorContext(
-    std::string_view    command,
-    const std::uint32_t timeout)
-{
-    return Details::CommandExecutorContext<T>{command, timeout};
-}
-
 DAS::Utils::Expected<AdbCapture::Size> AdbCapture::GetDeviceSize() const
 {
     Details::CommandExecutorContext<std::string> context{
-        get_screen_size_command_,
+        adb_path_,
+        get_screen_size_arguments_,
         Details::PROCESS_TIMEOUT_IN_S};
     const auto result_code = context.Run();
     if (!IsOk(result_code))
     {
         const auto error_message = DAS::fmt::format(
             "Failed to execute command: {}. Error code: {}.",
-            get_screen_size_command_,
+            context.CommandText(),
             result_code);
         DAS_LOG_ERROR(error_message.c_str());
         return tl::make_unexpected(result_code);
@@ -717,7 +716,8 @@ DasResult AdbCapture::CaptureRawWithGZip()
 {
     // Run adb and receive screen capture.
     Details::CommandExecutorContext<std::vector<char>> context{
-        capture_gzip_raw_command_,
+        adb_path_,
+        capture_gzip_raw_arguments_,
         Details::PROCESS_TIMEOUT_IN_S};
 
     // wait for the process to exit.
