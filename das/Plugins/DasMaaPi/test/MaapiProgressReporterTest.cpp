@@ -7,6 +7,7 @@
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
 #include <gtest/gtest.h>
@@ -147,14 +148,17 @@ namespace
     {
         const auto dir =
             std::filesystem::temp_directory_path()
-            / (std::string("maapi_reporter_check_outcome_") + test_name);
+            / Das::Utils::PathFromUtf8(
+                std::string("maapi_reporter_check_outcome_") + test_name);
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
         std::filesystem::create_directories(dir, ec);
 
         const auto write_json = [&dir](const char* name, std::string_view body)
         {
-            std::ofstream ofs(dir / name, std::ios::binary | std::ios::trunc);
+            std::ofstream ofs(
+                dir / Das::Utils::PathFromUtf8(name),
+                std::ios::binary | std::ios::trunc);
             ofs.write(body.data(), static_cast<std::streamsize>(body.size()));
         };
         if (with_check_keys)
@@ -172,7 +176,7 @@ namespace
             write_json("zh-cn.json", R"json({"label.confirm": "确认"})json");
         }
 
-        const std::string dir_utf8{DAS::Utils::U8AsString(dir.u8string())};
+        const std::string          dir_utf8 = Das::Utils::PathToUtf8(dir);
         DasPtr<IDasReadOnlyString> dir_str;
         ::CreateIDasReadOnlyStringFromUtf8(dir_utf8.c_str(), dir_str.Put());
         DasPtr<Das::ExportInterface::IDasI18n> table;
@@ -689,7 +693,8 @@ AcceptedSettingsDto MakeSeededCheckSettings(
     entry.info.has_update = true;
     entry.progress_key = unique_key;
     UpdateCheckStore::Instance().PutOutcome(
-        std::filesystem::path(*settings.adapter.interface_path).parent_path(),
+        Das::Utils::PathFromUtf8(*settings.adapter.interface_path)
+            .parent_path(),
         std::move(entry));
     return settings;
 }

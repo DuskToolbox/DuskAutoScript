@@ -2,6 +2,7 @@
 #include "../src/MaaHandle.h"
 #include "FakeMaaApiBoundary.h"
 
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -275,10 +276,12 @@ namespace
     TEST(DasMaaPiAgentClient, RealBoundarySourceCallsAgentClientApi)
     {
         const auto source_path =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
-            / "MaaRuntime.cpp";
+            std::filesystem::path(DAS_PATH_LITERAL(__FILE__))
+                .parent_path()
+                .parent_path()
+            / DAS_PATH_LITERAL("src") / DAS_PATH_LITERAL("MaaRuntime.cpp");
         const std::ifstream input(source_path);
-        ASSERT_TRUE(input.is_open()) << source_path.string();
+        ASSERT_TRUE(input.is_open()) << Das::Utils::PathToUtf8(source_path);
 
         std::ostringstream buffer;
         buffer << input.rdbuf();
@@ -315,10 +318,12 @@ namespace
     TEST(DasMaaPiAgentClient, AgentOutputLoggerWiredInSource)
     {
         const auto source_path =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
-            / "MaaRuntime.cpp";
+            std::filesystem::path(DAS_PATH_LITERAL(__FILE__))
+                .parent_path()
+                .parent_path()
+            / DAS_PATH_LITERAL("src") / DAS_PATH_LITERAL("MaaRuntime.cpp");
         const std::ifstream input(source_path);
-        ASSERT_TRUE(input.is_open()) << source_path.string();
+        ASSERT_TRUE(input.is_open()) << Das::Utils::PathToUtf8(source_path);
 
         std::ostringstream buffer;
         buffer << input.rdbuf();
@@ -361,10 +366,13 @@ namespace
     TEST(DasMaaPiAgentClient, CreateNoWindowWiredInSource)
     {
         const auto source_path =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
-            / "AgentProcessRunner.cpp";
+            std::filesystem::path(DAS_PATH_LITERAL(__FILE__))
+                .parent_path()
+                .parent_path()
+            / DAS_PATH_LITERAL("src")
+            / DAS_PATH_LITERAL("AgentProcessRunner.cpp");
         const std::ifstream input(source_path);
-        ASSERT_TRUE(input.is_open()) << source_path.string();
+        ASSERT_TRUE(input.is_open()) << Das::Utils::PathToUtf8(source_path);
 
         std::ostringstream buffer;
         buffer << input.rdbuf();
@@ -414,9 +422,11 @@ namespace
         EXPECT_EQ(result.agent[0].state, "running");
         EXPECT_EQ(result.agent[0].identifier, "agent-client-id");
         ASSERT_EQ(runner.launches.size(), 1u);
-        EXPECT_EQ(runner.launches[0].executable.generic_string(), "python");
         EXPECT_EQ(
-            runner.launches[0].working_directory.generic_string(),
+            Das::Utils::PathToGenericUtf8(runner.launches[0].executable),
+            "python");
+        EXPECT_EQ(
+            Das::Utils::PathToGenericUtf8(runner.launches[0].working_directory),
             "C:/maa/project");
         EXPECT_EQ(
             runner.launches[0].arguments,
@@ -487,7 +497,7 @@ namespace
         ASSERT_EQ(result.status, "succeeded");
         ASSERT_EQ(runner.launches.size(), 1u);
         EXPECT_EQ(
-            runner.launches[0].executable.generic_string(),
+            Das::Utils::PathToGenericUtf8(runner.launches[0].executable),
             "C:/maa/project/bin/agent.exe");
     }
 
@@ -658,10 +668,13 @@ namespace
         RealRunnerUsesBoostProcessV2AndPerChildEnvironment)
     {
         const auto source_path =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
-            / "AgentProcessRunner.cpp";
+            std::filesystem::path(DAS_PATH_LITERAL(__FILE__))
+                .parent_path()
+                .parent_path()
+            / DAS_PATH_LITERAL("src")
+            / DAS_PATH_LITERAL("AgentProcessRunner.cpp");
         const std::ifstream input(source_path);
-        ASSERT_TRUE(input.is_open()) << source_path.string();
+        ASSERT_TRUE(input.is_open()) << Das::Utils::PathToUtf8(source_path);
 
         std::ostringstream buffer;
         buffer << input.rdbuf();

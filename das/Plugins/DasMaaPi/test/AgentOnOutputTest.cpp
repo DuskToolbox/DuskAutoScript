@@ -31,6 +31,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -161,14 +162,14 @@ namespace
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
             session_dir_ = std::filesystem::current_path()
-                           / "agent-onoutput-test-output"
+                           / DAS_PATH_LITERAL("agent-onoutput-test-output")
                            / ("agent-onoutput-" + std::to_string(stamp));
             std::filesystem::remove_all(session_dir_);
-            const auto directory_str = session_dir_.u8string();
+            const auto directory_str = Das::Utils::PathToUtf8(session_dir_);
             Das::DasPtr<IDasReadOnlyString> directory_param;
             EXPECT_EQ(
                 CreateIDasReadOnlyStringFromUtf8(
-                    reinterpret_cast<const char*>(directory_str.c_str()),
+                    directory_str.c_str(),
                     directory_param.Put()),
                 DAS_S_OK);
             EXPECT_EQ(

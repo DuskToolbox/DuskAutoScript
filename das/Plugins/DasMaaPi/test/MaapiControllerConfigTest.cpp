@@ -6,6 +6,7 @@
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 
 #include <gtest/gtest.h>
 
@@ -18,8 +19,9 @@ namespace
 
     std::filesystem::path FixturePath(std::string_view name)
     {
-        return std::filesystem::current_path() / "DasMaaPi" / "test"
-               / "fixtures" / std::filesystem::path{name};
+        return std::filesystem::current_path() / DAS_PATH_LITERAL("DasMaaPi")
+               / DAS_PATH_LITERAL("test") / DAS_PATH_LITERAL("fixtures")
+               / Das::Utils::PathFromUtf8(name);
     }
 } // namespace
 

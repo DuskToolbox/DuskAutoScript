@@ -5,6 +5,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
 #include <gtest/gtest.h>
 
@@ -86,10 +87,12 @@ namespace
     void WriteFile(const std::filesystem::path& path, std::string_view content)
     {
         std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
-        ASSERT_TRUE(ofs.is_open()) << "failed to open " << path.string();
+        ASSERT_TRUE(ofs.is_open())
+            << "failed to open " << Das::Utils::PathToUtf8(path);
         ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
         ofs.flush();
-        ASSERT_TRUE(ofs.good()) << "write failed " << path.string();
+        ASSERT_TRUE(ofs.good())
+            << "write failed " << Das::Utils::PathToUtf8(path);
     }
 
     // 经 C API 工厂构造只读 IDasReadOnlyString。
@@ -122,7 +125,8 @@ namespace
             const std::string leaf = std::string("das_maapi_i18n_fixtures_")
                                      + info->test_suite_name() + "_"
                                      + info->name();
-            fixture_dir_ = std::filesystem::current_path() / leaf;
+            fixture_dir_ = std::filesystem::current_path()
+                           / Das::Utils::PathFromUtf8(leaf);
 
             std::error_code ec;
             std::filesystem::remove_all(fixture_dir_, ec);
@@ -130,14 +134,14 @@ namespace
             ASSERT_FALSE(ec) << "create_directories failed: " << ec.message();
 
             WriteFile(
-                fixture_dir_ / "en.json",
+                fixture_dir_ / DAS_PATH_LITERAL("en.json"),
                 R"({"progress.extracting": "Extracting…",)"
                 R"("progress.replacing": "Replacing…",)"
                 R"("progress.downloading": "Downloading…",)"
                 R"("progress.downloading_with_size": "Downloading ({0} / {1}){2}%"})");
 
             WriteFile(
-                fixture_dir_ / "zh-CN.json",
+                fixture_dir_ / DAS_PATH_LITERAL("zh-CN.json"),
                 R"({"progress.extracting": "解压中…",)"
                 R"("progress.replacing": "替换中…",)"
                 R"("progress.downloading": "正在下载…",)"
@@ -158,7 +162,7 @@ namespace
         // 装载夹具目录翻译表，返回只读 IDasI18n 视图。
         DasPtr<Das::ExportInterface::IDasI18n> LoadI18n()
         {
-            const auto                 dir_utf8 = fixture_dir_.string();
+            const auto dir_utf8 = Das::Utils::PathToUtf8(fixture_dir_);
             DasPtr<IDasReadOnlyString> dir_str;
             ::CreateIDasReadOnlyStringFromUtf8(dir_utf8.c_str(), dir_str.Put());
             DasPtr<Das::ExportInterface::IDasI18n> i18n;

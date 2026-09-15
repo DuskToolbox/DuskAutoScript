@@ -7,6 +7,7 @@
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/TaskComponentPorts.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
@@ -168,8 +169,9 @@ namespace
 
     std::filesystem::path FixturePath(std::string_view name)
     {
-        return std::filesystem::current_path() / "DasMaaPi" / "test"
-               / "fixtures" / std::filesystem::path{name};
+        return std::filesystem::current_path() / DAS_PATH_LITERAL("DasMaaPi")
+               / DAS_PATH_LITERAL("test") / DAS_PATH_LITERAL("fixtures")
+               / Das::Utils::PathFromUtf8(name);
     }
 
     // 同一份 acceptedProperties：interface_compile fixture + 与既有编译测试
@@ -394,7 +396,8 @@ namespace
     yyjson::value ParsePropertiesOrEmpty()
     {
         const auto properties_text = MakeAcceptedPropertiesJson(
-            FixturePath("interface_compile.jsonc").generic_string());
+            Das::Utils::PathToGenericUtf8(
+                FixturePath("interface_compile.jsonc")));
         auto properties = Utils::ParseYyjsonFromString(properties_text);
         if (!properties)
         {

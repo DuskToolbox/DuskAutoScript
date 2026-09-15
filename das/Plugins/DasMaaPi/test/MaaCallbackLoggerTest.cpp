@@ -6,6 +6,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -28,8 +29,9 @@ namespace
         const auto stamp =
             std::chrono::steady_clock::now().time_since_epoch().count();
         auto path = std::filesystem::current_path()
-                    / "maapi-callback-test-output"
-                    / (std::string{test_name} + "-" + std::to_string(stamp));
+                    / DAS_PATH_LITERAL("maapi-callback-test-output")
+                    / Das::Utils::PathFromUtf8(
+                        std::string{test_name} + "-" + std::to_string(stamp));
         std::filesystem::remove_all(path);
         return path;
     }
@@ -49,11 +51,11 @@ namespace
             FocusImageProvider     image_provider = {})
         {
             out_dir = UniqueTempDir("CallbackLogger");
-            const auto                      directory_str = out_dir.u8string();
+            const auto directory_str = Das::Utils::PathToUtf8(out_dir);
             Das::DasPtr<IDasReadOnlyString> directory_param;
             EXPECT_EQ(
                 CreateIDasReadOnlyStringFromUtf8(
-                    reinterpret_cast<const char*>(directory_str.c_str()),
+                    directory_str.c_str(),
                     directory_param.Put()),
                 DAS_S_OK);
             EXPECT_EQ(
@@ -518,7 +520,9 @@ TEST_F(MaaCallbackLoggerFixture, ResolveFocusContent_LoadsFileFromInterfaceDir)
     auto                  context = MakeRecorderContext(dir);
     context.interface_directory = UniqueTempDir("FileBranch");
     std::filesystem::create_directories(context.interface_directory);
-    WriteFile(context.interface_directory / "intro.md", "intro body");
+    WriteFile(
+        context.interface_directory / DAS_PATH_LITERAL("intro.md"),
+        "intro body");
     EXPECT_EQ(ResolveFocusContent("./intro.md", context), "intro body");
 }
 
@@ -543,7 +547,9 @@ TEST_F(
     auto                  context = MakeRecorderContext(dir);
     context.interface_directory = UniqueTempDir("DocExt");
     std::filesystem::create_directories(context.interface_directory);
-    WriteFile(context.interface_directory / "notes.txt", "notes content");
+    WriteFile(
+        context.interface_directory / DAS_PATH_LITERAL("notes.txt"),
+        "notes content");
     EXPECT_EQ(ResolveFocusContent("notes.txt", context), "notes content");
 }
 
@@ -561,8 +567,9 @@ TEST_F(
     // 在 interface_directory 外的独立临时目录建靶文件（绝对路径含 .md）。
     const auto external_dir = UniqueTempDir("AbsGuardOutside");
     std::filesystem::create_directories(external_dir);
-    WriteFile(external_dir / "secret.md", "secret data");
-    const std::string content = (external_dir / "secret.md").string();
+    WriteFile(external_dir / DAS_PATH_LITERAL("secret.md"), "secret data");
+    const std::string content =
+        Das::Utils::PathToUtf8(external_dir / DAS_PATH_LITERAL("secret.md"));
     // 期望降级字面文本（不读外部文件），实现缺陷下会读到 "secret data"。
     EXPECT_EQ(ResolveFocusContent(content, context), content);
 }
@@ -579,7 +586,7 @@ TEST_F(
     std::filesystem::create_directories(context.interface_directory);
     // 在父目录建靶文件（../ 从 interface_directory 跳出到父目录命中它）。
     const auto parent = context.interface_directory.parent_path();
-    WriteFile(parent / "escape.md", "escaped content");
+    WriteFile(parent / DAS_PATH_LITERAL("escape.md"), "escaped content");
     // 期望降级字面文本（不读父目录文件），实现缺陷下会读到 "escaped content"。
     EXPECT_EQ(ResolveFocusContent("../escape.md", context), "../escape.md");
 }

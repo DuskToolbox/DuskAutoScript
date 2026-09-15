@@ -1,4 +1,5 @@
 #include <das/Plugins/DasMaaPi/PiParser.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -11,8 +12,9 @@ namespace
 
     std::filesystem::path FixturePath(std::string_view name)
     {
-        return std::filesystem::current_path() / "DasMaaPi" / "test"
-               / "fixtures" / std::filesystem::path{name};
+        return std::filesystem::current_path() / DAS_PATH_LITERAL("DasMaaPi")
+               / DAS_PATH_LITERAL("test") / DAS_PATH_LITERAL("fixtures")
+               / Das::Utils::PathFromUtf8(name);
     }
 
     const PiOption* RequireOption(
@@ -65,7 +67,9 @@ TEST(DasMaaPiCatalog, ResolveRelativePathsAndImportCatalog)
     ASSERT_EQ(result.catalog.language_paths.size(), 1u);
     EXPECT_EQ(
         result.catalog.language_paths.at("zh_cn"),
-        (fixture_dir / "languages" / "zh_cn.json").lexically_normal());
+        (fixture_dir / DAS_PATH_LITERAL("languages")
+         / DAS_PATH_LITERAL("zh_cn.json"))
+            .lexically_normal());
     EXPECT_EQ(
         result.catalog.translations.at("zh_cn").at("task.daily"),
         "日常任务");
@@ -76,13 +80,16 @@ TEST(DasMaaPiCatalog, ResolveRelativePathsAndImportCatalog)
         1u);
     EXPECT_EQ(
         result.catalog.controllers[0].resolved_attach_resource_paths[0],
-        (fixture_dir / "resource" / "attach").lexically_normal());
+        (fixture_dir / DAS_PATH_LITERAL("resource")
+         / DAS_PATH_LITERAL("attach"))
+            .lexically_normal());
 
     ASSERT_EQ(result.catalog.resources.size(), 1u);
     ASSERT_EQ(result.catalog.resources[0].resolved_paths.size(), 2u);
     EXPECT_EQ(
         result.catalog.resources[0].resolved_paths[0],
-        (fixture_dir / "resource" / "base").lexically_normal());
+        (fixture_dir / DAS_PATH_LITERAL("resource") / DAS_PATH_LITERAL("base"))
+            .lexically_normal());
 
     EXPECT_NE(
         std::find_if(

@@ -8,6 +8,7 @@
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
@@ -34,8 +35,9 @@ namespace
 
     std::filesystem::path FixturePath(std::string_view name)
     {
-        return std::filesystem::current_path() / "DasMaaPi" / "test"
-               / "fixtures" / std::filesystem::path{name};
+        return std::filesystem::current_path() / DAS_PATH_LITERAL("DasMaaPi")
+               / DAS_PATH_LITERAL("test") / DAS_PATH_LITERAL("fixtures")
+               / Das::Utils::PathFromUtf8(name);
     }
 
     std::string JsonStringLiteral(std::string_view value)
@@ -431,11 +433,13 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedDbgControllerReadPath)
 
 TEST(DasMaaPiRuntime, RuntimeSourceDoesNotExtractControllerFieldsFromRawJson)
 {
-    const auto source_path =
-        std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
-        / "MaaRuntime.cpp";
+    const auto source_path = std::filesystem::path(DAS_PATH_LITERAL(__FILE__))
+                                 .parent_path()
+                                 .parent_path()
+                             / DAS_PATH_LITERAL("src")
+                             / DAS_PATH_LITERAL("MaaRuntime.cpp");
     const std::ifstream input(source_path);
-    ASSERT_TRUE(input.is_open()) << source_path.string();
+    ASSERT_TRUE(input.is_open()) << Das::Utils::PathToUtf8(source_path);
 
     std::ostringstream buffer;
     buffer << input.rdbuf();
@@ -1347,14 +1351,16 @@ TEST(DasMaaPiRuntime, PretaskZeroExitProceedsToControllerCreate)
     // 期望值与 ResolveChildExec("tools/pre.exe","C:/maa") 的解析结果一致。
     EXPECT_EQ(
         runner.launches[0].exec,
-        (std::filesystem::path("C:/maa") / "tools/pre.exe")
-            .lexically_normal()
-            .string());
+        Das::Utils::PathToUtf8(
+            (std::filesystem::path(DAS_PATH_LITERAL("C:/maa"))
+             / DAS_PATH_LITERAL("tools/pre.exe"))
+                .lexically_normal()));
     ASSERT_EQ(runner.launches[0].args.size(), 1u);
     EXPECT_EQ(runner.launches[0].args[0], "--init");
     EXPECT_EQ(
-        runner.launches[0].working_directory.string(),
-        std::filesystem::path("C:/maa").string());
+        Das::Utils::PathToUtf8(runner.launches[0].working_directory),
+        Das::Utils::PathToUtf8(
+            std::filesystem::path(DAS_PATH_LITERAL("C:/maa"))));
     // Ordering: pretask ran before controller create. Controller still created.
     EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Android:Adb"));
 }
