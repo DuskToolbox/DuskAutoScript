@@ -1,5 +1,6 @@
 #include "../src/PathResolver.h"
 
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -46,14 +47,19 @@ TEST(PathResolverTest, WindowsExtensionlessExecResolvesToExeWhenPresent)
 {
 #ifdef _WIN32
     ScopedTempDirectory temp;
-    TouchFile(temp.Get() / "agent" / "go-service.exe");
+    TouchFile(
+        temp.Get() / DAS_PATH_LITERAL("agent")
+        / DAS_PATH_LITERAL("go-service.exe"));
 
-    const auto resolved =
-        ResolveChildExec("agent/go-service", temp.Get().generic_string());
+    const auto resolved = ResolveChildExec(
+        "agent/go-service",
+        Das::Utils::PathToGenericUtf8(temp.Get()));
 
     EXPECT_EQ(
         resolved,
-        (temp.Get() / "agent" / "go-service.exe").lexically_normal());
+        (temp.Get() / DAS_PATH_LITERAL("agent")
+         / DAS_PATH_LITERAL("go-service.exe"))
+            .lexically_normal());
 #else
     GTEST_SKIP() << "Windows-only extension resolution";
 #endif
@@ -64,12 +70,15 @@ TEST(PathResolverTest, WindowsAbsoluteExtensionlessExecResolvesToExe)
 {
 #ifdef _WIN32
     ScopedTempDirectory temp;
-    TouchFile(temp.Get() / "tool.exe");
+    TouchFile(temp.Get() / DAS_PATH_LITERAL("tool.exe"));
 
-    const auto resolved =
-        ResolveChildExec((temp.Get() / "tool").generic_string(), "C:/unused");
+    const auto resolved = ResolveChildExec(
+        Das::Utils::PathToGenericUtf8(temp.Get() / DAS_PATH_LITERAL("tool")),
+        "C:/unused");
 
-    EXPECT_EQ(resolved, (temp.Get() / "tool.exe").lexically_normal());
+    EXPECT_EQ(
+        resolved,
+        (temp.Get() / DAS_PATH_LITERAL("tool.exe")).lexically_normal());
 #else
     GTEST_SKIP() << "Windows-only extension resolution";
 #endif
@@ -79,12 +88,16 @@ TEST(PathResolverTest, WindowsAbsoluteExtensionlessExecResolvesToExe)
 TEST(PathResolverTest, ExistingExtensionlessFileStaysUnchanged)
 {
     ScopedTempDirectory temp;
-    TouchFile(temp.Get() / "tools" / "run");
+    TouchFile(temp.Get() / DAS_PATH_LITERAL("tools") / DAS_PATH_LITERAL("run"));
 
-    const auto resolved =
-        ResolveChildExec("tools/run", temp.Get().generic_string());
+    const auto resolved = ResolveChildExec(
+        "tools/run",
+        Das::Utils::PathToGenericUtf8(temp.Get()));
 
-    EXPECT_EQ(resolved, (temp.Get() / "tools" / "run").lexically_normal());
+    EXPECT_EQ(
+        resolved,
+        (temp.Get() / DAS_PATH_LITERAL("tools") / DAS_PATH_LITERAL("run"))
+            .lexically_normal());
 }
 
 // 既无同名文件也无 .exe：保留原解析结果，让 spawn 报真实错误（不静默
@@ -93,15 +106,19 @@ TEST(PathResolverTest, MissingExecWithoutExeStaysUnchanged)
 {
     ScopedTempDirectory temp;
 
-    const auto resolved =
-        ResolveChildExec("tools/missing", temp.Get().generic_string());
+    const auto resolved = ResolveChildExec(
+        "tools/missing",
+        Das::Utils::PathToGenericUtf8(temp.Get()));
 
-    EXPECT_EQ(resolved, (temp.Get() / "tools" / "missing").lexically_normal());
+    EXPECT_EQ(
+        resolved,
+        (temp.Get() / DAS_PATH_LITERAL("tools") / DAS_PATH_LITERAL("missing"))
+            .lexically_normal());
 }
 
 // 裸命令名（走 PATH）原样返回，不参与扩展名补全。
 TEST(PathResolverTest, BareCommandStaysUnchanged)
 {
     const auto resolved = ResolveChildExec("python", "C:/maa");
-    EXPECT_EQ(resolved, std::filesystem::path("python"));
+    EXPECT_EQ(resolved, std::filesystem::path(DAS_PATH_LITERAL("python")));
 }

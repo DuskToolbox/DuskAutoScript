@@ -2,6 +2,7 @@
 #include "../src/PiHttpClient.h"
 
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 #include <gtest/gtest.h>
 #include <openssl/sha.h>
@@ -231,7 +232,8 @@ namespace
                 name = "PiUpdate_" + std::to_string(counter.fetch_add(1));
             }
             name_ = std::move(name);
-            dir_ = std::filesystem::temp_directory_path() / name_;
+            dir_ = std::filesystem::temp_directory_path()
+                   / Das::Utils::PathFromUtf8(name_);
             Cleanup();
             std::error_code ec;
             std::filesystem::create_directories(dir_, ec);
@@ -243,7 +245,9 @@ namespace
 
         void WriteInterface(const std::string& json)
         {
-            std::ofstream file(dir_ / "interface.json", std::ios::binary);
+            std::ofstream file(
+                dir_ / DAS_PATH_LITERAL("interface.json"),
+                std::ios::binary);
             file << json;
         }
 
@@ -263,7 +267,8 @@ namespace
                      std::filesystem::directory_options::skip_permission_denied,
                      ec))
             {
-                const auto leaf = entry.path().filename().string();
+                const auto leaf =
+                    Das::Utils::PathToUtf8(entry.path().filename());
                 if (leaf.rfind(backup_prefix, 0) == 0 || leaf == update_name)
                 {
                     std::filesystem::remove_all(entry.path(), ec);
@@ -793,23 +798,31 @@ TEST(PiUpdateService, ApplyUpdateDownloadsExtractsBacksUpAndReplaces)
     EXPECT_EQ(result, DAS_S_OK);
 
     // 替换后 pi_dir 内容 = 新 zip 内容。
-    std::ifstream new_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream new_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(new_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_EQ(content, "{\"version\":\"1.2.0\"}");
-    EXPECT_TRUE(std::filesystem::exists(project.Dir() / "config.json"));
-    EXPECT_TRUE(std::filesystem::exists(project.Dir() / "assets/image.png"));
+    EXPECT_TRUE(
+        std::filesystem::exists(
+            project.Dir() / DAS_PATH_LITERAL("config.json")));
+    EXPECT_TRUE(
+        std::filesystem::exists(
+            project.Dir() / DAS_PATH_LITERAL("assets/image.png")));
 
     // 备份目录存在（{pi_dir}_backup_{oldVersion}）。
-    const auto backup_dir =
-        std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
+    auto backup_dir = project.Dir();
+    backup_dir += DAS_PATH_LITERAL("_backup_1.0.0");
     EXPECT_TRUE(std::filesystem::is_directory(backup_dir));
-    EXPECT_TRUE(std::filesystem::exists(backup_dir / "interface.json"));
+    EXPECT_TRUE(
+        std::filesystem::exists(
+            backup_dir / DAS_PATH_LITERAL("interface.json")));
 
     // .update 临时目录已清理。
-    const auto update_root = project.Dir().parent_path()
-                             / (project.Dir().filename().string() + ".update");
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
@@ -836,18 +849,23 @@ TEST(PiUpdateService, ApplyUpdateRejectsTraversalEntry)
     EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
 
     // 旧内容未被替换（未生成 backup / 未动 pi_dir 之外）。
-    EXPECT_TRUE(std::filesystem::exists(project.Dir() / "interface.json"));
-    std::ifstream old_interface(project.Dir() / "interface.json");
-    std::string   content(
+    EXPECT_TRUE(
+        std::filesystem::exists(
+            project.Dir() / DAS_PATH_LITERAL("interface.json")));
+    std::ifstream old_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(old_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("1.0.0"), std::string::npos);
     EXPECT_FALSE(
         std::filesystem::exists(
-            std::filesystem::temp_directory_path() / "evil.txt"));
+            std::filesystem::temp_directory_path()
+            / DAS_PATH_LITERAL("evil.txt")));
     // .update 临时目录已清理。
-    const auto update_root = project.Dir().parent_path()
-                             / (project.Dir().filename().string() + ".update");
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
@@ -879,14 +897,16 @@ TEST(PiUpdateService, ApplyUpdateRejectsDecompressionBomb)
     EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
 
     // 旧内容未被替换（解压阶段失败，pi_dir 未动）。
-    std::ifstream old_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream old_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(old_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("1.0.0"), std::string::npos);
     // .update 临时目录已清理。
-    const auto update_root = project.Dir().parent_path()
-                             / (project.Dir().filename().string() + ".update");
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
@@ -908,18 +928,20 @@ TEST(PiUpdateService, ApplyUpdateInvalidZipPreservesOldContent)
     EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
 
     // 旧内容未被替换。
-    std::ifstream old_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream old_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(old_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("1.0.0"), std::string::npos);
     // 未生成 backup。
-    const auto backup_dir =
-        std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
+    auto backup_dir = project.Dir();
+    backup_dir += DAS_PATH_LITERAL("_backup_1.0.0");
     EXPECT_FALSE(std::filesystem::exists(backup_dir));
     // .update 临时目录已清理。
-    const auto update_root = project.Dir().parent_path()
-                             / (project.Dir().filename().string() + ".update");
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
@@ -951,18 +973,20 @@ TEST(PiUpdateService, ApplyUpdateRejectsStoredEntryWithCorruptCrc)
     EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
 
     // 旧内容未被替换（解压阶段失败，pi_dir 未动）。
-    std::ifstream old_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream old_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(old_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("1.0.0"), std::string::npos);
     // 未生成 backup。
-    const auto backup_dir =
-        std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
+    auto backup_dir = project.Dir();
+    backup_dir += DAS_PATH_LITERAL("_backup_1.0.0");
     EXPECT_FALSE(std::filesystem::exists(backup_dir));
     // .update 临时目录（含输出目录）已清理。
-    const auto update_root = project.Dir().parent_path()
-                             / (project.Dir().filename().string() + ".update");
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
@@ -995,18 +1019,20 @@ TEST(PiUpdateService, ApplyUpdateRejectsDeflateEntryWithCorruptCrc)
     EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
 
     // 旧内容未被替换。
-    std::ifstream old_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream old_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(old_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("1.0.0"), std::string::npos);
     // 未生成 backup。
-    const auto backup_dir =
-        std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
+    auto backup_dir = project.Dir();
+    backup_dir += DAS_PATH_LITERAL("_backup_1.0.0");
     EXPECT_FALSE(std::filesystem::exists(backup_dir));
     // .update 临时目录（含输出目录）已清理。
-    const auto update_root = project.Dir().parent_path()
-                             / (project.Dir().filename().string() + ".update");
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
@@ -1031,7 +1057,9 @@ TEST(PiUpdateService, ApplyUpdateRenameFailurePreservesOldContent)
 
     // 持有句柄阻止目录 rename（仅 Windows 语义；POSIX 上 rename 目录不受
     // 打开文件影响，但该环境为 Windows/MinGW，共享违规确定发生）。
-    std::ifstream lock(project.Dir() / "interface.json", std::ios::binary);
+    std::ifstream lock(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"),
+        std::ios::binary);
 
     const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
     lock.close();
@@ -1039,14 +1067,16 @@ TEST(PiUpdateService, ApplyUpdateRenameFailurePreservesOldContent)
     EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
 
     // 旧内容未被替换。
-    std::ifstream old_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream old_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(old_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("1.0.0"), std::string::npos);
     // .update 临时目录已清理。
-    const auto update_root = project.Dir().parent_path()
-                             / (project.Dir().filename().string() + ".update");
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
@@ -1079,14 +1109,16 @@ TEST(PiUpdateService, ApplyUpdateSha256MismatchRejectsPackage)
     EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
 
     // 旧内容未被替换（sha256 校验失败于解压前，pi_dir 未动）。
-    std::ifstream old_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream old_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(old_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("1.0.0"), std::string::npos);
     // .update 临时目录已清理。
-    const auto update_root = project.Dir().parent_path()
-                             / (project.Dir().filename().string() + ".update");
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
@@ -1110,8 +1142,9 @@ TEST(PiUpdateService, ApplyUpdateSha256MatchSucceeds)
     const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
 
     EXPECT_EQ(result, DAS_S_OK);
-    std::ifstream new_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream new_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(new_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_EQ(content, "{\"version\":\"1.2.0\"}");
@@ -1138,8 +1171,9 @@ TEST(PiUpdateService, ApplyUpdateWithoutSha256SkipsVerification)
     const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
 
     EXPECT_EQ(result, DAS_S_OK);
-    std::ifstream new_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream new_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(new_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_EQ(content, "{\"version\":\"1.2.0\"}");
@@ -1180,14 +1214,16 @@ TEST(PiUpdateService, ApplyUpdateCancelDuringExtractionReturnsCancelled)
     EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_CANCELLED);
 
     // 旧内容未被替换（取消发生在解压阶段，pi_dir 未动）。
-    std::ifstream old_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream old_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(old_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("1.0.0"), std::string::npos);
     // .update 临时目录已清理。
-    const auto update_root = project.Dir().parent_path()
-                             / (project.Dir().filename().string() + ".update");
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
@@ -1207,13 +1243,15 @@ TEST(PiUpdateService, ApplyUpdateCancelDuringReplaceReturnsCancelled)
     project.WriteInterface(MakeInterface("1.0.0", "", ""));
     {
         std::ofstream locked(
-            project.Dir() / "MaaFramework.dll",
+            project.Dir() / DAS_PATH_LITERAL("MaaFramework.dll"),
             std::ios::binary);
         locked << "old-dll-bytes";
         locked.flush();
     }
     // 持有句柄阻止目录整体 rename → 逐文件替换降级路径。
-    std::ifstream lock(project.Dir() / "MaaFramework.dll", std::ios::binary);
+    std::ifstream lock(
+        project.Dir() / DAS_PATH_LITERAL("MaaFramework.dll"),
+        std::ios::binary);
 
     PiUpdateInfo info;
     info.version_name = "1.2.0";
@@ -1232,8 +1270,9 @@ TEST(PiUpdateService, ApplyUpdateCancelDuringReplaceReturnsCancelled)
     EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_CANCELLED);
 
     // interface.json 未被替换（首文件处理前即中止）。
-    std::ifstream old_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream old_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(old_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("1.0.0"), std::string::npos);
@@ -1257,14 +1296,16 @@ TEST(PiUpdateService, ApplyUpdateLockedFileStagedToPending)
     {
         // 预创建占用文件（持有句柄阻止删除/rename）。
         std::ofstream locked(
-            project.Dir() / "MaaFramework.dll",
+            project.Dir() / DAS_PATH_LITERAL("MaaFramework.dll"),
             std::ios::binary);
         locked << "old-dll-bytes";
         locked.flush();
     }
     // 用只读属性 + 目录整体 rename 依赖的打开句柄来稳定触发 sharing
     // violation：先以可写句柄持有，保证目录 rename 失败。
-    std::ifstream lock(project.Dir() / "MaaFramework.dll", std::ios::binary);
+    std::ifstream lock(
+        project.Dir() / DAS_PATH_LITERAL("MaaFramework.dll"),
+        std::ios::binary);
 
     PiUpdateInfo info;
     info.version_name = "1.2.0";
@@ -1275,13 +1316,15 @@ TEST(PiUpdateService, ApplyUpdateLockedFileStagedToPending)
 
     EXPECT_EQ(result, DAS_S_OK);
     // interface.json 已替换。
-    std::ifstream new_interface(project.Dir() / "interface.json");
-    std::string   content(
+    std::ifstream new_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
         (std::istreambuf_iterator<char>(new_interface)),
         std::istreambuf_iterator<char>());
     EXPECT_EQ(content, "{\"version\":\"1.2.0\"}");
     // 被锁 DLL 新版本暂存到 .pending/。
-    const auto pending = project.Dir() / ".pending" / "MaaFramework.dll";
+    const auto pending = project.Dir() / DAS_PATH_LITERAL(".pending")
+                         / DAS_PATH_LITERAL("MaaFramework.dll");
     EXPECT_TRUE(std::filesystem::exists(pending));
 }
 
@@ -1302,13 +1345,15 @@ TEST(PiUpdateService, ApplyUpdateInterfaceJsonLockedPreservesAllFiles)
     project.WriteInterface(MakeInterface("1.0.0", "", ""));
     {
         std::ofstream old_config(
-            project.Dir() / "config.json",
+            project.Dir() / DAS_PATH_LITERAL("config.json"),
             std::ios::binary);
         old_config << "{\"speed\":1}";
         old_config.flush();
     }
     // 锁住 interface.json → 整体目录 rename 失败，逐文件替换第一步即失败。
-    std::ifstream lock(project.Dir() / "interface.json", std::ios::binary);
+    std::ifstream lock(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"),
+        std::ios::binary);
 
     PiUpdateInfo info;
     info.version_name = "1.2.0";
@@ -1321,19 +1366,19 @@ TEST(PiUpdateService, ApplyUpdateInterfaceJsonLockedPreservesAllFiles)
 
     // interface.json 与 config.json 都保持旧内容（interface.json 最先处理，
     // 失败时无其他文件被替换）。
-    std::ifstream iface(project.Dir() / "interface.json");
+    std::ifstream iface(project.Dir() / DAS_PATH_LITERAL("interface.json"));
     std::string   iface_content(
         (std::istreambuf_iterator<char>(iface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(iface_content.find("1.0.0"), std::string::npos);
-    std::ifstream cfg(project.Dir() / "config.json");
+    std::ifstream cfg(project.Dir() / DAS_PATH_LITERAL("config.json"));
     std::string   cfg_content(
         (std::istreambuf_iterator<char>(cfg)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(cfg_content.find("{\"speed\":1}"), std::string::npos);
     // 未生成 backup 目录（整体 rename 失败分支不回退到 backup rename）。
-    const auto backup_dir =
-        std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
+    auto backup_dir = project.Dir();
+    backup_dir += DAS_PATH_LITERAL("_backup_1.0.0");
     EXPECT_FALSE(std::filesystem::exists(backup_dir));
 }
 
@@ -1499,11 +1544,12 @@ TEST(PiUpdateService, ApplyUpdateDownloadFailurePreservesOldContent)
     EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
 
     // 无坏 zip 残留。
-    const auto update_root = project.Dir().parent_path()
-                             / (project.Dir().filename().string() + ".update");
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
     EXPECT_FALSE(std::filesystem::exists(update_root));
     // 旧内容保留。
-    std::ifstream iface(project.Dir() / "interface.json");
+    std::ifstream iface(project.Dir() / DAS_PATH_LITERAL("interface.json"));
     std::string   content(
         (std::istreambuf_iterator<char>(iface)),
         std::istreambuf_iterator<char>());

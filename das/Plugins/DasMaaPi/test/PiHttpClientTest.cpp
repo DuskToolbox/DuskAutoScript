@@ -1,6 +1,7 @@
 #include "../src/PiHttpClient.h"
 
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 #include <gtest/gtest.h>
 
@@ -899,8 +900,8 @@ v6yQpUYtQbbVSIHbNlBhfp8=
         server.Start();
 
         BeastHttpClient client;
-        const auto      out_path = std::filesystem::temp_directory_path()
-                                   / "das_pi_download_cl_test.bin";
+        const auto out_path = std::filesystem::temp_directory_path()
+                              / DAS_PATH_LITERAL("das_pi_download_cl_test.bin");
         std::error_code ec;
         std::filesystem::remove(out_path, ec);
 
@@ -941,8 +942,9 @@ v6yQpUYtQbbVSIHbNlBhfp8=
         server.Start();
 
         BeastHttpClient client;
-        const auto      out_path = std::filesystem::temp_directory_path()
-                                   / "das_pi_download_nocl_test.bin";
+        const auto      out_path =
+            std::filesystem::temp_directory_path()
+            / DAS_PATH_LITERAL("das_pi_download_nocl_test.bin");
         std::error_code ec;
         std::filesystem::remove(out_path, ec);
 
@@ -992,8 +994,9 @@ v6yQpUYtQbbVSIHbNlBhfp8=
 
         BeastHttpClient client{/*verify_tls_certificate=*/true,
                                std::chrono::milliseconds(1000)};
-        const auto      out_path = std::filesystem::temp_directory_path()
-                                   / "das_pi_download_slow_test.bin";
+        const auto      out_path =
+            std::filesystem::temp_directory_path()
+            / DAS_PATH_LITERAL("das_pi_download_slow_test.bin");
         std::error_code ec;
         std::filesystem::remove(out_path, ec);
 
@@ -1025,8 +1028,9 @@ v6yQpUYtQbbVSIHbNlBhfp8=
         server.Start();
 
         BeastHttpClient client;
-        const auto      out_path = std::filesystem::temp_directory_path()
-                                   / "das_pi_download_redirect_test.bin";
+        const auto      out_path =
+            std::filesystem::temp_directory_path()
+            / DAS_PATH_LITERAL("das_pi_download_redirect_test.bin");
         std::error_code ec;
         std::filesystem::remove(out_path, ec);
 
@@ -1064,8 +1068,9 @@ v6yQpUYtQbbVSIHbNlBhfp8=
         server.Start();
 
         BeastHttpClient client;
-        const auto      out_path = std::filesystem::temp_directory_path()
-                                   / "das_pi_download_undelimited_test.bin";
+        const auto      out_path =
+            std::filesystem::temp_directory_path()
+            / DAS_PATH_LITERAL("das_pi_download_undelimited_test.bin");
         std::error_code ec;
         std::filesystem::remove(out_path, ec);
 
@@ -1193,8 +1198,9 @@ v6yQpUYtQbbVSIHbNlBhfp8=
         server.Start();
 
         BeastHttpClient client;
-        const auto      out_path = std::filesystem::temp_directory_path()
-                                   / "das_pi_download_cancel_test.bin";
+        const auto      out_path =
+            std::filesystem::temp_directory_path()
+            / DAS_PATH_LITERAL("das_pi_download_cancel_test.bin");
         std::error_code ec;
         std::filesystem::remove(out_path, ec);
 

@@ -1,5 +1,6 @@
 #include "../src/UpdateCheckStore.h"
 
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -33,7 +34,8 @@ namespace
     TEST(UpdateCheckStoreTest, SaveAndPutCheckingFirstWriteReturnsNulloptPrev)
     {
         auto&                       store = UpdateCheckStore::Instance();
-        const std::filesystem::path pi_dir = "C:/store/test/first-write";
+        const std::filesystem::path pi_dir =
+            DAS_PATH_LITERAL("C:/store/test/first-write");
 
         const auto prev = store.SaveAndPutChecking(pi_dir, "key-a");
         EXPECT_FALSE(prev.has_value());
@@ -49,7 +51,8 @@ namespace
     TEST(UpdateCheckStoreTest, SaveAndPutCheckingOverTerminalReturnsPrev)
     {
         auto&                       store = UpdateCheckStore::Instance();
-        const std::filesystem::path pi_dir = "C:/store/test/over-terminal";
+        const std::filesystem::path pi_dir =
+            DAS_PATH_LITERAL("C:/store/test/over-terminal");
 
         store.PutOutcome(pi_dir, MakeFoundUpdateEntry("v2.23.0", "key-old"));
 
@@ -72,8 +75,10 @@ namespace
     TEST(UpdateCheckStoreTest, PutOutcomeFoundUpdateStoresFullInfo)
     {
         auto&                       store = UpdateCheckStore::Instance();
-        const std::filesystem::path pi_dir = "C:/store/test/full-info";
-        const std::filesystem::path other_dir = "C:/store/test/full-info-2";
+        const std::filesystem::path pi_dir =
+            DAS_PATH_LITERAL("C:/store/test/full-info");
+        const std::filesystem::path other_dir =
+            DAS_PATH_LITERAL("C:/store/test/full-info-2");
 
         store.SaveAndPutChecking(pi_dir, "key-a");
         store.PutOutcome(pi_dir, MakeFoundUpdateEntry("v2.23.0", "key-a"));
@@ -106,14 +111,14 @@ namespace
 
         // 子例 1：prev 为 nullopt → 条目消失。
         const std::filesystem::path empty_prev_dir =
-            "C:/store/test/rollback-empty";
+            DAS_PATH_LITERAL("C:/store/test/rollback-empty");
         const auto prev1 = store.SaveAndPutChecking(empty_prev_dir, "key-a");
         store.RollbackCheckingIfUnchanged(empty_prev_dir, "key-a", prev1);
         EXPECT_FALSE(store.Get(empty_prev_dir).has_value());
 
         // 子例 2：prev 为旧终态 → 恢复该终态。
         const std::filesystem::path terminal_prev_dir =
-            "C:/store/test/rollback-terminal";
+            DAS_PATH_LITERAL("C:/store/test/rollback-terminal");
         store.PutOutcome(
             terminal_prev_dir,
             MakeFoundUpdateEntry("v2.23.0", "key-old"));
@@ -137,7 +142,7 @@ namespace
 
         // 子例 1：条目已被 PutOutcome 覆盖为 Failed 终态 → 回滚不得动。
         const std::filesystem::path overwritten_dir =
-            "C:/store/test/rollback-overwritten";
+            DAS_PATH_LITERAL("C:/store/test/rollback-overwritten");
         const auto prev1 = store.SaveAndPutChecking(overwritten_dir, "key-a");
         UpdateCheckEntry failed;
         failed.state = UpdateCheckEntry::State::Failed;
@@ -156,7 +161,7 @@ namespace
 
         // 子例 2：条目 progress_key 与本次不同 → 回滚不动（保留新写入方）。
         const std::filesystem::path key_mismatch_dir =
-            "C:/store/test/rollback-key-mismatch";
+            DAS_PATH_LITERAL("C:/store/test/rollback-key-mismatch");
         const auto prev2 = store.SaveAndPutChecking(key_mismatch_dir, "key-a");
         (void)store.SaveAndPutChecking(key_mismatch_dir, "key-b");
         store.RollbackCheckingIfUnchanged(key_mismatch_dir, "key-a", prev2);
@@ -172,31 +177,36 @@ namespace
     TEST(UpdateCheckStoreTest, KeyNormalizationHitsSameEntry)
     {
         auto&                       store = UpdateCheckStore::Instance();
-        const std::filesystem::path pi_dir = "C:/store/test/normalize";
+        const std::filesystem::path pi_dir =
+            DAS_PATH_LITERAL("C:/store/test/normalize");
 
         store.SaveAndPutChecking(pi_dir, "key-a");
 
         // '\\' 分隔形态。
-        const auto via_backslash =
-            store.Get(std::filesystem::path("C:\\store\\test\\normalize"));
+        const auto via_backslash = store.Get(
+            std::filesystem::path(
+                DAS_PATH_LITERAL("C:\\store\\test\\normalize")));
         ASSERT_TRUE(via_backslash.has_value());
         EXPECT_EQ(via_backslash->progress_key, "key-a");
 
         // 含 '.' 段的形态。
-        const auto via_dot =
-            store.Get(std::filesystem::path("C:/store/test/./normalize"));
+        const auto via_dot = store.Get(
+            std::filesystem::path(
+                DAS_PATH_LITERAL("C:/store/test/./normalize")));
         ASSERT_TRUE(via_dot.has_value());
         EXPECT_EQ(via_dot->progress_key, "key-a");
 
         // 含 '..' 回退段的形态。
         const auto via_dotdot = store.Get(
-            std::filesystem::path("C:/store/test/sibling/../normalize"));
+            std::filesystem::path(
+                DAS_PATH_LITERAL("C:/store/test/sibling/../normalize")));
         ASSERT_TRUE(via_dotdot.has_value());
         EXPECT_EQ(via_dotdot->progress_key, "key-a");
 
         // 写侧同样归一：经 '\' 形态 PutOutcome，经 '/' 形态可读回。
         store.PutOutcome(
-            std::filesystem::path("C:\\store\\test\\normalize"),
+            std::filesystem::path(
+                DAS_PATH_LITERAL("C:\\store\\test\\normalize")),
             MakeFoundUpdateEntry("v2.23.0", "key-a"));
         const auto entry = store.Get(pi_dir);
         ASSERT_TRUE(entry.has_value());
@@ -209,8 +219,9 @@ namespace
     TEST(UpdateCheckStoreTest, ConcurrentWritesFinalStateObservable)
     {
         auto&                       store = UpdateCheckStore::Instance();
-        const std::filesystem::path pi_dir = "C:/store/test/concurrent";
-        constexpr int               kRounds = 200;
+        const std::filesystem::path pi_dir =
+            DAS_PATH_LITERAL("C:/store/test/concurrent");
+        constexpr int kRounds = 200;
 
         const auto hammer = [&store, &pi_dir](const std::string& key_prefix)
         {
@@ -264,7 +275,7 @@ namespace
     {
         auto&                       store = UpdateCheckStore::Instance();
         const std::filesystem::path pi_dir =
-            "C:/store/test/rollback-after-terminal";
+            DAS_PATH_LITERAL("C:/store/test/rollback-after-terminal");
 
         // A 受理（首写，prev 为空）→ 条目 Checking(A)。
         const auto prev_a = store.SaveAndPutChecking(pi_dir, "key-a");
