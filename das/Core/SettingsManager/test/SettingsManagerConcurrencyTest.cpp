@@ -1,6 +1,7 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 
 #include <atomic>
 #include <chrono>
@@ -15,10 +16,10 @@ namespace
 {
     std::filesystem::path GetTestBaseDir()
     {
-        const char* env = std::getenv("DAS_TEST_TMPDIR");
-        if (env && env[0] != '\0')
+        const auto env_dir = Das::Utils::PathFromEnvironment("DAS_TEST_TMPDIR");
+        if (env_dir && !env_dir->empty())
         {
-            return std::filesystem::path(env);
+            return *env_dir;
         }
         return std::filesystem::current_path();
     }

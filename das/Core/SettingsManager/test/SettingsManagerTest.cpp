@@ -1,9 +1,9 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 
 #include <chrono>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -19,10 +19,10 @@ namespace
     {
         // Prefer DAS_TEST_TMPDIR if set, otherwise use current working
         // directory
-        const char* env = std::getenv("DAS_TEST_TMPDIR");
-        if (env && env[0] != '\0')
+        const auto env_dir = Das::Utils::PathFromEnvironment("DAS_TEST_TMPDIR");
+        if (env_dir && !env_dir->empty())
         {
-            return std::filesystem::path(env);
+            return *env_dir;
         }
         return std::filesystem::current_path();
     }
@@ -89,7 +89,7 @@ namespace
         auto result = sm.CreateProfile("0");
         EXPECT_EQ(result, DAS_S_OK);
 
-        auto profile_dir = test_dir_ / "0";
+        auto profile_dir = test_dir_ / DAS_PATH_LITERAL("0");
         EXPECT_TRUE(std::filesystem::exists(profile_dir));
         EXPECT_TRUE(std::filesystem::is_directory(profile_dir));
     }
@@ -123,7 +123,8 @@ namespace
         EXPECT_EQ(result, DAS_S_OK);
 
         // profile.json should exist on disk with the given name
-        auto meta_file = test_dir_ / "0" / "profile.json";
+        auto meta_file = test_dir_ / DAS_PATH_LITERAL("0")
+                         / DAS_PATH_LITERAL("profile.json");
         EXPECT_TRUE(std::filesystem::exists(meta_file));
 
         auto list = sm.GetProfileListJson();
@@ -165,10 +166,10 @@ namespace
     {
         // Simulate a legacy profile that predates profile.json: create the
         // directory + ui.json manually without a profile.json.
-        auto profile_dir = test_dir_ / "0";
+        auto profile_dir = test_dir_ / DAS_PATH_LITERAL("0");
         std::filesystem::create_directories(profile_dir);
         {
-            std::ofstream ofs{profile_dir / "ui.json"};
+            std::ofstream ofs{profile_dir / DAS_PATH_LITERAL("ui.json")};
             ofs << "{}";
         }
 
@@ -226,7 +227,7 @@ namespace
         auto result = sm.DeleteProfile("0");
         EXPECT_EQ(result, DAS_S_OK);
 
-        auto profile_dir = test_dir_ / "0";
+        auto profile_dir = test_dir_ / DAS_PATH_LITERAL("0");
         EXPECT_FALSE(std::filesystem::exists(profile_dir));
     }
 
@@ -352,7 +353,8 @@ namespace
         EXPECT_EQ(result, DAS_S_OK);
 
         // Verify a separate file was created
-        auto guid_file = test_dir_ / "0" / "plugin-guid-1.json";
+        auto guid_file = test_dir_ / DAS_PATH_LITERAL("0")
+                         / DAS_PATH_LITERAL("plugin-guid-1.json");
         EXPECT_TRUE(std::filesystem::exists(guid_file));
 
         // Read back through GetPluginSettingsJson
@@ -471,7 +473,8 @@ namespace
         EXPECT_EQ(result, DAS_S_OK);
 
         // Verify separate file created
-        auto scheduler_file = test_dir_ / "0" / "scheduler.json";
+        auto scheduler_file = test_dir_ / DAS_PATH_LITERAL("0")
+                              / DAS_PATH_LITERAL("scheduler.json");
         EXPECT_TRUE(std::filesystem::exists(scheduler_file));
 
         // Read back
@@ -615,7 +618,8 @@ namespace
         EXPECT_EQ(result, DAS_S_OK);
 
         // Verify file was created with expected name
-        auto task_file = test_dir_ / "0" / "taskId0.json";
+        auto task_file = test_dir_ / DAS_PATH_LITERAL("0")
+                         / DAS_PATH_LITERAL("taskId0.json");
         EXPECT_TRUE(std::filesystem::exists(task_file));
 
         auto loaded = sm.GetTaskInstanceJson("0", 0);
@@ -650,7 +654,8 @@ namespace
         (*task.as_object())[std::string_view("id")] = 5;
         sm.UpdateTaskInstanceJson("0", 5, task);
 
-        auto task_file = test_dir_ / "0" / "taskId5.json";
+        auto task_file = test_dir_ / DAS_PATH_LITERAL("0")
+                         / DAS_PATH_LITERAL("taskId5.json");
         EXPECT_TRUE(std::filesystem::exists(task_file));
 
         auto result = sm.DeleteTaskInstanceJson("0", 5);
@@ -713,12 +718,17 @@ namespace
         auto result = sm.UpdateTaskRepositoryEntryJson("0", 12, entry);
         EXPECT_EQ(result, DAS_S_OK);
 
-        auto repository_file = test_dir_ / "0" / "taskRepository12.json";
+        auto repository_file = test_dir_ / DAS_PATH_LITERAL("0")
+                               / DAS_PATH_LITERAL("taskRepository12.json");
         EXPECT_TRUE(std::filesystem::exists(repository_file));
         EXPECT_FALSE(
-            std::filesystem::exists(test_dir_ / "0" / "taskId12.json"));
+            std::filesystem::exists(
+                test_dir_ / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL("taskId12.json")));
         EXPECT_FALSE(
-            std::filesystem::exists(test_dir_ / "0" / "scheduler.json"));
+            std::filesystem::exists(
+                test_dir_ / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL("scheduler.json")));
 
         auto loaded = sm.GetTaskRepositoryEntryJson("0", 12);
         EXPECT_EQ(
@@ -762,19 +772,27 @@ namespace
         ASSERT_EQ(sm.UpdateTaskInstanceJson("0", 2, task), DAS_S_OK);
 
         {
-            std::ofstream ofs{test_dir_ / "0" / "taskRepository.json"};
+            std::ofstream ofs{
+                test_dir_ / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL("taskRepository.json")};
             ofs << "{}";
         }
         {
-            std::ofstream ofs{test_dir_ / "0" / "taskRepositoryabc.json"};
+            std::ofstream ofs{
+                test_dir_ / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL("taskRepositoryabc.json")};
             ofs << "{}";
         }
         {
-            std::ofstream ofs{test_dir_ / "0" / "taskRepository-1.json"};
+            std::ofstream ofs{
+                test_dir_ / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL("taskRepository-1.json")};
             ofs << "{}";
         }
         {
-            std::ofstream ofs{test_dir_ / "0" / "taskRepository4.tmp"};
+            std::ofstream ofs{
+                test_dir_ / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL("taskRepository4.tmp")};
             ofs << "{}";
         }
 
@@ -876,7 +894,8 @@ namespace
         sm.CreateProfile("0");
 
         // Write corrupt JSON to plugin settings file
-        auto guid_file = test_dir_ / "0" / "corrupt-guid.json";
+        auto guid_file = test_dir_ / DAS_PATH_LITERAL("0")
+                         / DAS_PATH_LITERAL("corrupt-guid.json");
         {
             std::ofstream ofs{guid_file};
             ofs << "{not valid json!!!";
@@ -954,7 +973,8 @@ namespace
         sm.UpdateTaskInstanceJson("0", 1, task1);
 
         // Corrupt task0's file
-        auto task0_file = test_dir_ / "0" / "taskId0.json";
+        auto task0_file = test_dir_ / DAS_PATH_LITERAL("0")
+                          / DAS_PATH_LITERAL("taskId0.json");
         {
             std::ofstream ofs{task0_file};
             ofs << "CORRUPT DATA {{{";
@@ -990,7 +1010,8 @@ namespace
         sm.CreateProfile("0");
 
         // No file exists for this GUID
-        auto guid_file = test_dir_ / "0" / "missing-guid.json";
+        auto guid_file = test_dir_ / DAS_PATH_LITERAL("0")
+                         / DAS_PATH_LITERAL("missing-guid.json");
         EXPECT_FALSE(std::filesystem::exists(guid_file));
 
         // Rebuild should create the file and return DAS_S_FALSE
@@ -1059,13 +1080,23 @@ namespace
         }
 
         // All files exist independently
-        EXPECT_TRUE(std::filesystem::exists(test_dir_ / "0" / "ui.json"));
         EXPECT_TRUE(
             std::filesystem::exists(
-                test_dir_ / "0" / "65EDE9D8-09A8-4F01-B4AF-6614C5BA1C8E.json"));
+                test_dir_ / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL("ui.json")));
         EXPECT_TRUE(
-            std::filesystem::exists(test_dir_ / "0" / "scheduler.json"));
-        EXPECT_TRUE(std::filesystem::exists(test_dir_ / "0" / "taskId0.json"));
+            std::filesystem::exists(
+                test_dir_ / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL(
+                    "65EDE9D8-09A8-4F01-B4AF-6614C5BA1C8E.json")));
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                test_dir_ / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL("scheduler.json")));
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                test_dir_ / DAS_PATH_LITERAL("0")
+                / DAS_PATH_LITERAL("taskId0.json")));
 
         // Each reads back correctly
         EXPECT_EQ(
@@ -1124,7 +1155,8 @@ namespace
         sm.CreateProfile("0");
 
         // Write corrupt JSON to plugin settings file
-        auto guid_file = test_dir_ / "0" / "corrupt-guid.json";
+        auto guid_file = test_dir_ / DAS_PATH_LITERAL("0")
+                         / DAS_PATH_LITERAL("corrupt-guid.json");
         {
             std::ofstream ofs{guid_file};
             ofs << "{not valid json!!!";
@@ -1143,7 +1175,8 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        auto guid_file = test_dir_ / "0" / "missing-guid.json";
+        auto guid_file = test_dir_ / DAS_PATH_LITERAL("0")
+                         / DAS_PATH_LITERAL("missing-guid.json");
         EXPECT_FALSE(std::filesystem::exists(guid_file));
 
         auto [json, status] =
@@ -1163,7 +1196,8 @@ namespace
         sm.CreateProfile("0");
 
         // Write a valid JSON array (not an object) to the plugin settings file
-        auto guid_file = test_dir_ / "0" / "array-guid.json";
+        auto guid_file = test_dir_ / DAS_PATH_LITERAL("0")
+                         / DAS_PATH_LITERAL("array-guid.json");
         {
             std::ofstream ofs{guid_file};
             ofs << "[1, 2, 3]";

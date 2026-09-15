@@ -1,5 +1,6 @@
 #include "controller/DasImageController.hpp"
 
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -10,7 +11,7 @@ namespace
     TEST(LogImageStaticTest, SanitizeImagePath_RejectsTraversal)
     {
         const std::filesystem::path session_dir =
-            "E:/das/debug/20260801-123456-8841";
+            DAS_PATH_LITERAL("E:/das/debug/20260801-123456-8841");
         EXPECT_FALSE(
             Das::Http::DasImageController::SanitizeImagePath(
                 "../x",
@@ -38,14 +39,17 @@ namespace
     TEST(LogImageStaticTest, SanitizeImagePath_AcceptsNormalRef)
     {
         const std::filesystem::path session_dir =
-            "E:/das/debug/20260801-123456-8841";
+            DAS_PATH_LITERAL("E:/das/debug/20260801-123456-8841");
         const auto result = Das::Http::DasImageController::SanitizeImagePath(
             "img/0001.jpg",
             session_dir);
         ASSERT_TRUE(result.has_value());
-        EXPECT_EQ(result->filename(), std::filesystem::path{"0001.jpg"});
+        EXPECT_EQ(
+            result->filename(),
+            std::filesystem::path{DAS_PATH_LITERAL("0001.jpg")});
         const auto base = session_dir.lexically_normal();
         EXPECT_TRUE(
-            result->string().starts_with(base.string()));
+            Das::Utils::PathToUtf8(*result).starts_with(
+                Das::Utils::PathToUtf8(base)));
     }
 } // namespace

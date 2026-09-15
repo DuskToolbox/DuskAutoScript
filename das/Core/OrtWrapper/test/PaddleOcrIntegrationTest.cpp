@@ -12,6 +12,7 @@
 #include <das/DasString.hpp>
 #include <das/DasSwigApi.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/PathText.h>
 
 #include <filesystem>
 
@@ -22,12 +23,14 @@ namespace
 {
     std::filesystem::path GetTestModelPath()
     {
-        return std::filesystem::current_path() / "test_data" / "dummy.onnx";
+        return std::filesystem::current_path() / DAS_PATH_LITERAL("test_data")
+               / DAS_PATH_LITERAL("dummy.onnx");
     }
 
     std::filesystem::path GetTestDictPath()
     {
-        return std::filesystem::current_path() / "test_data" / "dict.txt";
+        return std::filesystem::current_path() / DAS_PATH_LITERAL("test_data")
+               / DAS_PATH_LITERAL("dict.txt");
     }
 } // namespace
 

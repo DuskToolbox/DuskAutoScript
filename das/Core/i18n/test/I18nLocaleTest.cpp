@@ -3,6 +3,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -18,10 +19,12 @@ namespace
     void WriteFile(const std::filesystem::path& path, std::string_view content)
     {
         std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
-        ASSERT_TRUE(ofs.is_open()) << "failed to open " << path.string();
+        ASSERT_TRUE(ofs.is_open())
+            << "failed to open " << Das::Utils::PathToUtf8(path);
         ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
         ofs.flush();
-        ASSERT_TRUE(ofs.good()) << "write failed " << path.string();
+        ASSERT_TRUE(ofs.good())
+            << "write failed " << Das::Utils::PathToUtf8(path);
     }
 
     // 经 C API 工厂构造只读 IDasReadOnlyString（AddRef 后移交 DasPtr）。
@@ -65,7 +68,8 @@ namespace
             const std::string leaf = std::string("das_i18n_fixtures_")
                                      + info->test_suite_name() + "_"
                                      + info->name();
-            fixture_dir_ = std::filesystem::current_path() / leaf;
+            fixture_dir_ = std::filesystem::current_path()
+                           / Das::Utils::PathFromUtf8(leaf);
 
             std::error_code ec;
             std::filesystem::remove_all(fixture_dir_, ec);
@@ -74,7 +78,7 @@ namespace
 
             // en.json — base locale，含占位符模板
             WriteFile(
-                fixture_dir_ / "en.json",
+                fixture_dir_ / DAS_PATH_LITERAL("en.json"),
                 R"({"progress.downloading": "Downloading...",
     "progress.downloading_with_size": "Downloading ({1} / {2}){3}%",
     "label.confirm": "Confirm"})");
@@ -82,7 +86,7 @@ namespace
             // zh-cn.json — 非基础 locale（文件名小写；装载时 stem 也会
             // toLower）
             WriteFile(
-                fixture_dir_ / "zh-cn.json",
+                fixture_dir_ / DAS_PATH_LITERAL("zh-cn.json"),
                 R"({"progress.downloading": "正在下载…",
     "label.confirm": "确认"})");
         }
@@ -96,7 +100,7 @@ namespace
         // 经工厂装载夹具目录，返回只读 IDasI18n 视图。
         DAS::DasPtr<Das::ExportInterface::IDasI18n> LoadFromFixtureDir()
         {
-            const auto dir_str = fixture_dir_.string();
+            const auto dir_str = Das::Utils::PathToUtf8(fixture_dir_);
             DAS::DasPtr<Das::ExportInterface::IDasI18n> p_i18n;
             DAS::DasPtr<IDasReadOnlyString>             p_dir;
             ::CreateIDasReadOnlyStringFromUtf8(dir_str.c_str(), p_dir.Put());
@@ -257,8 +261,9 @@ namespace
             ::testing::UnitTest::GetInstance()->current_test_info();
         const std::string leaf = std::string("das_i18n_mutable_")
                                  + info->test_suite_name() + "_" + info->name();
-        auto              dir = std::filesystem::current_path() / leaf;
-        std::error_code   ec;
+        auto              dir =
+            std::filesystem::current_path() / Das::Utils::PathFromUtf8(leaf);
+        std::error_code ec;
         std::filesystem::remove_all(dir, ec);
         std::filesystem::create_directories(dir, ec);
         return dir;
@@ -328,10 +333,10 @@ TEST(I18nMutable, MergeFromFileMergesPerLocaleFlatJson)
     ASSERT_NE(i18n.Get(), nullptr);
 
     const auto dir = UniqueDirForCurrentTest();
-    const auto file = dir / "en.json";
+    const auto file = dir / DAS_PATH_LITERAL("en.json");
     WriteFile(file, R"({"a.b": "x", "c.d": "y"})");
 
-    auto path = MakeLocaleName(file.string().c_str());
+    auto path = MakeLocaleName(Das::Utils::PathToUtf8(file).c_str());
     ASSERT_EQ(i18n->MergeFromFile(path.Get()), DAS_S_OK);
 
     auto                            locale = MakeLocaleName("en");
@@ -369,9 +374,9 @@ TEST(I18nMutable, MergeFromFileOverwritesExistingKey)
         DAS_S_OK);
 
     const auto dir = UniqueDirForCurrentTest();
-    const auto file = dir / "en.json";
+    const auto file = dir / DAS_PATH_LITERAL("en.json");
     WriteFile(file, R"({"overlap.key": "new"})");
-    auto path = MakeLocaleName(file.string().c_str());
+    auto path = MakeLocaleName(Das::Utils::PathToUtf8(file).c_str());
     ASSERT_EQ(i18n->MergeFromFile(path.Get()), DAS_S_OK);
 
     DAS::DasPtr<IDasReadOnlyString> p_out;
@@ -397,9 +402,9 @@ TEST(I18nBadJson, MissingBraceReturnsInvalidJsonAndLeavesTableUnchanged)
         DAS_S_OK);
 
     const auto dir = UniqueDirForCurrentTest();
-    const auto file = dir / "en.json";
+    const auto file = dir / DAS_PATH_LITERAL("en.json");
     WriteFile(file, R"({"broken": )"); // 缺值 + 缺花括号
-    auto path = MakeLocaleName(file.string().c_str());
+    auto path = MakeLocaleName(Das::Utils::PathToUtf8(file).c_str());
     EXPECT_EQ(i18n->MergeFromFile(path.Get()), DAS_E_INVALID_JSON);
 
     // 原条目仍在
@@ -424,9 +429,9 @@ TEST(I18nBadJson, NonObjectRootReturnsInvalidJson)
     ASSERT_NE(i18n.Get(), nullptr);
 
     const auto dir = UniqueDirForCurrentTest();
-    const auto file = dir / "en.json";
+    const auto file = dir / DAS_PATH_LITERAL("en.json");
     WriteFile(file, R"(["not", "an", "object"])");
-    auto path = MakeLocaleName(file.string().c_str());
+    auto path = MakeLocaleName(Das::Utils::PathToUtf8(file).c_str());
     EXPECT_EQ(i18n->MergeFromFile(path.Get()), DAS_E_INVALID_JSON);
 }
 
