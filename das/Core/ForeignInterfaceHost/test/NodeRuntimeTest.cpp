@@ -2,7 +2,7 @@
 
 #include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -52,11 +52,20 @@ namespace
         ScopedEnvVar(const char* name, std::optional<std::string> value)
             : name_{name}
         {
+#ifdef _WIN32
+            const wchar_t* current = _wgetenv(WideName().c_str());
+            if (current)
+            {
+                original_ = Das::Utils::PathToUtf8(
+                    std::filesystem::path{std::wstring_view{current}});
+            }
+#else
             const char* current = std::getenv(name_.c_str());
             if (current)
             {
                 original_ = std::string{current};
             }
+#endif
             Set(std::move(value));
         }
 
@@ -66,10 +75,16 @@ namespace
         ~ScopedEnvVar() { Set(std::move(original_)); }
 
     private:
+        // 写端必须与消费方（PathFromEnvironment 的 _wgetenv 读端）同走宽
+        // 通道：窄 _putenv_s 经 ANSI 代码页写入，非 ASCII 路径值会被
+        // 损坏且与宽读端断裂。
         void Set(std::optional<std::string> value)
         {
 #ifdef _WIN32
-            _putenv_s(name_.c_str(), value ? value->c_str() : "");
+            _wputenv_s(
+                WideName().c_str(),
+                value ? Das::Utils::PathFromUtf8(*value).native().c_str()
+                      : L"");
 #else
             if (value)
             {
@@ -81,6 +96,13 @@ namespace
             }
 #endif
         }
+
+#ifdef _WIN32
+        std::wstring WideName() const
+        {
+            return std::wstring(name_.begin(), name_.end());
+        }
+#endif
 
         std::string                name_;
         std::optional<std::string> original_;
@@ -94,14 +116,18 @@ namespace
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
             root_ = std::filesystem::temp_directory_path()
-                    / ("das-node-runtime-test-" + std::to_string(stamp));
-            app_root_ = root_ / "app";
-            plugins_root_ = app_root_ / "plugins";
-            node_modules_root_ = plugins_root_ / "node_modules";
-            runtime_root_ = node_modules_root_ / RUNTIME_PACKAGE_NAME;
-            package_root_ = plugins_root_ / "NodePlugin";
-            manifest_path_ = package_root_ / "NodePlugin.json";
-            fake_node_ = root_ / "fake-node.exe";
+                    / Das::Utils::PathFromUtf8(
+                        "das-node-runtime-test-" + std::to_string(stamp));
+            app_root_ = root_ / DAS_PATH_LITERAL("app");
+            plugins_root_ = app_root_ / DAS_PATH_LITERAL("plugins");
+            node_modules_root_ =
+                plugins_root_ / DAS_PATH_LITERAL("node_modules");
+            runtime_root_ = node_modules_root_
+                            / Das::Utils::PathFromUtf8(RUNTIME_PACKAGE_NAME);
+            package_root_ = plugins_root_ / DAS_PATH_LITERAL("NodePlugin");
+            manifest_path_ =
+                package_root_ / DAS_PATH_LITERAL("NodePlugin.json");
+            fake_node_ = root_ / DAS_PATH_LITERAL("fake-node.exe");
             std::filesystem::create_directories(package_root_);
         }
 
@@ -160,12 +186,14 @@ namespace
 
         std::filesystem::path CreateRuntimeFile(std::string_view relative)
         {
-            return CreateFile(runtime_root_ / std::filesystem::path{relative});
+            return CreateFile(
+                runtime_root_ / Das::Utils::PathFromUtf8(relative));
         }
 
         std::filesystem::path CreatePackageFile(std::string_view relative)
         {
-            return CreateFile(package_root_ / std::filesystem::path{relative});
+            return CreateFile(
+                package_root_ / Das::Utils::PathFromUtf8(relative));
         }
 
         void CreateFakeNode() { CreateFile(fake_node_); }
@@ -198,7 +226,7 @@ namespace
         {
             std::error_code ec;
             std::filesystem::remove(
-                runtime_root_ / std::filesystem::path{relative},
+                runtime_root_ / Das::Utils::PathFromUtf8(relative),
                 ec);
         }
 
@@ -364,7 +392,8 @@ TEST(NodeRuntimeResolver, UnsetEnvironmentUsesBareNodeLookup)
 
     ASSERT_TRUE(resolved);
     EXPECT_TRUE(std::filesystem::exists(resolved.value()));
-    const auto filename = Lower(resolved.value().filename().string());
+    const auto filename =
+        Lower(Das::Utils::PathToUtf8(resolved.value().filename()));
     EXPECT_TRUE(filename == "node" || filename == "node.exe") << filename;
 }
 
@@ -384,7 +413,9 @@ TEST(NodeRuntimeResolver, StrictEnvironmentExecutableHasNoFallback)
     layout.CreateRuntimePackageFiles();
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        (layout.FakeNode().parent_path() / "missing-node.exe").string()};
+        Das::Utils::PathToUtf8(
+            layout.FakeNode().parent_path()
+            / DAS_PATH_LITERAL("missing-node.exe"))};
 
     const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
     auto              launch = runtime.BuildHostLaunchDesc();
@@ -399,7 +430,7 @@ TEST(NodeRuntimeResolver, StrictEnvironmentExecutableIsUsedWhenPresent)
     layout.CreateRuntimePackageFiles();
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
 
     const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
     auto              launch = runtime.BuildHostLaunchDesc();
@@ -407,7 +438,7 @@ TEST(NodeRuntimeResolver, StrictEnvironmentExecutableIsUsedWhenPresent)
     ASSERT_TRUE(launch);
     EXPECT_EQ(
         ReadUtf8(launch->launch_desc.p_executable_path),
-        layout.FakeNode().string());
+        Das::Utils::PathToUtf8(layout.FakeNode()));
 }
 
 TEST(NodeRuntimePackage, ResolvesExplicitRuntimePackagePaths)
@@ -422,17 +453,24 @@ TEST(NodeRuntimePackage, ResolvesExplicitRuntimePackagePaths)
     EXPECT_EQ(paths.node_modules_root, layout.NodeModulesRoot());
     EXPECT_EQ(paths.runtime_root, layout.RuntimeRoot());
     EXPECT_EQ(paths.app_root, layout.AppRoot());
-    EXPECT_EQ(paths.package_json_path, layout.RuntimeRoot() / "package.json");
-    EXPECT_EQ(paths.public_entry_path, layout.RuntimeRoot() / "index.cjs");
+    EXPECT_EQ(
+        paths.package_json_path,
+        layout.RuntimeRoot() / DAS_PATH_LITERAL("package.json"));
+    EXPECT_EQ(
+        paths.public_entry_path,
+        layout.RuntimeRoot() / DAS_PATH_LITERAL("index.cjs"));
     EXPECT_EQ(
         paths.host_script_path,
-        layout.RuntimeRoot() / "bin" / "das-node-host.cjs");
+        layout.RuntimeRoot() / DAS_PATH_LITERAL("bin")
+            / DAS_PATH_LITERAL("das-node-host.cjs"));
     EXPECT_EQ(
         paths.wrapper_path,
-        layout.RuntimeRoot() / (DAS_NODE_ADDON_NAME "_export.js"));
+        layout.RuntimeRoot()
+            / DAS_PATH_LITERAL(DAS_NODE_ADDON_NAME "_export.js"));
     EXPECT_EQ(
         paths.addon_path,
-        layout.RuntimeRoot() / "native" / (DAS_NODE_ADDON_NAME ".node"));
+        layout.RuntimeRoot() / DAS_PATH_LITERAL("native")
+            / DAS_PATH_LITERAL(DAS_NODE_ADDON_NAME ".node"));
     EXPECT_NE(paths.host_script_path.parent_path(), layout.PackageRoot());
 }
 
@@ -442,7 +480,7 @@ TEST(NodeRuntimePackage, LegacyPluginRootRuntimeArtifactsAreIgnored)
     layout.CreateLegacyPluginRootRuntimeFiles();
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
 
     const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
     auto              launch = runtime.BuildHostLaunchDesc();
@@ -458,7 +496,7 @@ TEST(NodeRuntimePackage, MissingRuntimeRootFailsDeterministically)
     layout.CreatePluginManifest();
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
 
     const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
     auto              launch = runtime.BuildHostLaunchDesc();
@@ -474,7 +512,7 @@ TEST(NodeRuntimePackage, MissingPackageJsonFailsDeterministically)
     layout.RemoveRuntimeFile("package.json");
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
 
     const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
     auto              launch = runtime.BuildHostLaunchDesc();
@@ -490,7 +528,7 @@ TEST(NodeRuntimePackage, MissingPackageEntryFailsDeterministically)
     layout.RemoveRuntimeFile(PACKAGE_ENTRY_RELATIVE);
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
 
     const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
     auto              launch = runtime.BuildHostLaunchDesc();
@@ -506,7 +544,7 @@ TEST(NodeRuntimePackage, MissingWrapperFailsDeterministically)
     layout.RemoveRuntimeFile(WRAPPER_RELATIVE);
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
 
     const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
     auto              launch = runtime.BuildHostLaunchDesc();
@@ -522,7 +560,7 @@ TEST(NodeRuntimePackage, MissingHostScriptFailsDeterministically)
     layout.RemoveRuntimeFile(HOST_SCRIPT_RELATIVE);
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
 
     const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
     auto              launch = runtime.BuildHostLaunchDesc();
@@ -538,7 +576,7 @@ TEST(NodeRuntimePackage, MissingAddonFailsDeterministically)
     layout.RemoveRuntimeFile(ADDON_RELATIVE);
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
 
     const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
     auto              launch = runtime.BuildHostLaunchDesc();
@@ -553,28 +591,37 @@ TEST(NodeRuntimePackage, BuildHostLaunchDescUsesRuntimeScriptAndExplicitRoots)
     layout.CreateRuntimePackageFiles();
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
 
     const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
     auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_TRUE(launch);
     const auto& desc = launch->launch_desc;
-    EXPECT_EQ(ReadUtf8(desc.p_executable_path), layout.FakeNode().string());
+    EXPECT_EQ(
+        ReadUtf8(desc.p_executable_path),
+        Das::Utils::PathToUtf8(layout.FakeNode()));
     ASSERT_NE(desc.pp_args, nullptr);
 
     const auto args = ReadArgs(desc);
     ASSERT_EQ(args.size(), 7u);
-    EXPECT_EQ(args[0], (layout.RuntimeRoot() / HOST_SCRIPT_RELATIVE).string());
+    // src 侧以单分量相对文本（HOST_SCRIPT_RELATIVE "bin/das-node-host.cjs"）
+    // 拼接，'/' 原样保留进 UTF-8 参数——断言须保持同形态，拆分量拼接会被
+    // 规范化成 '\' 造成假不等。
+    EXPECT_EQ(
+        args[0],
+        Das::Utils::PathToUtf8(
+            layout.RuntimeRoot()
+            / Das::Utils::PathFromUtf8(HOST_SCRIPT_RELATIVE)));
     EXPECT_EQ(args[1], "--main-pid");
     EXPECT_FALSE(args[2].empty());
     EXPECT_EQ(args[3], "--package-root");
-    EXPECT_EQ(args[4], layout.PackageRoot().string());
+    EXPECT_EQ(args[4], Das::Utils::PathToUtf8(layout.PackageRoot()));
     EXPECT_EQ(args[5], "--node-modules-root");
-    EXPECT_EQ(args[6], layout.NodeModulesRoot().string());
+    EXPECT_EQ(args[6], Das::Utils::PathToUtf8(layout.NodeModulesRoot()));
     EXPECT_EQ(
         ReadUtf8(desc.p_working_directory),
-        layout.PackageRoot().string());
+        Das::Utils::PathToUtf8(layout.PackageRoot()));
 
     const auto environment_config = ReadUtf8(desc.p_environment_config);
     EXPECT_NE(environment_config.find(R"("version":1)"), std::string::npos);
@@ -583,7 +630,8 @@ TEST(NodeRuntimePackage, BuildHostLaunchDescUsesRuntimeScriptAndExplicitRoots)
             std::string{R"("name":")"} + DYNAMIC_LIBRARY_PATH_ENV + R"(")"),
         std::string::npos);
     EXPECT_NE(
-        environment_config.find(JsonEscaped(layout.AppRoot().string())),
+        environment_config.find(
+            JsonEscaped(Das::Utils::PathToUtf8(layout.AppRoot()))),
         std::string::npos);
 }
 
@@ -611,14 +659,14 @@ TEST(NodeRuntimeRemoteHost, LoadPluginRejectsMissingNodeModulesRoot)
     layout.CreateRuntimePackageFiles();
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
     RemoteHostCapture capture;
     NodeRuntime       runtime{
         std::make_unique<CapturingRemotePluginHost>(capture, 82),
         RuntimeLifecycleCallbacks{}};
 
     const std::string manifest_u8{
-        DAS::Utils::U8AsString(layout.ManifestPath().u8string())};
+        Das::Utils::PathToUtf8(layout.ManifestPath())};
     RuntimeLoadRequest request{};
     request.manifest_path = manifest_u8.c_str();
 
@@ -636,7 +684,7 @@ TEST(NodeRuntimeRemoteHost, LoadDelegatesToRemoteHostWithExplicitLaunchDesc)
     layout.CreateRuntimePackageFiles();
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
     RemoteHostCapture capture;
 
     NodeRuntime runtime{
@@ -644,9 +692,9 @@ TEST(NodeRuntimeRemoteHost, LoadDelegatesToRemoteHostWithExplicitLaunchDesc)
         RuntimeLifecycleCallbacks{}};
 
     const std::string manifest_u8{
-        DAS::Utils::U8AsString(layout.ManifestPath().u8string())};
+        Das::Utils::PathToUtf8(layout.ManifestPath())};
     const std::string node_modules_u8{
-        DAS::Utils::U8AsString(layout.NodeModulesRoot().u8string())};
+        Das::Utils::PathToUtf8(layout.NodeModulesRoot())};
     RuntimeLoadRequest request{};
     request.manifest_path = manifest_u8.c_str();
     request.runtime_path = manifest_u8.c_str();
@@ -667,18 +715,24 @@ TEST(NodeRuntimeRemoteHost, LoadDelegatesToRemoteHostWithExplicitLaunchDesc)
     EXPECT_EQ(capture.load_count, 1);
     EXPECT_EQ(capture.manifest_path, layout.ManifestPath());
     EXPECT_EQ(capture.plugin_guid.data1, 0x75070003u);
-    EXPECT_EQ(capture.executable, layout.FakeNode().string());
+    EXPECT_EQ(capture.executable, Das::Utils::PathToUtf8(layout.FakeNode()));
     ASSERT_EQ(capture.args.size(), 7u);
     EXPECT_EQ(
         capture.args.front(),
-        (layout.RuntimeRoot() / HOST_SCRIPT_RELATIVE).string());
+        Das::Utils::PathToUtf8(
+            layout.RuntimeRoot()
+            / Das::Utils::PathFromUtf8(HOST_SCRIPT_RELATIVE)));
     EXPECT_EQ(capture.args[1], "--main-pid");
     EXPECT_FALSE(capture.args[2].empty());
     EXPECT_EQ(capture.args[3], "--package-root");
-    EXPECT_EQ(capture.args[4], layout.PackageRoot().string());
+    EXPECT_EQ(capture.args[4], Das::Utils::PathToUtf8(layout.PackageRoot()));
     EXPECT_EQ(capture.args[5], "--node-modules-root");
-    EXPECT_EQ(capture.args[6], layout.NodeModulesRoot().string());
-    EXPECT_EQ(capture.working_directory, layout.PackageRoot().string());
+    EXPECT_EQ(
+        capture.args[6],
+        Das::Utils::PathToUtf8(layout.NodeModulesRoot()));
+    EXPECT_EQ(
+        capture.working_directory,
+        Das::Utils::PathToUtf8(layout.PackageRoot()));
     EXPECT_NE(
         capture.environment_config.find(DYNAMIC_LIBRARY_PATH_ENV),
         std::string::npos);
@@ -690,7 +744,7 @@ TEST(NodeRuntimeRemoteHost, LoadForwardsIpcLifecycleCallbacks)
     layout.CreateRuntimePackageFiles();
     const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
-        layout.FakeNode().string()};
+        Das::Utils::PathToUtf8(layout.FakeNode())};
     RemoteHostCapture capture;
 
     RuntimeLifecycleCallbacks callbacks{};
@@ -701,9 +755,9 @@ TEST(NodeRuntimeRemoteHost, LoadForwardsIpcLifecycleCallbacks)
         std::move(callbacks)};
 
     const std::string manifest_u8{
-        DAS::Utils::U8AsString(layout.ManifestPath().u8string())};
+        Das::Utils::PathToUtf8(layout.ManifestPath())};
     const std::string node_modules_u8{
-        DAS::Utils::U8AsString(layout.NodeModulesRoot().u8string())};
+        Das::Utils::PathToUtf8(layout.NodeModulesRoot())};
     RuntimeLoadRequest request{};
     request.manifest_path = manifest_u8.c_str();
     request.runtime_path = manifest_u8.c_str();

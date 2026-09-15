@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <das/Utils/PathText.h>
+
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -25,11 +27,12 @@ namespace
 
     std::filesystem::path RepositoryRoot()
     {
-        auto path = std::filesystem::path{__FILE__};
+        auto path = std::filesystem::path{DAS_PATH_LITERAL(__FILE__)};
         while (!path.empty())
         {
             if (std::filesystem::exists(
-                    path / "das" / "Host" / "src" / "main.cpp"))
+                    path / DAS_PATH_LITERAL("das") / DAS_PATH_LITERAL("Host")
+                    / DAS_PATH_LITERAL("src") / DAS_PATH_LITERAL("main.cpp")))
             {
                 return path;
             }
@@ -46,7 +49,8 @@ namespace
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
             root_ = std::filesystem::temp_directory_path()
-                    / ("das-csharp-host-routing-" + std::to_string(stamp));
+                    / Das::Utils::PathFromUtf8(
+                        "das-csharp-host-routing-" + std::to_string(stamp));
             std::filesystem::create_directories(root_);
         }
 
@@ -69,7 +73,8 @@ namespace
         std::filesystem::path WriteManifest(
             std::string_view target_framework) const
         {
-            const auto    manifest_path = root_ / "CSharpRoutingPlugin.json";
+            const auto manifest_path =
+                root_ / DAS_PATH_LITERAL("CSharpRoutingPlugin.json");
             std::ofstream stream{manifest_path};
             stream << R"({
                 "guid": "00000000-0000-0000-0000-000000780202",
@@ -246,8 +251,9 @@ TEST(CSharpHostRouting, FactoryCreatesCSharpRuntimeWhenExportEnabled)
 
 TEST(CSharpHostRouting, DasHostSourceContainsExplicitCSharpBranch)
 {
-    const auto source =
-        ReadSourceFile(RepositoryRoot() / "das" / "Host" / "src" / "main.cpp");
+    const auto source = ReadSourceFile(
+        RepositoryRoot() / DAS_PATH_LITERAL("das") / DAS_PATH_LITERAL("Host")
+        / DAS_PATH_LITERAL("src") / DAS_PATH_LITERAL("main.cpp"));
 
     ASSERT_FALSE(source.empty());
     EXPECT_NE(source.find("lang_lower == \"csharp\""), std::string::npos);
@@ -278,15 +284,20 @@ TEST(CSharpHostRouting, LoadPluginDispatchesModernTfmToModernBackend)
     EXPECT_EQ(modern_capture.package_root, layout.Root());
     EXPECT_EQ(
         modern_capture.plugin_binary_path,
-        layout.Root() / "CSharpRoutingPlugin.dll");
+        layout.Root() / DAS_PATH_LITERAL("CSharpRoutingPlugin.dll"));
     EXPECT_EQ(modern_capture.target_framework, "net8.0");
     EXPECT_EQ(modern_capture.entry_type, "Das.TestPlugin.TestPluginEntrypoint");
     EXPECT_EQ(modern_capture.entry_method, "Create");
-    EXPECT_EQ(modern_capture.bootstrap_manifest_path, manifest_path.string());
-    EXPECT_EQ(modern_capture.bootstrap_plugin_root, layout.Root().string());
+    EXPECT_EQ(
+        modern_capture.bootstrap_manifest_path,
+        Das::Utils::PathToUtf8(manifest_path));
+    EXPECT_EQ(
+        modern_capture.bootstrap_plugin_root,
+        Das::Utils::PathToUtf8(layout.Root()));
     EXPECT_EQ(
         modern_capture.bootstrap_plugin_binary_path,
-        (layout.Root() / "CSharpRoutingPlugin.dll").string());
+        Das::Utils::PathToUtf8(
+            layout.Root() / DAS_PATH_LITERAL("CSharpRoutingPlugin.dll")));
     EXPECT_EQ(modern_capture.bootstrap_size, DAS_CSHARP_BOOTSTRAP_ARGS_V1_SIZE);
     EXPECT_EQ(
         modern_capture.bootstrap_abi_version,

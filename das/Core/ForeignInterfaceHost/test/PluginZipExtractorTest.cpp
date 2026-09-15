@@ -5,6 +5,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/ForeignInterfaceHost/PluginZipExtractor.h>
 
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 #include <gtest/gtest.h>
 #include <zlib.h>
@@ -191,7 +192,8 @@ namespace
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
             root_ = std::filesystem::temp_directory_path()
-                    / ("das-plugin-zip-" + std::to_string(stamp));
+                    / Das::Utils::PathFromUtf8(
+                        "das-plugin-zip-" + std::to_string(stamp));
             std::filesystem::create_directories(root_);
         }
 
@@ -220,7 +222,7 @@ namespace
         std::error_code ec;
         for (const auto& entry : std::filesystem::directory_iterator(dir, ec))
         {
-            const auto name = entry.path().filename().string();
+            const auto name = Das::Utils::PathToUtf8(entry.path().filename());
             if (name.rfind(".tmp_install_", 0) == 0)
             {
                 return true;
@@ -256,12 +258,16 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_S_OK);
-        const auto installed = plugin_dir.Dir() / "MyPlugin";
-        EXPECT_TRUE(std::filesystem::exists(installed / "manifest.json"));
+        const auto installed = plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin");
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                installed / DAS_PATH_LITERAL("manifest.json")));
         EXPECT_EQ(
-            ReadFileContent(installed / "manifest.json"),
+            ReadFileContent(installed / DAS_PATH_LITERAL("manifest.json")),
             ManifestJson("1"));
-        EXPECT_EQ(ReadFileContent(installed / "script.txt"), "print('hello')");
+        EXPECT_EQ(
+            ReadFileContent(installed / DAS_PATH_LITERAL("script.txt")),
+            "print('hello')");
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -282,10 +288,14 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_S_OK);
-        const auto installed = plugin_dir.Dir() / "MyPlugin";
-        EXPECT_TRUE(std::filesystem::exists(installed / "manifest.json"));
+        const auto installed = plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin");
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                installed / DAS_PATH_LITERAL("manifest.json")));
         EXPECT_EQ(
-            ReadFileContent(installed / "data" / "payload.bin"),
+            ReadFileContent(
+                installed / DAS_PATH_LITERAL("data")
+                / DAS_PATH_LITERAL("payload.bin")),
             "nested-data");
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
@@ -304,11 +314,14 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
         EXPECT_FALSE(
             std::filesystem::exists(
-                std::filesystem::temp_directory_path() / "evil.txt"));
+                std::filesystem::temp_directory_path()
+                / DAS_PATH_LITERAL("evil.txt")));
     }
 
     TEST(PluginZip, InstallPluginRejectsAbsoluteAndBackslashTraversal)
@@ -328,7 +341,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -341,7 +356,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -356,7 +373,9 @@ namespace
             "this-is-definitely-not-a-valid-zip-archive-payload");
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -377,7 +396,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -402,13 +423,16 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip_v2);
 
         EXPECT_EQ(result, DAS_S_OK);
-        const auto installed = plugin_dir.Dir() / "MyPlugin";
-        EXPECT_EQ(ReadFileContent(installed / "file.txt"), "v2");
+        const auto installed = plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin");
         EXPECT_EQ(
-            ReadFileContent(installed / "manifest.json"),
+            ReadFileContent(installed / DAS_PATH_LITERAL("file.txt")),
+            "v2");
+        EXPECT_EQ(
+            ReadFileContent(installed / DAS_PATH_LITERAL("manifest.json")),
             ManifestJson("2"));
         EXPECT_FALSE(
-            std::filesystem::exists(plugin_dir.Dir() / "MyPlugin.old"));
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin.old")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -429,13 +453,16 @@ namespace
             "this-is-definitely-not-a-valid-zip-archive-payload");
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        const auto installed = plugin_dir.Dir() / "MyPlugin";
-        EXPECT_EQ(ReadFileContent(installed / "file.txt"), "v1");
+        const auto installed = plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin");
         EXPECT_EQ(
-            ReadFileContent(installed / "manifest.json"),
+            ReadFileContent(installed / DAS_PATH_LITERAL("file.txt")),
+            "v1");
+        EXPECT_EQ(
+            ReadFileContent(installed / DAS_PATH_LITERAL("manifest.json")),
             ManifestJson("1"));
         EXPECT_FALSE(
-            std::filesystem::exists(plugin_dir.Dir() / "MyPlugin.old"));
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin.old")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -460,7 +487,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -482,7 +511,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -504,7 +535,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -526,7 +559,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -547,7 +582,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -571,17 +608,17 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_S_OK);
-        const auto installed = plugin_dir.Dir() / "MyPlugin";
-        EXPECT_TRUE(std::filesystem::exists(installed / "manifest.json"));
+        const auto installed = plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin");
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                installed / DAS_PATH_LITERAL("manifest.json")));
 
-        const std::string   expected_bytes = "\xE6\x8F\x92\xE4\xBB\xB6.txt";
-        const std::u8string expected_name(
-            expected_bytes.begin(),
-            expected_bytes.end());
-        bool found = false;
+        const std::string expected_bytes = "\xE6\x8F\x92\xE4\xBB\xB6.txt";
+        bool              found = false;
         for (const auto& entry : std::filesystem::directory_iterator(installed))
         {
-            if (entry.path().filename().u8string() == expected_name)
+            if (Das::Utils::PathToUtf8(entry.path().filename())
+                == expected_bytes)
             {
                 found = true;
                 EXPECT_EQ(ReadFileContent(entry.path()), "utf8-content");
@@ -610,8 +647,12 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "evil"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("evil")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -632,7 +673,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -653,7 +696,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -673,7 +718,9 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
@@ -696,12 +743,18 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_S_OK);
-        const auto installed = plugin_dir.Dir() / "MyPlugin";
-        EXPECT_TRUE(std::filesystem::exists(installed / "manifest.json"));
-        EXPECT_TRUE(std::filesystem::exists(installed / "config.json"));
-        EXPECT_TRUE(std::filesystem::exists(installed / "plugin.dll"));
+        const auto installed = plugin_dir.Dir() / DAS_PATH_LITERAL("MyPlugin");
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                installed / DAS_PATH_LITERAL("manifest.json")));
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                installed / DAS_PATH_LITERAL("config.json")));
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                installed / DAS_PATH_LITERAL("plugin.dll")));
         EXPECT_EQ(
-            ReadFileContent(installed / "manifest.json"),
+            ReadFileContent(installed / DAS_PATH_LITERAL("manifest.json")),
             ManifestJson("1"));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
@@ -723,16 +776,22 @@ namespace
         const auto result = InstallPlugin(plugin_dir.Dir(), zip);
 
         EXPECT_EQ(result, DAS_S_OK);
-        const auto installed = plugin_dir.Dir() / "DasMaaPi";
-        EXPECT_TRUE(std::filesystem::exists(installed / "DasMaaPi.json"));
-        EXPECT_TRUE(std::filesystem::exists(installed / "libDasMaaPi.dll"));
-        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "libDasMaaPi"));
+        const auto installed = plugin_dir.Dir() / DAS_PATH_LITERAL("DasMaaPi");
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                installed / DAS_PATH_LITERAL("DasMaaPi.json")));
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                installed / DAS_PATH_LITERAL("libDasMaaPi.dll")));
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                plugin_dir.Dir() / DAS_PATH_LITERAL("libDasMaaPi")));
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
 
         // 安装结果可被扫描器按主约定 <目录名>.json 发现。
         const auto manifest = FindManifest(installed);
         EXPECT_FALSE(manifest.empty());
-        EXPECT_EQ(manifest.filename().u8string(), u8"DasMaaPi.json");
+        EXPECT_EQ(Das::Utils::PathToUtf8(manifest.filename()), "DasMaaPi.json");
     }
 
     // ---------------------------------------------------------------------

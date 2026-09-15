@@ -7,6 +7,7 @@
 #include <das/DasSharedRef.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 #include <tl/expected.hpp>
 
@@ -442,7 +443,7 @@ namespace
         RemotePluginLoadRequest request{};
         request.launch_desc.p_executable_path = executable.Get();
         request.manifest_path =
-            std::filesystem::path{"plugins/TestPlugin.json"};
+            std::filesystem::path{DAS_PATH_LITERAL("plugins/TestPlugin.json")};
         request.plugin_guid = MakeRemotePluginHostGuid(0x75050003);
         request.timeout = std::chrono::milliseconds{4321};
         return request;
@@ -517,13 +518,14 @@ TEST(IpcRemotePluginHostContract, RequestUsesHostLaunchDescAndRuntimeResult)
                   DAS::Utils::Expected<RuntimeLoadResult>>);
 
     RemotePluginLoadRequest request{};
-    request.manifest_path = std::filesystem::path{"plugins/TestPlugin.json"};
+    request.manifest_path =
+        std::filesystem::path{DAS_PATH_LITERAL("plugins/TestPlugin.json")};
     request.plugin_guid = MakeRemotePluginHostGuid(0x75050001);
     request.timeout = std::chrono::milliseconds{1234};
 
     EXPECT_EQ(
         request.manifest_path,
-        std::filesystem::path{"plugins/TestPlugin.json"});
+        std::filesystem::path{DAS_PATH_LITERAL("plugins/TestPlugin.json")});
     EXPECT_EQ(request.plugin_guid.data1, 0x75050001u);
     EXPECT_EQ(request.timeout, std::chrono::milliseconds{1234});
     EXPECT_EQ(request.launch_desc.p_executable_path, nullptr);
@@ -580,7 +582,9 @@ TEST(IpcRemotePluginHostLifecycle, LoadStartsHostAndReturnsOwnerSession)
     EXPECT_EQ(context->observed_launcher, launcher.Get());
     EXPECT_EQ(
         context->observed_plugin_path,
-        std::filesystem::path{"plugins/TestPlugin.json"}.string());
+        Das::Utils::PathToUtf8(
+            std::filesystem::path{
+                DAS_PATH_LITERAL("plugins/TestPlugin.json")}));
     EXPECT_EQ(context->observed_load_timeout, std::chrono::milliseconds{4321});
     EXPECT_EQ(launcher->stop_count, 0);
     if (result->object != nullptr)
@@ -613,7 +617,7 @@ TEST(NativeIpcRuntime, DelegatesDasHostLaunchToRemotePluginHost)
     auto             remote = std::make_unique<CapturingRemotePluginHost>();
     auto*            raw_remote = remote.get();
     NativeIpcRuntime runtime{
-        std::filesystem::path{"DasHost.exe"},
+        std::filesystem::path{DAS_PATH_LITERAL("DasHost.exe")},
         std::move(remote),
         RuntimeLifecycleCallbacks{},
         std::chrono::milliseconds{2468}};
@@ -635,7 +639,7 @@ TEST(NativeIpcRuntime, DelegatesDasHostLaunchToRemotePluginHost)
     EXPECT_EQ(raw_remote->load_count, 1);
     EXPECT_EQ(
         raw_remote->observed_manifest_path,
-        std::filesystem::path{"plugins/Native.json"});
+        std::filesystem::path{DAS_PATH_LITERAL("plugins/Native.json")});
     EXPECT_EQ(raw_remote->observed_plugin_guid.data1, 0x75050004u);
     EXPECT_EQ(raw_remote->observed_timeout, std::chrono::milliseconds{2468});
     EXPECT_EQ(raw_remote->observed_executable, "DasHost.exe");
@@ -648,7 +652,7 @@ TEST(NativeIpcRuntime, FactoryCreatesNativeProvider)
 {
     auto remote = std::make_unique<CapturingRemotePluginHost>();
     auto provider = CreateNativeIpcRuntimeProvider(
-        std::filesystem::path{"DasHost.exe"},
+        std::filesystem::path{DAS_PATH_LITERAL("DasHost.exe")},
         std::move(remote),
         RuntimeLifecycleCallbacks{});
 
@@ -677,7 +681,7 @@ TEST(NativeIpcRuntime, LoadForwardsIpcLifecycleCallbacks)
     callbacks.on_process_exit = [](uint16_t, int) {};
     callbacks.on_heartbeat_timeout = [](DasGuid) {};
     NativeIpcRuntime runtime{
-        std::filesystem::path{"DasHost.exe"},
+        std::filesystem::path{DAS_PATH_LITERAL("DasHost.exe")},
         std::move(remote),
         std::move(callbacks),
         std::chrono::milliseconds{2468}};

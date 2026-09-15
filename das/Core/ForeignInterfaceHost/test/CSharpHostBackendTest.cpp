@@ -7,6 +7,7 @@
 
 #include <das/DasPtr.hpp>
 #include <das/DasTypes.hpp>
+#include <das/Utils/PathText.h>
 
 #include <atomic>
 #include <chrono>
@@ -104,9 +105,10 @@ namespace
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
             root_ = std::filesystem::temp_directory_path()
-                    / ("das-csharp-backend-" + std::to_string(stamp));
+                    / Das::Utils::PathFromUtf8(
+                        "das-csharp-backend-" + std::to_string(stamp));
             std::filesystem::create_directories(root_);
-            WriteFile(root_ / "DasCSharpTestPlugin.dll", "");
+            WriteFile(root_ / DAS_PATH_LITERAL("DasCSharpTestPlugin.dll"), "");
         }
 
         TempBackendLayout(const TempBackendLayout&) = delete;
@@ -122,9 +124,11 @@ namespace
         CSharpManifest Manifest() const
         {
             CSharpManifest manifest{};
-            manifest.manifest_path = root_ / "DasCSharpTestPlugin.json";
+            manifest.manifest_path =
+                root_ / DAS_PATH_LITERAL("DasCSharpTestPlugin.json");
             manifest.package_root = root_;
-            manifest.plugin_binary_path = root_ / "DasCSharpTestPlugin.dll";
+            manifest.plugin_binary_path =
+                root_ / DAS_PATH_LITERAL("DasCSharpTestPlugin.dll");
             manifest.name = "DasCSharpTestPlugin";
             manifest.plugin_filename_extension = "dll";
             manifest.target_framework = "net8.0";
@@ -135,14 +139,17 @@ namespace
                 .method_name = "Create",
             };
             manifest.runtime_config_path =
-                root_ / "DasCSharpTestPlugin.runtimeconfig.json";
+                root_
+                / DAS_PATH_LITERAL("DasCSharpTestPlugin.runtimeconfig.json");
             return manifest;
         }
 
         void WriteRuntimeConfig() const
         {
             WriteFile(
-                root_ / "DasCSharpTestPlugin.runtimeconfig.json",
+                root_
+                    / DAS_PATH_LITERAL(
+                        "DasCSharpTestPlugin.runtimeconfig.json"),
                 R"({"runtimeOptions":{"tfm":"net8.0","framework":{"name":"Microsoft.NETCore.App","version":"8.0.0"}}})");
         }
 
@@ -394,10 +401,12 @@ namespace
         const CSharpManifest& manifest)
     {
         Das::PluginInterface::IDasPluginPackage* package = nullptr;
-        const auto manifest_path_storage = manifest.manifest_path.string();
-        const auto plugin_root_storage = manifest.package_root.string();
+        const auto                               manifest_path_storage =
+            Das::Utils::PathToUtf8(manifest.manifest_path);
+        const auto plugin_root_storage =
+            Das::Utils::PathToUtf8(manifest.package_root);
         const auto plugin_binary_path_storage =
-            manifest.plugin_binary_path.string();
+            Das::Utils::PathToUtf8(manifest.plugin_binary_path);
         DasCSharpBootstrapArgsV1 args{
             .size = DAS_CSHARP_BOOTSTRAP_ARGS_V1_SIZE,
             .abi_version = DAS_CSHARP_BOOTSTRAP_ABI_VERSION_V1,
@@ -421,10 +430,12 @@ namespace
         const CSharpManifest& manifest)
     {
         Das::PluginInterface::IDasPluginPackage* package = nullptr;
-        const auto manifest_path_storage = manifest.manifest_path.string();
-        const auto plugin_root_storage = manifest.package_root.string();
+        const auto                               manifest_path_storage =
+            Das::Utils::PathToUtf8(manifest.manifest_path);
+        const auto plugin_root_storage =
+            Das::Utils::PathToUtf8(manifest.package_root);
         const auto plugin_binary_path_storage =
-            manifest.plugin_binary_path.string();
+            Das::Utils::PathToUtf8(manifest.plugin_binary_path);
         DasCSharpBootstrapArgsV1 args{
             .size = DAS_CSHARP_BOOTSTRAP_ARGS_V1_SIZE,
             .abi_version = DAS_CSHARP_BOOTSTRAP_ABI_VERSION_V1,
@@ -572,7 +583,8 @@ TEST(
     EXPECT_EQ(InvokeBackend(backend, layout.Manifest()), DAS_S_OK);
     EXPECT_EQ(
         state.assembly_path,
-        layout.Manifest().package_root / "DasCSharpTestPlugin.dll");
+        layout.Manifest().package_root
+            / DAS_PATH_LITERAL("DasCSharpTestPlugin.dll"));
     EXPECT_EQ(
         state.type_name,
         "Das.TestPlugin.TestPluginEntrypoint, DasCSharpTestPlugin");
@@ -583,13 +595,14 @@ TEST(
 
 TEST(CSharpHostBackend, FindDotNetDefinesNativeHostingDiscoveryContract)
 {
-    const auto    source_path = std::filesystem::path{__FILE__}
-                                    .parent_path()
-                                    .parent_path()
-                                    .parent_path()
-                                    .parent_path()
-                                    .parent_path()
-                                / "cmake" / "FindDotNet.cmake";
+    const auto source_path = std::filesystem::path{DAS_PATH_LITERAL(__FILE__)}
+                                 .parent_path()
+                                 .parent_path()
+                                 .parent_path()
+                                 .parent_path()
+                                 .parent_path()
+                             / DAS_PATH_LITERAL("cmake")
+                             / DAS_PATH_LITERAL("FindDotNet.cmake");
     std::ifstream source{source_path};
     ASSERT_TRUE(source.is_open());
     const std::string content(
@@ -625,7 +638,8 @@ TEST(CSharpHostBackendNetFx, WindowsSeamUsesDefaultAppDomainStringContract)
     EXPECT_EQ(state.release_calls, 1);
     EXPECT_EQ(
         state.assembly_path,
-        layout.Manifest().package_root / "DasCSharpTestPlugin.dll");
+        layout.Manifest().package_root
+            / DAS_PATH_LITERAL("DasCSharpTestPlugin.dll"));
     EXPECT_EQ(state.type_name, "Das.TestPlugin.TestPluginEntrypoint");
     EXPECT_EQ(state.method_name, "Create");
     ASSERT_FALSE(state.bootstrap_cookie.empty());
@@ -732,13 +746,14 @@ TEST(CSharpHostBackendNetFx, DefaultBackendIsDeterministicWithoutClrSeam)
 
 TEST(CSharpHostBackendNetFx, FindDotNetFrameworkDefinesNet48GatingContract)
 {
-    const auto    source_path = std::filesystem::path{__FILE__}
-                                    .parent_path()
-                                    .parent_path()
-                                    .parent_path()
-                                    .parent_path()
-                                    .parent_path()
-                                / "cmake" / "FindDotNetFramework.cmake";
+    const auto source_path = std::filesystem::path{DAS_PATH_LITERAL(__FILE__)}
+                                 .parent_path()
+                                 .parent_path()
+                                 .parent_path()
+                                 .parent_path()
+                                 .parent_path()
+                             / DAS_PATH_LITERAL("cmake")
+                             / DAS_PATH_LITERAL("FindDotNetFramework.cmake");
     std::ifstream source{source_path};
     ASSERT_TRUE(source.is_open());
     const std::string content(
@@ -778,18 +793,20 @@ TEST(
     CSharpHostBackend,
     BackendShims_use_behavior_interfaces_not_function_pointer_structs)
 {
-    const auto root = std::filesystem::path{__FILE__}
+    const auto root = std::filesystem::path{DAS_PATH_LITERAL(__FILE__)}
                           .parent_path()
                           .parent_path()
                           .parent_path()
                           .parent_path()
                           .parent_path();
-    const auto host_fxr_header_path = root / "das" / "Core"
-                                      / "ForeignInterfaceHost" / "src"
-                                      / "CSharpHostFxrBackend.h";
-    const auto net_fx_header_path = root / "das" / "Core"
-                                    / "ForeignInterfaceHost" / "src"
-                                    / "CSharpNetFxBackend.h";
+    const auto host_fxr_header_path =
+        root / DAS_PATH_LITERAL("das") / DAS_PATH_LITERAL("Core")
+        / DAS_PATH_LITERAL("ForeignInterfaceHost") / DAS_PATH_LITERAL("src")
+        / DAS_PATH_LITERAL("CSharpHostFxrBackend.h");
+    const auto net_fx_header_path =
+        root / DAS_PATH_LITERAL("das") / DAS_PATH_LITERAL("Core")
+        / DAS_PATH_LITERAL("ForeignInterfaceHost") / DAS_PATH_LITERAL("src")
+        / DAS_PATH_LITERAL("CSharpNetFxBackend.h");
 
     const auto host_fxr_header = ReadTextFile(host_fxr_header_path);
     const auto net_fx_header = ReadTextFile(net_fx_header_path);

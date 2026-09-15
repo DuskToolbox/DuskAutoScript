@@ -5,6 +5,7 @@
 #include <das/Core/ForeignInterfaceHost/CSharpBootstrap.h>
 #include <das/Core/ForeignInterfaceHost/CSharpManifest.h>
 #include <das/DasTypes.hpp>
+#include <das/Utils/PathText.h>
 
 #include <filesystem>
 #include <stdexcept>
@@ -146,7 +147,7 @@ TEST(CSharpHostManifest, CSharpManifestRequiresName)
 
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(options)),
         DAS_E_CSHARP_MANIFEST_INVALID);
 }
@@ -159,7 +160,7 @@ TEST(CSharpHostManifest, CSharpManifestRequiresStringName)
 
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(options)),
         DAS_E_CSHARP_MANIFEST_INVALID);
 }
@@ -171,7 +172,7 @@ TEST(CSharpHostManifest, CSharpManifestRequiresPluginFilenameExtension)
 
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(options)),
         DAS_E_CSHARP_MANIFEST_INVALID);
 }
@@ -184,7 +185,7 @@ TEST(CSharpHostManifest, CSharpManifestRequiresStringPluginFilenameExtension)
 
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(options)),
         DAS_E_CSHARP_MANIFEST_INVALID);
 }
@@ -198,7 +199,7 @@ TEST(
 
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(options)),
         DAS_E_CSHARP_MANIFEST_INVALID);
 }
@@ -210,7 +211,7 @@ TEST(CSharpHostManifest, CSharpManifestRequiresTargetFramework)
 
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(options)),
         DAS_E_CSHARP_MANIFEST_INVALID);
 }
@@ -223,7 +224,7 @@ TEST(CSharpHostManifest, CSharpManifestRequiresStringTargetFramework)
 
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(options)),
         DAS_E_CSHARP_MANIFEST_INVALID);
 }
@@ -235,7 +236,7 @@ TEST(CSharpHostManifest, CSharpManifestRequiresEntryPoint)
 
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(options)),
         DAS_E_CSHARP_ENTRYPOINT_INVALID);
 }
@@ -248,7 +249,7 @@ TEST(CSharpHostManifest, CSharpManifestRequiresStringEntryPoint)
 
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(options)),
         DAS_E_CSHARP_ENTRYPOINT_INVALID);
 }
@@ -262,7 +263,7 @@ TEST(CSharpHostManifest, CSharpManifestRejectsNonStringRuntimeConfigPath)
 
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(options)),
         DAS_E_CSHARP_MANIFEST_INVALID);
 }
@@ -303,7 +304,7 @@ TEST(CSharpHostManifest, CSharpTargetFrameworkDoesNotDependOnRuntimeConfigPath)
     options.with_runtime_config = false;
 
     const auto manifest = ParseManifest(
-        "package/DasCSharpTestPlugin.json",
+        DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
         MakeCSharpManifestJson(options));
 
     EXPECT_EQ(
@@ -314,14 +315,14 @@ TEST(CSharpHostManifest, CSharpTargetFrameworkDoesNotDependOnRuntimeConfigPath)
 TEST(CSharpHostManifest, CSharpRuntimeConfigDefaultsForModernFramework)
 {
     const auto manifest = ParseManifest(
-        "package/DasCSharpTestPlugin.json",
+        DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
         MakeCSharpManifestJson());
 
     ASSERT_TRUE(manifest.runtime_config_path);
     EXPECT_EQ(
         *manifest.runtime_config_path,
-        std::filesystem::path{"package"}
-            / "DasCSharpTestPlugin.runtimeconfig.json");
+        std::filesystem::path{DAS_PATH_LITERAL("package")}
+            / DAS_PATH_LITERAL("DasCSharpTestPlugin.runtimeconfig.json"));
 }
 
 TEST(CSharpHostManifest, CSharpRuntimeConfigPathUsesPackageRelativeValue)
@@ -331,14 +332,15 @@ TEST(CSharpHostManifest, CSharpRuntimeConfigPathUsesPackageRelativeValue)
     options.runtime_config = "runtime/DasCSharpTestPlugin.runtimeconfig.json";
 
     const auto manifest = ParseManifest(
-        "package/DasCSharpTestPlugin.json",
+        DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
         MakeCSharpManifestJson(options));
 
     ASSERT_TRUE(manifest.runtime_config_path);
     EXPECT_EQ(
         *manifest.runtime_config_path,
-        std::filesystem::path{"package"}
-            / "runtime/DasCSharpTestPlugin.runtimeconfig.json");
+        std::filesystem::path{DAS_PATH_LITERAL("package")}
+            / DAS_PATH_LITERAL(
+                "runtime/DasCSharpTestPlugin.runtimeconfig.json"));
 }
 
 TEST(CSharpHostManifest, CSharpRuntimeConfigPathRejectsUnsafeInput)
@@ -348,7 +350,7 @@ TEST(CSharpHostManifest, CSharpRuntimeConfigPathRejectsUnsafeInput)
     absolute.runtime_config = "C:/host.runtimeconfig.json";
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(absolute)),
         DAS_E_CSHARP_MANIFEST_INVALID);
 
@@ -357,7 +359,7 @@ TEST(CSharpHostManifest, CSharpRuntimeConfigPathRejectsUnsafeInput)
     parent.runtime_config = "../host.runtimeconfig.json";
     EXPECT_EQ(
         ParseError(
-            "package/DasCSharpTestPlugin.json",
+            DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
             MakeCSharpManifestJson(parent)),
         DAS_E_CSHARP_MANIFEST_INVALID);
 }
@@ -370,7 +372,7 @@ TEST(CSharpHostManifest, CSharpRuntimeConfigPathIgnoredForNetFx)
     options.runtime_config = "host.runtimeconfig.json";
 
     const auto manifest = ParseManifest(
-        "package/DasCSharpTestPlugin.json",
+        DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
         MakeCSharpManifestJson(options));
 
     EXPECT_FALSE(manifest.runtime_config_path);
@@ -424,12 +426,13 @@ TEST(CSharpHostManifest, CSharpEntryPointRejectsScanBasedDiscoveryForms)
 TEST(CSharpHostManifest, CSharpAssemblyPathFollowsPackageConvention)
 {
     const auto manifest = ParseManifest(
-        "package/DasCSharpTestPlugin.json",
+        DAS_PATH_LITERAL("package/DasCSharpTestPlugin.json"),
         MakeCSharpManifestJson());
 
     EXPECT_EQ(
         manifest.plugin_binary_path,
-        std::filesystem::path{"package"} / "DasCSharpTestPlugin.dll");
+        std::filesystem::path{DAS_PATH_LITERAL("package")}
+            / DAS_PATH_LITERAL("DasCSharpTestPlugin.dll"));
 }
 
 TEST(CSharpHostManifest, CSharpBootstrapArgsValidateSizeVersionAndPackageOut)
