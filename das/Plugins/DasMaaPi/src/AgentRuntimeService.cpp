@@ -325,7 +325,15 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                             ? "Agent child process launch failed"
                             : launched.message,
                         agent.agent_id,
-                        launch.executable.generic_string());
+                        // 诊断文本（JSON 面），正斜杠 + UTF-8 形态
+                        [executable = launch.executable]()
+                        {
+                            const auto executable_u8 =
+                                executable.generic_u8string();
+                            return std::string{
+                                executable_u8.begin(),
+                                executable_u8.end()};
+                        }());
                     return FailStart(
                         staged_agents,
                         &agent,
