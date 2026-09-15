@@ -9,6 +9,7 @@
 #include <das/DasApi.h>
 #include <das/DasRef.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
@@ -110,7 +111,7 @@ namespace
         std::random_device      rd;
         auto name = "das_test_settings_" + std::to_string(rd()) + "_"
                     + std::to_string(counter.fetch_add(1));
-        return std::filesystem::current_path() / name;
+        return std::filesystem::current_path() / Das::Utils::PathFromUtf8(name);
     }
 
     class ScopedEnvVar
@@ -119,11 +120,20 @@ namespace
         ScopedEnvVar(const char* name, std::optional<std::string> value)
             : name_{name}
         {
+#ifdef _WIN32
+            const wchar_t* current = _wgetenv(WideName().c_str());
+            if (current)
+            {
+                original_ = Das::Utils::PathToUtf8(
+                    std::filesystem::path{std::wstring_view{current}});
+            }
+#else
             const char* current = std::getenv(name_.c_str());
             if (current)
             {
                 original_ = std::string{current};
             }
+#endif
             Set(std::move(value));
         }
 
@@ -133,10 +143,16 @@ namespace
         ~ScopedEnvVar() { Set(std::move(original_)); }
 
     private:
+        // 写端必须与消费方（PathFromEnvironment 的 _wgetenv 读端）同走宽
+        // 通道：窄 _putenv_s 经 ANSI 代码页写入，非 ASCII 路径值会被
+        // 损坏且与宽读端断裂。
         void Set(std::optional<std::string> value)
         {
 #ifdef _WIN32
-            _putenv_s(name_.c_str(), value ? value->c_str() : "");
+            _wputenv_s(
+                WideName().c_str(),
+                value ? Das::Utils::PathFromUtf8(*value).native().c_str()
+                      : L"");
 #else
             if (value)
             {
@@ -148,6 +164,13 @@ namespace
             }
 #endif
         }
+
+#ifdef _WIN32
+        std::wstring WideName() const
+        {
+            return std::wstring(name_.begin(), name_.end());
+        }
+#endif
 
         std::string                name_;
         std::optional<std::string> original_;
@@ -168,8 +191,8 @@ namespace
         // CppRuntime::LoadPlugin expects a path to the JSON manifest file.
         // The manifest contains the DLL name which CppRuntime uses to locate
         // and load the actual shared library.
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()}
-               / "IpcTestPlugin1.json";
+        return IpcTestConfig::GetPluginDir()
+               / DAS_PATH_LITERAL("IpcTestPlugin1.json");
     }
 
     DasPtr<IForeignLanguageRuntime> CreateCppRuntime()
@@ -1171,8 +1194,8 @@ TEST_F(PluginManagerGuidTest, LoadDuplicateGuidViaSymlinkReturnsAlreadyExists)
     // distinct plugin DLLs with identical GUIDs, which cannot be tested here.
     // The GUID conflict code path in LoadPlugin
     // (loaded_plugins_.contains(desc->guid)) is guaranteed by code review.
-    auto symlink_path =
-        std::filesystem::current_path() / "IpcTestPlugin1_symlink.json";
+    auto symlink_path = std::filesystem::current_path()
+                        / DAS_PATH_LITERAL("IpcTestPlugin1_symlink.json");
 
     std::error_code ec;
     std::filesystem::create_symlink(
@@ -1207,10 +1230,11 @@ protected:
     {
         test_dir_ =
             std::filesystem::current_path()
-            / ("manifest_path_test_" + std::to_string(std::random_device{}()));
+            / Das::Utils::PathFromUtf8(
+                "manifest_path_test_" + std::to_string(std::random_device{}()));
         std::filesystem::create_directories(test_dir_);
 
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
@@ -1262,10 +1286,12 @@ TEST_F(
     PluginManagerManifestPathTest,
     DirectoryInputResolvesDirnameManifestBeforeFallback)
 {
-    const auto plugin_dir = test_dir_ / "PriorityPlugin";
+    const auto plugin_dir = test_dir_ / DAS_PATH_LITERAL("PriorityPlugin");
     std::filesystem::create_directories(plugin_dir);
-    const auto primary_manifest = plugin_dir / "PriorityPlugin.json";
-    const auto fallback_manifest = plugin_dir / "manifest.json";
+    const auto primary_manifest =
+        plugin_dir / DAS_PATH_LITERAL("PriorityPlugin.json");
+    const auto fallback_manifest =
+        plugin_dir / DAS_PATH_LITERAL("manifest.json");
     WriteMinimalManifest(
         fallback_manifest,
         "00000000-0000-0000-0000-000000000202",
@@ -1285,7 +1311,8 @@ TEST_F(
 
 TEST_F(PluginManagerManifestPathTest, JsonFileInputIsManifestPath)
 {
-    const auto manifest_path = test_dir_ / "SingleFilePlugin.json";
+    const auto manifest_path =
+        test_dir_ / DAS_PATH_LITERAL("SingleFilePlugin.json");
     WriteMinimalManifest(
         manifest_path,
         "00000000-0000-0000-0000-000000000203",
@@ -1303,9 +1330,10 @@ TEST_F(
     PluginManagerManifestPathTest,
     DirectoryAndManifestAliasesReturnDuplicateNoOp)
 {
-    const auto plugin_dir = test_dir_ / "AliasPlugin";
+    const auto plugin_dir = test_dir_ / DAS_PATH_LITERAL("AliasPlugin");
     std::filesystem::create_directories(plugin_dir);
-    const auto manifest_path = plugin_dir / "AliasPlugin.json";
+    const auto manifest_path =
+        plugin_dir / DAS_PATH_LITERAL("AliasPlugin.json");
     WriteMinimalManifest(
         manifest_path,
         "00000000-0000-0000-0000-000000000204",
@@ -1322,8 +1350,8 @@ TEST_F(
     PluginManagerManifestPathTest,
     DistinctManifestFilesWithSameGuidReturnDuplicateElement)
 {
-    const auto     manifest_a = test_dir_ / "DuplicateA.json";
-    const auto     manifest_b = test_dir_ / "DuplicateB.json";
+    const auto     manifest_a = test_dir_ / DAS_PATH_LITERAL("DuplicateA.json");
+    const auto     manifest_b = test_dir_ / DAS_PATH_LITERAL("DuplicateB.json");
     constexpr auto guid = "00000000-0000-0000-0000-000000000205";
     WriteMinimalManifest(manifest_a, guid, "DuplicateA");
     WriteMinimalManifest(manifest_b, guid, "DuplicateB");
@@ -1340,10 +1368,11 @@ protected:
     void SetUp() override
     {
         test_dir_ = std::filesystem::current_path()
-                    / ("task_component_plugin_test_"
-                       + std::to_string(std::random_device{}()));
+                    / Das::Utils::PathFromUtf8(
+                        "task_component_plugin_test_"
+                        + std::to_string(std::random_device{}()));
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
 
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
@@ -1395,7 +1424,8 @@ TEST_F(
 {
     const auto plugin_guid = MakeTaskComponentTestGuid(0x68130001);
     const auto component_guid = MakeTaskComponentTestGuid(0x68130003);
-    const auto manifest_path = test_dir_ / "TaskComponentPlugin.json";
+    const auto manifest_path =
+        test_dir_ / DAS_PATH_LITERAL("TaskComponentPlugin.json");
     WriteTaskComponentManifest(
         manifest_path,
         plugin_guid,
@@ -1424,7 +1454,8 @@ TEST_F(PluginManagerTaskComponentTest, UnloadPluginRemovesTaskComponentRoutes)
 {
     const auto plugin_guid = MakeTaskComponentTestGuid(0x68130011);
     const auto component_guid = MakeTaskComponentTestGuid(0x68130013);
-    const auto manifest_path = test_dir_ / "UnloadTaskComponentPlugin.json";
+    const auto manifest_path =
+        test_dir_ / DAS_PATH_LITERAL("UnloadTaskComponentPlugin.json");
     WriteTaskComponentManifest(
         manifest_path,
         plugin_guid,
@@ -1450,7 +1481,8 @@ TEST_F(
 {
     const auto plugin_guid = MakeTaskComponentTestGuid(0x68130021);
     const auto component_guid = MakeTaskComponentTestGuid(0x68130023);
-    const auto manifest_path = test_dir_ / "InvalidTaskComponentPlugin.json";
+    const auto manifest_path =
+        test_dir_ / DAS_PATH_LITERAL("InvalidTaskComponentPlugin.json");
     WriteTaskComponentManifestMissingFactoryGuid(
         manifest_path,
         plugin_guid,
@@ -1477,10 +1509,11 @@ protected:
     void SetUp() override
     {
         test_dir_ = std::filesystem::current_path()
-                    / ("plugin_manager_feature_test_"
-                       + std::to_string(std::random_device{}()));
+                    / Das::Utils::PathFromUtf8(
+                        "plugin_manager_feature_test_"
+                        + std::to_string(std::random_device{}()));
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
@@ -1689,7 +1722,8 @@ TEST_F(PluginManagerFeatureTest, ErrorLensLifecycleRegistersRoutes)
 {
     const auto provider_guid = MakeTaskComponentTestGuid(0x68130031);
     InitializeErrorLensRuntime(provider_guid);
-    const auto manifest_path = test_dir_ / "ErrorLensPlugin.json";
+    const auto manifest_path =
+        test_dir_ / DAS_PATH_LITERAL("ErrorLensPlugin.json");
     WriteMinimalManifest(
         manifest_path,
         "00000000-0000-0000-0000-006813003202",
@@ -1708,7 +1742,8 @@ TEST_F(PluginManagerFeatureTest, ErrorLensLifecycleUnregistersRoutes)
 {
     const auto provider_guid = MakeTaskComponentTestGuid(0x68130031);
     InitializeErrorLensRuntime(provider_guid);
-    const auto manifest_path = test_dir_ / "UnloadErrorLensPlugin.json";
+    const auto manifest_path =
+        test_dir_ / DAS_PATH_LITERAL("UnloadErrorLensPlugin.json");
     WriteMinimalManifest(
         manifest_path,
         "00000000-0000-0000-0000-006813003302",
@@ -1731,10 +1766,11 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NoHostPath_ReturnsError)
 {
     // IPC context is always present via constructor; this tests that
     // missing host_exe_path_ still blocks the IPC load path.
-    auto test_dir =
-        std::filesystem::current_path() / "test_plugin_no_host_path";
+    auto test_dir = std::filesystem::current_path()
+                    / DAS_PATH_LITERAL("test_plugin_no_host_path");
     std::filesystem::create_directories(test_dir);
-    auto manifest_path = test_dir / "test_plugin_no_host_path.json";
+    auto manifest_path =
+        test_dir / DAS_PATH_LITERAL("test_plugin_no_host_path.json");
 
     auto manifest = Das::Utils::MakeYyjsonObject();
     {
@@ -1764,17 +1800,18 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_CppLanguage_StaysInProcess)
     // Cpp (white-listed language) should NOT take the IPC path.
     // A nonexistent path returns an error from CppRuntime::LoadPlugin,
     // but NOT DAS_E_NO_IMPLEMENTATION (which is the IPC rejection code).
-    auto result = pm_->LoadPlugin("/nonexistent/plugin/path");
+    auto result = pm_->LoadPlugin(DAS_PATH_LITERAL("/nonexistent/plugin/path"));
     EXPECT_NE(result, DAS_E_NO_IMPLEMENTATION);
 }
 
 TEST_F(PluginManagerGuidTest, LoadPlugin_CppWithLoadModeIpc_GoesIpcPath)
 {
     // Cpp (white-listed) with loadMode=Ipc should be forced to IPC path.
-    auto test_dir =
-        std::filesystem::current_path() / "test_plugin_loadmode_ipc";
+    auto test_dir = std::filesystem::current_path()
+                    / DAS_PATH_LITERAL("test_plugin_loadmode_ipc");
     std::filesystem::create_directories(test_dir);
-    auto manifest_path = test_dir / "test_plugin_loadmode_ipc.json";
+    auto manifest_path =
+        test_dir / DAS_PATH_LITERAL("test_plugin_loadmode_ipc.json");
 
     auto manifest = Das::Utils::MakeYyjsonObject();
     {
@@ -1997,25 +2034,36 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
     // 用 weakly_canonical 规范化，与 PluginManager::NormalizePath 同源，
     // 避免 build
     // 目录为路径别名(symlink/junction)时期望路径与实际路径字符串分歧。
+    constexpr auto NODE_RUNTIME_PACKAGE_NAME =
+        DAS_PATH_LITERAL(DAS_NODE_PACKAGE_NAME);
     auto test_dir = std::filesystem::weakly_canonical(
-        std::filesystem::current_path() / "test_plugin_node_runtime_route");
+        std::filesystem::current_path()
+        / DAS_PATH_LITERAL("test_plugin_node_runtime_route"));
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
 
-    const auto manifest_path = test_dir / "node_plugin.json";
-    const auto node_exe_path = test_dir / "fake-node.exe";
-    const auto node_modules_root = test_dir / "node_modules";
-    const auto runtime_root = node_modules_root / DAS_NODE_PACKAGE_NAME;
+    const auto manifest_path = test_dir / DAS_PATH_LITERAL("node_plugin.json");
+    const auto node_exe_path = test_dir / DAS_PATH_LITERAL("fake-node.exe");
+    const auto node_modules_root = test_dir / DAS_PATH_LITERAL("node_modules");
+    const auto runtime_root = node_modules_root / NODE_RUNTIME_PACKAGE_NAME;
     {
         std::ofstream{node_exe_path} << "\n";
-        std::filesystem::create_directories(runtime_root / "bin");
-        std::filesystem::create_directories(runtime_root / "native");
-        std::ofstream{runtime_root / "package.json"} << "\n";
-        std::ofstream{runtime_root / "index.cjs"} << "\n";
-        std::ofstream{runtime_root / (DAS_NODE_ADDON_NAME "_export.js")}
+        std::filesystem::create_directories(
+            runtime_root / DAS_PATH_LITERAL("bin"));
+        std::filesystem::create_directories(
+            runtime_root / DAS_PATH_LITERAL("native"));
+        std::ofstream{runtime_root / DAS_PATH_LITERAL("package.json")} << "\n";
+        std::ofstream{runtime_root / DAS_PATH_LITERAL("index.cjs")} << "\n";
+        std::ofstream{
+            runtime_root / DAS_PATH_LITERAL(DAS_NODE_ADDON_NAME "_export.js")}
             << "\n";
-        std::ofstream{runtime_root / "bin" / "das-node-host.cjs"} << "\n";
-        std::ofstream{runtime_root / "native" / (DAS_NODE_ADDON_NAME ".node")}
+        std::ofstream{
+            runtime_root / DAS_PATH_LITERAL("bin")
+            / DAS_PATH_LITERAL("das-node-host.cjs")}
+            << "\n";
+        std::ofstream{
+            runtime_root / DAS_PATH_LITERAL("native")
+            / DAS_PATH_LITERAL(DAS_NODE_ADDON_NAME ".node")}
             << "\n";
     }
 
@@ -2037,7 +2085,9 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
         ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
     }
 
-    const ScopedEnvVar       env{NODE_HOST_ENV, node_exe_path.string()};
+    const ScopedEnvVar env{
+        NODE_HOST_ENV,
+        Das::Utils::PathToUtf8(node_exe_path)};
     CapturingRemoteHostState remote_state;
     pm_->SetRemotePluginHostFactoryForTest(
         [&remote_state]()
@@ -2054,19 +2104,22 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
     EXPECT_EQ(result, DAS_S_OK);
     EXPECT_EQ(remote_state.load_count, 1);
     EXPECT_EQ(remote_state.manifest_path, manifest_path);
-    EXPECT_EQ(remote_state.executable, node_exe_path.string());
+    EXPECT_EQ(remote_state.executable, Das::Utils::PathToUtf8(node_exe_path));
     ASSERT_EQ(remote_state.args.size(), 7u);
+    // src 侧以单分量相对文本（HOST_SCRIPT_RELATIVE "bin/das-node-host.cjs"）
+    // 拼接，'/' 原样保留进 UTF-8 参数——断言须保持同形态，拆分量拼接会被
+    // 规范化成 '\' 造成假不等。
     EXPECT_EQ(
         remote_state.args.front(),
-        (runtime_root / std::filesystem::path{"bin/das-node-host.cjs"})
-            .string());
+        Das::Utils::PathToUtf8(
+            runtime_root / DAS_PATH_LITERAL("bin/das-node-host.cjs")));
     EXPECT_EQ(remote_state.args[1], "--main-pid");
     EXPECT_FALSE(remote_state.args[2].empty());
     EXPECT_EQ(remote_state.args[3], "--package-root");
-    EXPECT_EQ(remote_state.args[4], test_dir.string());
+    EXPECT_EQ(remote_state.args[4], Das::Utils::PathToUtf8(test_dir));
     EXPECT_EQ(remote_state.args[5], "--node-modules-root");
-    EXPECT_EQ(remote_state.args[6], node_modules_root.string());
-    EXPECT_EQ(remote_state.working_directory, test_dir.string());
+    EXPECT_EQ(remote_state.args[6], Das::Utils::PathToUtf8(node_modules_root));
+    EXPECT_EQ(remote_state.working_directory, Das::Utils::PathToUtf8(test_dir));
 
     std::vector<FeatureInfo> features;
     ASSERT_EQ(pm_->GetPluginFeatures(manifest_path, features), DAS_S_OK);
@@ -2078,12 +2131,12 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
 
 TEST_F(PluginManagerGuidTest, LoadPlugin_LowercaseNodeManifestIsRejected)
 {
-    auto test_dir =
-        std::filesystem::current_path() / "test_plugin_lowercase_node_route";
+    auto test_dir = std::filesystem::current_path()
+                    / DAS_PATH_LITERAL("test_plugin_lowercase_node_route");
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
 
-    const auto manifest_path = test_dir / "node_plugin.json";
+    const auto manifest_path = test_dir / DAS_PATH_LITERAL("node_plugin.json");
     auto       manifest = Das::Utils::MakeYyjsonObject();
     {
         auto obj = *manifest.as_object();
@@ -2266,7 +2319,7 @@ TEST_F(PluginManagerGuidTest, OnHostProcessExit_DirectCall_CleansUpIndex)
     test_guid.data1 = 0x00000099;
 
     LoadedPlugin fake_plugin;
-    fake_plugin.plugin_path = "/fake/ipc/plugin";
+    fake_plugin.plugin_path = DAS_PATH_LITERAL("/fake/ipc/plugin");
     pm_->loaded_plugins_[test_guid] = std::move(fake_plugin);
     pm_->path_to_guid_["/fake/ipc/plugin"] = test_guid;
 
@@ -2296,7 +2349,7 @@ TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_DirectCall_CleansUpIndex)
     test_guid.data1 = 0x000000AA;
 
     LoadedPlugin fake_plugin;
-    fake_plugin.plugin_path = "/fake/heartbeat/plugin";
+    fake_plugin.plugin_path = DAS_PATH_LITERAL("/fake/heartbeat/plugin");
     pm_->loaded_plugins_[test_guid] = std::move(fake_plugin);
     pm_->path_to_guid_["/fake/heartbeat/plugin"] = test_guid;
 
@@ -2356,7 +2409,7 @@ TEST_F(PluginManagerGuidTest, LifecycleListener_FiresOnProcessExitAndHeartbeat)
     exit_guid.data1 = 0x000000CC;
     {
         LoadedPlugin fake_plugin;
-        fake_plugin.plugin_path = "/fake/listener/exit";
+        fake_plugin.plugin_path = DAS_PATH_LITERAL("/fake/listener/exit");
         pm_->loaded_plugins_[exit_guid] = std::move(fake_plugin);
         pm_->path_to_guid_["/fake/listener/exit"] = exit_guid;
     }
@@ -2367,7 +2420,7 @@ TEST_F(PluginManagerGuidTest, LifecycleListener_FiresOnProcessExitAndHeartbeat)
     hb_guid.data1 = 0x000000DD;
     {
         LoadedPlugin fake_plugin;
-        fake_plugin.plugin_path = "/fake/listener/heartbeat";
+        fake_plugin.plugin_path = DAS_PATH_LITERAL("/fake/listener/heartbeat");
         pm_->loaded_plugins_[hb_guid] = std::move(fake_plugin);
         pm_->path_to_guid_["/fake/listener/heartbeat"] = hb_guid;
     }
@@ -2388,7 +2441,7 @@ TEST_F(PluginManagerGuidTest, LifecycleListener_FiresOnProcessExitAndHeartbeat)
     silent_guid.data1 = 0x000000EE;
     {
         LoadedPlugin fake_plugin;
-        fake_plugin.plugin_path = "/fake/listener/silent";
+        fake_plugin.plugin_path = DAS_PATH_LITERAL("/fake/listener/silent");
         pm_->loaded_plugins_[silent_guid] = std::move(fake_plugin);
         pm_->path_to_guid_["/fake/listener/silent"] = silent_guid;
     }
@@ -2424,7 +2477,7 @@ TEST_F(PluginManagerGuidTest, HeartbeatTimeout_RealThread_CleansUpIndex)
     test_guid.data1 = 0x000000BB;
 
     LoadedPlugin fake_plugin;
-    fake_plugin.plugin_path = "/fake/realthread/plugin";
+    fake_plugin.plugin_path = DAS_PATH_LITERAL("/fake/realthread/plugin");
     pm_->loaded_plugins_[test_guid] = std::move(fake_plugin);
     pm_->path_to_guid_["/fake/realthread/plugin"] = test_guid;
 
@@ -2494,7 +2547,7 @@ TEST_F(PluginManagerGuidTest, Shutdown_DoesNotHoldMutexDuringStop)
     test_guid.data1 = 0x000000CC;
 
     LoadedPlugin fake_plugin;
-    fake_plugin.plugin_path = "/fake/shutdown/plugin";
+    fake_plugin.plugin_path = DAS_PATH_LITERAL("/fake/shutdown/plugin");
     pm_->loaded_plugins_[test_guid] = std::move(fake_plugin);
     pm_->path_to_guid_["/fake/shutdown/plugin"] = test_guid;
 
@@ -2567,7 +2620,7 @@ namespace
         const std::string&           guid,
         const std::string&           resource_path_value)
     {
-        auto pkg_dir = plugin_dir / dirname;
+        auto pkg_dir = plugin_dir / Das::Utils::PathFromUtf8(dirname);
         std::filesystem::create_directories(pkg_dir);
 
         auto manifest = Das::Utils::MakeYyjsonObject();
@@ -2590,7 +2643,8 @@ namespace
                 resource_path_value;
         }
 
-        auto manifest_path = pkg_dir / (dirname + ".json");
+        auto manifest_path =
+            pkg_dir / Das::Utils::PathFromUtf8(dirname + ".json");
         {
             std::ofstream ofs(manifest_path);
             ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
@@ -2599,7 +2653,8 @@ namespace
         // Create the resource subdirectory
         const std::string rp =
             resource_path_value.empty() ? "resource" : resource_path_value;
-        std::filesystem::create_directories(pkg_dir / rp);
+        std::filesystem::create_directories(
+            pkg_dir / Das::Utils::PathFromUtf8(rp));
     }
 } // anonymous namespace
 
@@ -2608,10 +2663,11 @@ class PluginResourceIndexTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_dir_ =
-            std::filesystem::current_path()
-            / ("test_resource_index_" + std::to_string(std::random_device{}()));
-        plugin_dir_ = test_dir_ / "plugins";
+        test_dir_ = std::filesystem::current_path()
+                    / Das::Utils::PathFromUtf8(
+                        "test_resource_index_"
+                        + std::to_string(std::random_device{}()));
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
         std::filesystem::create_directories(plugin_dir_);
 
         auto& index = PluginResourceIndex::GetInstance();
@@ -2691,7 +2747,7 @@ TEST_F(PluginResourceIndexTest, SuccessfulRescanReplacesOldMap)
     EXPECT_EQ(p_entry->plugin_name, "PluginV1");
 
     // Remove the old plugin and add a new one with a different GUID
-    std::filesystem::remove_all(plugin_dir_ / "PluginV1");
+    std::filesystem::remove_all(plugin_dir_ / DAS_PATH_LITERAL("PluginV1"));
     WriteFolderModePlugin(plugin_dir_, "PluginV2", TEST_GUID2, "assets");
 
     // Force rescan
@@ -2835,8 +2891,9 @@ protected:
     {
         test_dir_ =
             std::filesystem::current_path()
-            / ("test_load_image_" + std::to_string(std::random_device{}()));
-        plugin_dir_ = test_dir_ / "plugins";
+            / Das::Utils::PathFromUtf8(
+                "test_load_image_" + std::to_string(std::random_device{}()));
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
         std::filesystem::create_directories(plugin_dir_);
 
         auto& index = PluginResourceIndex::GetInstance();
@@ -2844,8 +2901,8 @@ protected:
         index.ConfigurePluginResourceScanRoot(plugin_dir_);
 
         // Set up a folder-mode plugin with a tiny PNG in its resource dir
-        auto pkg_dir = plugin_dir_ / "ImagePlugin";
-        auto res_dir = pkg_dir / "resource";
+        auto pkg_dir = plugin_dir_ / DAS_PATH_LITERAL("ImagePlugin");
+        auto res_dir = pkg_dir / DAS_PATH_LITERAL("resource");
         std::filesystem::create_directories(res_dir);
 
         auto manifest = Das::Utils::MakeYyjsonObject();
@@ -2862,13 +2919,13 @@ protected:
             obj[std::string_view("settings")] = Das::Utils::MakeYyjsonArray();
         }
 
-        auto manifest_path = pkg_dir / "ImagePlugin.json";
+        auto manifest_path = pkg_dir / DAS_PATH_LITERAL("ImagePlugin.json");
         {
             std::ofstream ofs(manifest_path);
             ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
         }
 
-        WriteTinyRedPng(res_dir / "tiny.png");
+        WriteTinyRedPng(res_dir / DAS_PATH_LITERAL("tiny.png"));
 
         test_guid_ = MakeDasGuid(TEST_GUID1);
     }
@@ -3115,10 +3172,11 @@ protected:
     void SetUp() override
     {
         test_dir_ = std::filesystem::current_path()
-                    / ("plugin_manager_host_injection_"
-                       + std::to_string(std::random_device{}()));
+                    / Das::Utils::PathFromUtf8(
+                        "plugin_manager_host_injection_"
+                        + std::to_string(std::random_device{}()));
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
@@ -3162,7 +3220,8 @@ TEST_F(
     PluginManagerHostInjectionTest,
     LoadPluginInjectsHostBeforeFirstEnumFeature)
 {
-    const auto manifest_path = test_dir_ / "HostOrderPlugin.json";
+    const auto manifest_path =
+        test_dir_ / DAS_PATH_LITERAL("HostOrderPlugin.json");
     WriteMinimalManifest(
         manifest_path,
         "00000000-0000-0000-0000-000000790201",
@@ -3196,7 +3255,8 @@ TEST_F(
     PluginManagerHostInjectionTest,
     LoadPluginOverIpcChannelInjectsHostBeforeFirstEnumFeature)
 {
-    const auto manifest_path = test_dir_ / "IpcHostOrderPlugin.json";
+    const auto manifest_path =
+        test_dir_ / DAS_PATH_LITERAL("IpcHostOrderPlugin.json");
     {
         std::ofstream ofs(manifest_path);
         ofs << R"({

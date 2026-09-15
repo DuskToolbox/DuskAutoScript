@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <das/DasApi.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
 #include <string>
@@ -78,24 +79,27 @@ namespace IpcTestConfig
     /**
      * @brief 获取 DasHost 可执行文件路径
      *
-     * 从环境变量 DAS_HOST_EXE_PATH 读取。
+     * 从环境变量 DAS_HOST_EXE_PATH 读取（宽源直构，窄 getenv 值在
+     * Windows 下经 ANSI 代码页会损坏非 ASCII 路径）。
      * @return DasHost.exe 的完整路径
      * @throws std::runtime_error 如果环境变量未设置或文件不存在
      */
-    inline std::string GetDasHostPath()
+    inline std::filesystem::path GetDasHostPath()
     {
-        const char* path = std::getenv("DAS_HOST_EXE_PATH");
-        if (path == nullptr || strlen(path) == 0)
+        const auto host_path =
+            Das::Utils::PathFromEnvironment("DAS_HOST_EXE_PATH");
+        if (!host_path.has_value() || host_path->empty())
         {
             throw std::runtime_error(
                 "DAS_HOST_EXE_PATH environment variable is not set");
         }
-        if (!std::filesystem::exists(path))
+        if (!std::filesystem::exists(*host_path))
         {
             throw std::runtime_error(
-                std::string("DasHost.exe not found at: ") + path);
+                "DasHost.exe not found at: "
+                + Das::Utils::PathToUtf8(*host_path));
         }
-        return path;
+        return *host_path;
     }
 
     /**
@@ -105,26 +109,28 @@ namespace IpcTestConfig
      * @return 插件目录路径
      * @throws std::runtime_error 如果环境变量未设置
      */
-    inline std::string GetPluginDir()
+    inline std::filesystem::path GetPluginDir()
     {
-        const char* plugin_dir = std::getenv("DAS_PLUGIN_DIR");
-        if (plugin_dir != nullptr && strlen(plugin_dir) > 0)
+        const auto plugin_dir =
+            Das::Utils::PathFromEnvironment("DAS_PLUGIN_DIR");
+        if (plugin_dir.has_value() && !plugin_dir->empty())
         {
-            return plugin_dir;
+            return *plugin_dir;
         }
 
         // CMake 4.x gtest_discover_tests 序列化多变量 ENVIRONMENT list 时，
         // set_tests_properties 会丢失第二个变量（DAS_PLUGIN_DIR）。
         // 回退：从 DAS_HOST_EXE_PATH 推导——plugins/ 是 DasHost.exe
         // 的同级子目录。
-        const char* host_path = std::getenv("DAS_HOST_EXE_PATH");
-        if (host_path != nullptr && strlen(host_path) > 0)
+        const auto host_path =
+            Das::Utils::PathFromEnvironment("DAS_HOST_EXE_PATH");
+        if (host_path.has_value() && !host_path->empty())
         {
             const std::filesystem::path plugins_dir =
-                std::filesystem::path(host_path).parent_path() / "plugins";
+                host_path->parent_path() / DAS_PATH_LITERAL("plugins");
             if (std::filesystem::exists(plugins_dir))
             {
-                return plugins_dir.string();
+                return plugins_dir;
             }
         }
 
@@ -138,18 +144,21 @@ namespace IpcTestConfig
      * @return JSON 文件路径
      * @throws std::runtime_error 如果环境变量未设置或文件不存在
      */
-    inline std::string GetTestPluginJsonPath(const std::string& plugin_name)
+    inline std::filesystem::path GetTestPluginJsonPath(
+        const std::string& plugin_name)
     {
         const std::filesystem::path json_path =
-            std::filesystem::path{GetPluginDir()}
-            / DAS_FMT_NS::format("{}.json", plugin_name);
+            GetPluginDir()
+            / Das::Utils::PathFromUtf8(
+                DAS_FMT_NS::format("{}.json", plugin_name));
 
         if (!std::filesystem::exists(json_path))
         {
             throw std::runtime_error(
-                "Plugin JSON not found at: " + json_path.string());
+                "Plugin JSON not found at: "
+                + Das::Utils::PathToUtf8(json_path));
         }
-        return json_path.string();
+        return json_path;
     }
 
 } // namespace IpcTestConfig

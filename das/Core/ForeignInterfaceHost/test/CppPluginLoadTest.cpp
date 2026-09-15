@@ -1,6 +1,7 @@
 #include <IpcTestConfig.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -10,24 +11,21 @@
 
 namespace
 {
-    std::filesystem::path PluginDir()
-    {
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()};
-    }
+    std::filesystem::path PluginDir() { return IpcTestConfig::GetPluginDir(); }
 
     std::filesystem::path IpcTestPlugin1ManifestPath()
     {
-        return PluginDir() / "IpcTestPlugin1.json";
+        return PluginDir() / DAS_PATH_LITERAL("IpcTestPlugin1.json");
     }
 
     std::filesystem::path IpcTestPlugin1LibPath()
     {
-        return PluginDir() / "libIpcTestPlugin1.dll";
+        return PluginDir() / DAS_PATH_LITERAL("libIpcTestPlugin1.dll");
     }
 
     std::filesystem::path IpcTestPlugin1StemDllPath()
     {
-        return PluginDir() / "IpcTestPlugin1.dll";
+        return PluginDir() / DAS_PATH_LITERAL("IpcTestPlugin1.dll");
     }
 
     Das::DasPtr<DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime>
@@ -92,5 +90,6 @@ TEST(CppPluginLoadTest, LoadIpcTestPlugin1)
     const auto manifest_path = IpcTestPlugin1ManifestPath();
     auto       plugin_result = runtime->LoadPlugin(manifest_path);
     ASSERT_TRUE(plugin_result.has_value())
-        << "Failed to load IpcTestPlugin1 from manifest " << manifest_path;
+        << "Failed to load IpcTestPlugin1 from manifest "
+        << Das::Utils::PathToUtf8(manifest_path);
 }
