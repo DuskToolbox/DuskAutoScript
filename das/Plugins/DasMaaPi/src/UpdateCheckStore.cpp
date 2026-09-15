@@ -1,5 +1,7 @@
 #include "UpdateCheckStore.h"
 
+#include <das/Utils/PathText.h>
+
 #include <utility>
 
 namespace Das::Plugins::DasMaaPi
@@ -19,7 +21,7 @@ namespace Das::Plugins::DasMaaPi
         // 条目——与 UpdateJobRegistry 同一归一先例）。
         std::string NormalizeKey(const std::filesystem::path& pi_dir)
         {
-            return pi_dir.lexically_normal().string();
+            return Das::Utils::PathToUtf8(pi_dir.lexically_normal());
         }
     } // namespace
 

@@ -7,6 +7,7 @@
 #include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
 #include <das/Plugins/DasGraphTask/DasGraphTaskPluginPackage.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasStringVector.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
@@ -31,14 +32,6 @@
 
 using namespace Das::Plugins::DasGraphTask;
 using DAS::DasPtr;
-
-// Windows 下 path / "窄串字面量" 会经 ACP 隐式转换（ASCII 偶然安全，非
-// ASCII 字面量不可逆乱码）——路径拼接字面量按平台宽度分流。
-#ifdef _WIN32
-#define GRAPH_TASK_TEST_PATH_LITERAL(text) L##text
-#else
-#define GRAPH_TASK_TEST_PATH_LITERAL(text) text
-#endif
 
 // ---- Minimal mock for IDasTaskComponentHost ----
 
@@ -2634,16 +2627,12 @@ namespace
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
             const auto stamp_directory =
-                std::filesystem::path{GRAPH_TASK_TEST_PATH_LITERAL("focus-")}
-                    .concat(std::to_string(stamp));
-            const auto u8_session_directory =
-                (std::filesystem::current_path()
-                 / GRAPH_TASK_TEST_PATH_LITERAL("graphtask-focus-test-output")
-                 / stamp_directory)
-                    .u8string();
-            const std::string session_directory_utf8(
-                u8_session_directory.begin(),
-                u8_session_directory.end());
+                std::filesystem::path{DAS_PATH_LITERAL("focus-")}.concat(
+                    std::to_string(stamp));
+            const std::string session_directory_utf8 = Das::Utils::PathToUtf8(
+                std::filesystem::current_path()
+                / DAS_PATH_LITERAL("graphtask-focus-test-output")
+                / stamp_directory);
             DasPtr<IDasReadOnlyString> session_directory;
             ASSERT_EQ(
                 CreateIDasReadOnlyStringFromUtf8(
@@ -2685,18 +2674,18 @@ namespace
         {
             const std::filesystem::path directory =
                 std::filesystem::current_path()
-                / GRAPH_TASK_TEST_PATH_LITERAL("graphtask-focus-i18n-fixture");
+                / DAS_PATH_LITERAL("graphtask-focus-i18n-fixture");
             std::filesystem::create_directories(directory);
             {
                 std::ofstream file(
-                    directory / GRAPH_TASK_TEST_PATH_LITERAL("en.json"),
+                    directory / DAS_PATH_LITERAL("en.json"),
                     std::ios::binary);
                 file << "{\"graphTask.finished\": \"Graph task finished: "
                         "end value = {0}\"}";
             }
             {
                 std::ofstream file(
-                    directory / GRAPH_TASK_TEST_PATH_LITERAL("zh-CN.json"),
+                    directory / DAS_PATH_LITERAL("zh-CN.json"),
                     std::ios::binary);
                 file << "{\"graphTask.finished\": \"图任务完成：结束值 = "
                         "{0}\"}";
@@ -2717,8 +2706,8 @@ namespace
             {
                 return {};
             }
-            const std::filesystem::path jsonl_path{
-                reinterpret_cast<const char8_t*>(utf8)};
+            const std::filesystem::path jsonl_path =
+                Das::Utils::PathFromUtf8(utf8);
             std::ifstream file(jsonl_path, std::ios::binary);
             return std::string(
                 (std::istreambuf_iterator<char>(file)),
@@ -2769,7 +2758,7 @@ namespace
         SetDefaultLocale("zh-CN");
         const std::filesystem::path missing_directory =
             std::filesystem::current_path()
-            / GRAPH_TASK_TEST_PATH_LITERAL("graphtask-focus-i18n-absent");
+            / DAS_PATH_LITERAL("graphtask-focus-i18n-absent");
 
         EXPECT_EQ(
             RecordGraphTaskFinishedFocusEntry(

@@ -3,6 +3,7 @@
 #include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 
@@ -527,7 +528,7 @@ namespace Das::Plugins::DasMaaPi
             {
                 LogDiagnosticError(
                     "BeastHttpClient cannot open download path: "
-                    + out_path.string());
+                    + Das::Utils::PathToUtf8(out_path));
                 co_return DAS_E_FAIL;
             }
 
@@ -590,7 +591,7 @@ namespace Das::Plugins::DasMaaPi
                     {
                         LogDiagnosticError(
                             "BeastHttpClient write to disk failed: "
-                            + out_path.string());
+                            + Das::Utils::PathToUtf8(out_path));
                         co_return DAS_E_FAIL;
                     }
                     bytes_received += written;

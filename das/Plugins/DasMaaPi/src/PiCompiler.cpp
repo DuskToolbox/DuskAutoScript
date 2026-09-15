@@ -1,7 +1,7 @@
 #include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 
 #include "ControllerMethodMaps.h"
 #include "I18nResolver.h"
@@ -790,8 +790,8 @@ namespace Das::Plugins::DasMaaPi
     {
         CompileResultDto     result;
         ExecutionEnvelopeDto envelope;
-        envelope.maapi.interface_directory = std::string{
-            DAS::Utils::U8AsString(catalog.interface_directory.u8string())};
+        envelope.maapi.interface_directory =
+            DAS::Utils::PathToUtf8(catalog.interface_directory);
         envelope.maapi.fail_fast = settings.adapter.execution_policy.fail_fast;
         envelope.maapi.requires_agent_runtime = !catalog.raw_agent_json.empty();
         envelope.maapi.agent = NormalizeAgentSpecs(catalog.raw_agent_json);
@@ -898,7 +898,7 @@ namespace Das::Plugins::DasMaaPi
         for (const auto& path : resource->resolved_paths)
         {
             envelope.maapi.resource_paths.emplace_back(
-                DAS::Utils::U8AsString(path.u8string()));
+                DAS::Utils::PathToUtf8(path));
         }
         // PI v2.2.0 controller.attach_resource_path：所选控制器声明在
         // resource.path 之外的附加资源（设备/控制器专属识别模型、配置叠加
@@ -907,7 +907,7 @@ namespace Das::Plugins::DasMaaPi
         for (const auto& path : controller->resolved_attach_resource_paths)
         {
             envelope.maapi.attach_resource_paths.emplace_back(
-                DAS::Utils::U8AsString(path.u8string()));
+                DAS::Utils::PathToUtf8(path));
         }
         // PI `$key` i18n resolution: walk controller / resource raw_json
         // before assignment so the runtime receives localized strings
@@ -944,7 +944,7 @@ namespace Das::Plugins::DasMaaPi
         if (language_path_it != catalog.language_paths.end())
         {
             envelope.maapi.focus_translations_path =
-                DAS::Utils::U8AsString(language_path_it->second.u8string());
+                DAS::Utils::PathToUtf8(language_path_it->second);
         }
         // schedule（插件自治调度）。从 acceptedProperties.pi flat optional 字段
         // 组装成 envelope.maapi.schedule（非 optional 始终写出，kind=""=off）。

@@ -3,6 +3,8 @@
 #include <boost/dll.hpp>
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
+#include <das/Utils/BoostPathBridge.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasI18n.h>
 
@@ -28,14 +30,8 @@ namespace Das::Plugins::DasGraphTask
             {
                 const boost::filesystem::path module_path =
                     boost::dll::this_line_location();
-#ifdef _WIN32
-                return std::filesystem::path{
-                           module_path.parent_path().wstring()}
-                       / L"i18n";
-#else
-                return std::filesystem::path{module_path.parent_path().string()}
-                       / "i18n";
-#endif
+                return Das::Utils::ToStdPath(module_path.parent_path())
+                       / DAS_PATH_LITERAL("i18n");
             }
             catch (...)
             {
@@ -48,10 +44,8 @@ namespace Das::Plugins::DasGraphTask
         std::string ResolveFinishedTextTemplate(
             const std::filesystem::path& i18n_directory)
         {
-            const auto        u8_directory = i18n_directory.u8string();
-            const std::string directory_utf8(
-                u8_directory.begin(),
-                u8_directory.end());
+            const std::string directory_utf8 =
+                Das::Utils::PathToUtf8(i18n_directory);
             if (!directory_utf8.empty())
             {
                 DasPtr<IDasReadOnlyString> directory_string;

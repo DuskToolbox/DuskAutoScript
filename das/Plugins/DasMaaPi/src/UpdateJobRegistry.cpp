@@ -1,5 +1,7 @@
 #include "UpdateJobRegistry.h"
 
+#include <das/Utils/PathText.h>
+
 #include <utility>
 #include <vector>
 
@@ -21,8 +23,9 @@ namespace Das::Plugins::DasMaaPi
         const std::lock_guard<std::mutex> lock(mutex_);
         // lexically_normal 统一分隔符形态（interface_path 投影出 '/' 形、
         // 原生构造出 '\' 形，Windows 下二者必须命中同一 slot）。
-        const std::string key = pi_dir.lexically_normal().string();
-        auto              it = slots_.find(key);
+        const std::string key =
+            Das::Utils::PathToUtf8(pi_dir.lexically_normal());
+        auto it = slots_.find(key);
         if (it != slots_.end() && it->second->running.load())
         {
             // 防重入：该 pi_dir 已有 running job。
@@ -72,7 +75,8 @@ namespace Das::Plugins::DasMaaPi
     bool UpdateJobRegistry::IsRunning(const std::filesystem::path& pi_dir) const
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        const auto it = slots_.find(pi_dir.lexically_normal().string());
+        const auto                        it =
+            slots_.find(Das::Utils::PathToUtf8(pi_dir.lexically_normal()));
         return it != slots_.end() && it->second->running.load();
     }
 
@@ -94,8 +98,9 @@ namespace Das::Plugins::DasMaaPi
         std::chrono::milliseconds    timeout)
     {
         std::unique_lock<std::mutex> lock(mutex_);
-        const std::string            key = pi_dir.lexically_normal().string();
-        const auto                   it = slots_.find(key);
+        const std::string            key =
+            Das::Utils::PathToUtf8(pi_dir.lexically_normal());
+        const auto it = slots_.find(key);
         if (it == slots_.end())
         {
             return true;
