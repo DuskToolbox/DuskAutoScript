@@ -5,6 +5,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -29,8 +30,10 @@ namespace
     {
         const auto stamp =
             std::chrono::steady_clock::now().time_since_epoch().count();
-        auto path = std::filesystem::current_path() / "logger-test-output"
-                    / (std::string{test_name} + "-" + std::to_string(stamp));
+        auto path = std::filesystem::current_path()
+                    / DAS_PATH_LITERAL("logger-test-output")
+                    / Das::Utils::PathFromUtf8(
+                        std::string{test_name} + "-" + std::to_string(stamp));
         std::filesystem::remove_all(path);
         return path;
     }
@@ -131,10 +134,11 @@ namespace
 
         DasResult CreateContext(const std::filesystem::path& debug_directory)
         {
-            const auto directory_str = debug_directory.u8string();
+            const std::string directory_str =
+                Das::Utils::PathToUtf8(debug_directory);
             Das::DasPtr<IDasReadOnlyString> directory_param;
             const auto cr = CreateIDasReadOnlyStringFromUtf8(
-                reinterpret_cast<const char*>(directory_str.c_str()),
+                directory_str.c_str(),
                 directory_param.Put());
             if (DAS::IsFailed(cr))
             {
@@ -209,8 +213,9 @@ TEST_F(
     ASSERT_TRUE(ref_value.has_value());
     EXPECT_EQ(*ref_value, "img/0001.jpg");
 
-    const auto img_path =
-        ReadSessionDirectory(session_.Get()) / "img" / "0001.jpg";
+    const auto img_path = ReadSessionDirectory(session_.Get())
+                          / DAS_PATH_LITERAL("img")
+                          / DAS_PATH_LITERAL("0001.jpg");
     ASSERT_TRUE(std::filesystem::exists(img_path));
 
     std::ifstream     file_input{img_path, std::ios::binary};
@@ -240,7 +245,7 @@ TEST_F(
     SessionOrphanCleanupTest_RemovesDeadPidKeepsLivePid)
 {
     const auto dir = UniqueTempDir("OrphanCleanup");
-    const auto debug_dir = dir / "debug";
+    const auto debug_dir = dir / DAS_PATH_LITERAL("debug");
     std::filesystem::create_directories(debug_dir);
 
     const auto dead_pid = SpawnShortLivedChild();
@@ -249,11 +254,13 @@ TEST_F(
 
     const auto dead_dir =
         debug_dir
-        / (std::string{"20260801-120000-"} + std::to_string(dead_pid));
+        / Das::Utils::PathFromUtf8(
+            std::string{"20260801-120000-"} + std::to_string(dead_pid));
     const auto live_dir =
         debug_dir
-        / (std::string{"20260801-120000-"} + std::to_string(live_pid));
-    const auto other_dir = debug_dir / "something-else";
+        / Das::Utils::PathFromUtf8(
+            std::string{"20260801-120000-"} + std::to_string(live_pid));
+    const auto other_dir = debug_dir / DAS_PATH_LITERAL("something-else");
     std::filesystem::create_directories(dead_dir);
     std::filesystem::create_directories(live_dir);
     std::filesystem::create_directories(other_dir);

@@ -2,6 +2,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -15,8 +16,10 @@ namespace
     {
         const auto stamp =
             std::chrono::steady_clock::now().time_since_epoch().count();
-        auto path = std::filesystem::current_path() / "logger-test-output"
-                    / (std::string{test_name} + "-" + std::to_string(stamp));
+        auto path = std::filesystem::current_path()
+                    / DAS_PATH_LITERAL("logger-test-output")
+                    / Das::Utils::PathFromUtf8(
+                        std::string{test_name} + "-" + std::to_string(stamp));
         std::filesystem::remove_all(path);
         return path;
     }
@@ -62,10 +65,11 @@ namespace
 
         DasResult CreateContext(const std::filesystem::path& debug_directory)
         {
-            const auto directory_str = debug_directory.u8string();
+            const std::string directory_str =
+                Das::Utils::PathToUtf8(debug_directory);
             Das::DasPtr<IDasReadOnlyString> directory_param;
             const auto cr = CreateIDasReadOnlyStringFromUtf8(
-                reinterpret_cast<const char*>(directory_str.c_str()),
+                directory_str.c_str(),
                 directory_param.Put());
             if (DAS::IsFailed(cr))
             {
@@ -85,12 +89,14 @@ TEST_F(SessionDirFixture, SessionDirTest_NamedWithTimestampAndPid)
     ASSERT_FALSE(session_dir.empty());
     EXPECT_TRUE(
         std::regex_match(
-            session_dir.filename().string(),
+            Das::Utils::PathToUtf8(session_dir.filename()),
             std::regex{R"(^\d{8}-\d{6}-\d+$)"}))
         << session_dir;
 
-    EXPECT_EQ(ReadUserJsonlPath(session_.Get()), session_dir / "user.jsonl");
-    EXPECT_TRUE(std::filesystem::exists(session_dir / "img"));
+    EXPECT_EQ(
+        ReadUserJsonlPath(session_.Get()),
+        session_dir / DAS_PATH_LITERAL("user.jsonl"));
+    EXPECT_TRUE(std::filesystem::exists(session_dir / DAS_PATH_LITERAL("img")));
 }
 
 // RAII：session 释时目录被递归删除。

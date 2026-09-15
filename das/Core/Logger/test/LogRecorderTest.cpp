@@ -5,6 +5,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -18,8 +19,10 @@ namespace
     {
         const auto stamp =
             std::chrono::steady_clock::now().time_since_epoch().count();
-        auto path = std::filesystem::current_path() / "logger-test-output"
-                    / (std::string{test_name} + "-" + std::to_string(stamp));
+        auto path = std::filesystem::current_path()
+                    / DAS_PATH_LITERAL("logger-test-output")
+                    / Das::Utils::PathFromUtf8(
+                        std::string{test_name} + "-" + std::to_string(stamp));
         std::filesystem::remove_all(path);
         return path;
     }
@@ -80,10 +83,11 @@ namespace
         DasResult CreateContext(const std::filesystem::path& debug_directory)
         {
             debug_directory_ = debug_directory;
-            const auto directory_str = debug_directory.u8string();
+            const std::string directory_str =
+                Das::Utils::PathToUtf8(debug_directory);
             Das::DasPtr<IDasReadOnlyString> directory_param;
             const auto cr = CreateIDasReadOnlyStringFromUtf8(
-                reinterpret_cast<const char*>(directory_str.c_str()),
+                directory_str.c_str(),
                 directory_param.Put());
             if (DAS::IsFailed(cr))
             {

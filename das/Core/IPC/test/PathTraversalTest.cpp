@@ -12,6 +12,7 @@
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
+#include <das/Utils/PathText.h>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -35,9 +36,10 @@ namespace
         void SetUp() override
         {
             tmp_dir_ = std::filesystem::temp_directory_path()
-                       / "das_path_traversal_test";
+                       / DAS_PATH_LITERAL("das_path_traversal_test");
             std::filesystem::create_directories(tmp_dir_);
-            std::filesystem::create_directories(tmp_dir_ / "subdir");
+            std::filesystem::create_directories(
+                tmp_dir_ / DAS_PATH_LITERAL("subdir"));
 
             HostCommandHandlerOptions opts{};
             opts.load_plugin = [](const std::filesystem::path&)
@@ -181,7 +183,8 @@ namespace
 
     TEST_F(PathTraversalTest, ValidSubdirectoryAccepted_ReadFile)
     {
-        auto file_path = tmp_dir_ / "subdir" / "test.txt";
+        auto file_path = tmp_dir_ / DAS_PATH_LITERAL("subdir")
+                         / DAS_PATH_LITERAL("test.txt");
         std::ofstream(file_path) << "hello";
 
         IpcCommandResponse resp{};
@@ -229,8 +232,8 @@ namespace
 
     TEST_F(PathTraversalTest, Utf8PathNotRejected)
     {
-        auto utf8_dir =
-            tmp_dir_ / "subdir" / u8"\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e";
+        auto utf8_dir = tmp_dir_ / DAS_PATH_LITERAL("subdir")
+                        / u8"\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e";
         std::filesystem::create_directories(utf8_dir);
 
         IpcCommandResponse resp{};

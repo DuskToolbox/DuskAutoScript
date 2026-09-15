@@ -10,6 +10,7 @@
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
+#include <das/Utils/PathText.h>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -31,8 +32,8 @@ namespace
     {
         void SetUp() override
         {
-            tmp_dir_ =
-                std::filesystem::temp_directory_path() / "das_read_file_test";
+            tmp_dir_ = std::filesystem::temp_directory_path()
+                       / DAS_PATH_LITERAL("das_read_file_test");
             std::filesystem::remove_all(tmp_dir_);
             std::filesystem::create_directories(tmp_dir_);
 
@@ -103,7 +104,7 @@ namespace
     TEST_F(ReadFileTest, ReadsFileContentCorrectly)
     {
         const std::string content = R"({"name": "test_plugin"})";
-        WriteFile(tmp_dir_ / "manifest.json", content);
+        WriteFile(tmp_dir_ / DAS_PATH_LITERAL("manifest.json"), content);
 
         IpcCommandResponse resp{};
         ASSERT_EQ(CallReadFile("manifest.json", resp), DAS_S_OK);
@@ -129,7 +130,7 @@ namespace
         }
 
         WriteBinaryFile(
-            tmp_dir_ / "binary.bin",
+            tmp_dir_ / DAS_PATH_LITERAL("binary.bin"),
             binary_data.data(),
             binary_data.size());
 
@@ -152,10 +153,14 @@ namespace
 
     TEST_F(ReadFileTest, ReadsSubdirectoryFile)
     {
-        std::filesystem::create_directories(tmp_dir_ / "PluginA");
+        std::filesystem::create_directories(
+            tmp_dir_ / DAS_PATH_LITERAL("PluginA"));
 
         const std::string content = "plugin content";
-        WriteFile(tmp_dir_ / "PluginA" / "data.txt", content);
+        WriteFile(
+            tmp_dir_ / DAS_PATH_LITERAL("PluginA")
+                / DAS_PATH_LITERAL("data.txt"),
+            content);
 
         IpcCommandResponse resp{};
         ASSERT_EQ(CallReadFile("PluginA/data.txt", resp), DAS_S_OK);
@@ -168,7 +173,7 @@ namespace
 
     TEST_F(ReadFileTest, ReadsEmptyFile)
     {
-        WriteFile(tmp_dir_ / "empty.txt", "");
+        WriteFile(tmp_dir_ / DAS_PATH_LITERAL("empty.txt"), "");
 
         IpcCommandResponse resp{};
         ASSERT_EQ(CallReadFile("empty.txt", resp), DAS_S_OK);
@@ -195,7 +200,7 @@ namespace
 
     TEST_F(ReadFileTest, OversizedFile_ReturnsInvalidSize)
     {
-        auto              big_file = tmp_dir_ / "big.bin";
+        auto              big_file = tmp_dir_ / DAS_PATH_LITERAL("big.bin");
         constexpr size_t  size_limit = 4 * 1024 * 1024;
         constexpr size_t  oversize = size_limit + 1024;
         std::vector<char> zeros(65536, 0);

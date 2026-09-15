@@ -35,6 +35,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasAsyncCallback.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <filesystem>
 #include <functional>
@@ -595,7 +596,7 @@ namespace Das::IPC::Test
         FakeHostCommandContext      ctx;
         bool                        loader_called = false;
         const std::filesystem::path manifest_path{
-            "C:/das/plugins/node-plugin/manifest.json"};
+            DAS_PATH_LITERAL("C:/das/plugins/node-plugin/manifest.json")};
 
         HostCommandHandlerOptions options{};
         options.load_plugin = [&](const std::filesystem::path& path)
@@ -619,7 +620,9 @@ namespace Das::IPC::Test
         ASSERT_TRUE(ctx.handlers.contains(qi_command));
 
         std::vector<uint8_t> load_payload;
-        Das::Core::IPC::SerializeString(load_payload, manifest_path.string());
+        Das::Core::IPC::SerializeString(
+            load_payload,
+            Das::Utils::PathToUtf8(manifest_path));
 
         IpcCommandResponse load_response{};
         ASSERT_EQ(

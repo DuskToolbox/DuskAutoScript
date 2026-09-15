@@ -11,6 +11,7 @@
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
+#include <das/Utils/PathText.h>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -99,18 +100,30 @@ namespace
     {
         void SetUp() override
         {
-            tmp_dir_ =
-                std::filesystem::temp_directory_path() / "das_list_file_test";
+            tmp_dir_ = std::filesystem::temp_directory_path()
+                       / DAS_PATH_LITERAL("das_list_file_test");
             std::filesystem::remove_all(tmp_dir_);
             std::filesystem::create_directories(tmp_dir_);
-            std::filesystem::create_directories(tmp_dir_ / "PluginA");
-            std::filesystem::create_directories(tmp_dir_ / "PluginB");
+            std::filesystem::create_directories(
+                tmp_dir_ / DAS_PATH_LITERAL("PluginA"));
+            std::filesystem::create_directories(
+                tmp_dir_ / DAS_PATH_LITERAL("PluginB"));
 
             {
-                std::ofstream(tmp_dir_ / "PluginA" / "manifest.json") << "{}";
-                std::ofstream(tmp_dir_ / "PluginA" / "readme.txt") << "hello";
-                std::ofstream(tmp_dir_ / "PluginB" / "manifest.json") << "{}";
-                std::ofstream(tmp_dir_ / "root.txt") << "root file";
+                std::ofstream(
+                    tmp_dir_ / DAS_PATH_LITERAL("PluginA")
+                    / DAS_PATH_LITERAL("manifest.json"))
+                    << "{}";
+                std::ofstream(
+                    tmp_dir_ / DAS_PATH_LITERAL("PluginA")
+                    / DAS_PATH_LITERAL("readme.txt"))
+                    << "hello";
+                std::ofstream(
+                    tmp_dir_ / DAS_PATH_LITERAL("PluginB")
+                    / DAS_PATH_LITERAL("manifest.json"))
+                    << "{}";
+                std::ofstream(tmp_dir_ / DAS_PATH_LITERAL("root.txt"))
+                    << "root file";
             }
 
             HostCommandHandlerOptions opts{};
@@ -233,10 +246,7 @@ namespace
         ListFileResponse parsed;
         ASSERT_TRUE(ParseListFileResponse(resp.response_data, parsed));
 
-        auto              expected_u8 = tmp_dir_.u8string();
-        const std::string expected(
-            reinterpret_cast<const char*>(expected_u8.data()),
-            expected_u8.size());
+        const std::string expected = Das::Utils::PathToUtf8(tmp_dir_);
         EXPECT_EQ(parsed.working_path, expected);
     }
 
@@ -257,11 +267,9 @@ namespace
                 found_manifest = true;
                 EXPECT_EQ(e.type, uint8_t{0});
 
-                auto expected_abs =
-                    (tmp_dir_ / "PluginA" / "manifest.json").u8string();
-                const std::string expected(
-                    reinterpret_cast<const char*>(expected_abs.data()),
-                    expected_abs.size());
+                const std::string expected = Das::Utils::PathToUtf8(
+                    tmp_dir_ / DAS_PATH_LITERAL("PluginA")
+                    / DAS_PATH_LITERAL("manifest.json"));
                 EXPECT_EQ(e.abs_path, expected);
             }
         }
@@ -279,7 +287,7 @@ namespace
         opts.load_plugin = [](const std::filesystem::path&)
             -> Das::Utils::Expected<DAS::DasPtr<IDasBase>>
         { return DAS::DasPtr<IDasBase>(static_cast<IDasBase*>(nullptr)); };
-        opts.plugin_dir = "";
+        opts.plugin_dir = DAS_PATH_LITERAL("");
 
         ASSERT_EQ(
             RegisterHostCommandHandlers(&no_dir_ctx, std::move(opts)),
