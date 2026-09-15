@@ -6,6 +6,7 @@
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 
 #include <chrono>
 #include <cstdio>
@@ -388,7 +389,7 @@ namespace Das::Core
                     image.Get(),
                     Das::ExportInterface::DAS_IMAGE_FORMAT_JPG,
                     85,
-                    session_dir / file_name);
+                    session_dir / Das::Utils::PathFromUtf8(file_name));
                 if (DAS::IsFailed(rc))
                 {
                     DAS_CORE_LOG_ERROR(

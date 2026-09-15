@@ -12,6 +12,7 @@
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/abi/IDasLogRecorder.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
@@ -2117,7 +2118,7 @@ namespace Das::Core::TaskScheduler
             DAS_CORE_LOG_WARN(
                 "SchedulerService::Initialize: failed to iterate "
                 "plugin directory {}: {}",
-                DAS::Utils::U8AsString(plugin_dir.u8string()),
+                Das::Utils::PathToUtf8(plugin_dir),
                 ec.message());
             return DAS_E_FAIL;
         }
@@ -2134,9 +2135,10 @@ namespace Das::Core::TaskScheduler
             std::filesystem::path manifest_path;
             if (entry.is_directory())
             {
-                auto dirname = std::string{
-                    DAS::Utils::U8AsString(entry.path().filename().u8string())};
-                auto marker = entry.path() / (dirname + ".willBeDelete");
+                auto dirname = Das::Utils::PathToUtf8(entry.path().filename());
+                auto marker =
+                    entry.path()
+                    / Das::Utils::PathFromUtf8(dirname + ".willBeDelete");
                 if (std::filesystem::exists(marker))
                 {
                     auto banned_manifest_path = FindManifest(entry.path());
@@ -2165,7 +2167,7 @@ namespace Das::Core::TaskScheduler
 
                 manifest_path = FindManifest(entry.path());
             }
-            else if (entry.path().extension() == ".json")
+            else if (entry.path().extension() == DAS_PATH_LITERAL(".json"))
             {
                 manifest_path = entry.path();
             }
@@ -2183,7 +2185,7 @@ namespace Das::Core::TaskScheduler
                     DAS_CORE_LOG_WARN(
                         "SchedulerService::Initialize: failed to "
                         "parse manifest: {}",
-                        DAS::Utils::U8AsString(manifest_path.u8string()));
+                        Das::Utils::PathToUtf8(manifest_path));
                     continue;
                 }
 

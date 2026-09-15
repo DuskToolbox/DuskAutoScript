@@ -2,7 +2,7 @@
 #include <das/Core/SettingsManager/Config.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 
 #include <algorithm>
 #include <charconv>
@@ -184,7 +184,7 @@ SettingsManager::SettingsManager(const std::filesystem::path& base_dir)
         DAS_CORE_LOG_EXCEPTION(ex);
     }
 
-    const auto ui_path = base_dir_ / "ui.json";
+    const auto ui_path = base_dir_ / DAS_PATH_LITERAL("ui.json");
     if (std::filesystem::exists(ui_path))
     {
         auto* cell = GetOrCreateCell("global/ui");
@@ -242,7 +242,7 @@ DasResult SettingsManager::WriteJsonFile(
         }
 
         auto tmp_path = path;
-        tmp_path += ".tmp";
+        tmp_path += DAS_PATH_LITERAL(".tmp");
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(json_str);
             if (!parsed)
@@ -290,7 +290,7 @@ DasResult SettingsManager::WriteJsonFile(
         }
 
         auto tmp_path = path;
-        tmp_path += ".tmp";
+        tmp_path += DAS_PATH_LITERAL(".tmp");
         {
             auto serialized = Das::Utils::SerializeYyjsonValue(data, true);
             if (!serialized)
@@ -462,7 +462,7 @@ SettingsManager::GetPluginSettingsWithStatus(
     {
         DAS_CORE_LOG_WARN(
             "Plugin settings file missing: {}, returning empty defaults",
-            DAS::Utils::U8AsString(path.u8string()));
+            Das::Utils::PathToUtf8(path));
         auto defaults = Das::Utils::MakeYyjsonObject();
         // Persist empty defaults so future reads succeed
         WriteJsonFile(path, defaults);
@@ -498,7 +498,7 @@ SettingsManager::GetPluginSettingsWithStatus(
     // File is corrupt - rebuild with empty defaults
     DAS_CORE_LOG_WARN(
         "Plugin settings file corrupt: {}, restoring empty defaults",
-        DAS::Utils::U8AsString(path.u8string()));
+        Das::Utils::PathToUtf8(path));
     auto defaults = Das::Utils::MakeYyjsonObject();
     WriteJsonFile(path, defaults);
     cell->snapshot = defaults;
@@ -800,7 +800,7 @@ yyjson::value SettingsManager::GetGlobalSettingsJson()
         return cell->snapshot;
     }
 
-    auto content = ReadJsonFile(base_dir_ / "ui.json");
+    auto content = ReadJsonFile(base_dir_ / DAS_PATH_LITERAL("ui.json"));
     auto parsed = Das::Utils::ParseYyjsonFromString(content);
     if (parsed)
     {
@@ -815,7 +815,7 @@ DasResult SettingsManager::UpdateGlobalSettingsJson(const yyjson::value& data)
 
     const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
     cell->snapshot = data;
-    return WriteJsonFile(base_dir_ / "ui.json", data);
+    return WriteJsonFile(base_dir_ / DAS_PATH_LITERAL("ui.json"), data);
 }
 
 yyjson::value SettingsManager::GetProfileListJson()
@@ -834,8 +834,7 @@ yyjson::value SettingsManager::GetProfileListJson()
         {
             if (entry.is_directory())
             {
-                auto filename = std::string{
-                    DAS::Utils::U8AsString(entry.path().filename().u8string())};
+                auto filename = Das::Utils::PathToUtf8(entry.path().filename());
 
                 // Read profile name from ${pid}/profile.json. Legacy profiles
                 // (no profile.json) fall back to a default display name so
@@ -1193,8 +1192,7 @@ std::vector<int64_t> SettingsManager::ListTaskRepositoryEntryIds(
             }
 
             auto id = TryParseTaskRepositoryEntryId(
-                std::string{DAS::Utils::U8AsString(
-                    entry.path().filename().u8string())});
+                Das::Utils::PathToUtf8(entry.path().filename()));
             if (id.has_value())
             {
                 ids.push_back(*id);
@@ -1232,48 +1230,54 @@ int64_t SettingsManager::AllocateNextTaskRepositoryEntryId(
 std::filesystem::path SettingsManager::GetProfileDir(
     const std::string& profile_id) const
 {
-    return base_dir_ / profile_id;
+    return base_dir_ / Das::Utils::PathFromUtf8(profile_id);
 }
 
 std::filesystem::path SettingsManager::GetProfileUiPath(
     const std::string& profile_id) const
 {
-    return base_dir_ / profile_id / "ui.json";
+    return base_dir_ / Das::Utils::PathFromUtf8(profile_id)
+           / DAS_PATH_LITERAL("ui.json");
 }
 
 std::filesystem::path SettingsManager::GetProfileMetaPath(
     const std::string& profile_id) const
 {
-    return base_dir_ / profile_id / "profile.json";
+    return base_dir_ / Das::Utils::PathFromUtf8(profile_id)
+           / DAS_PATH_LITERAL("profile.json");
 }
 
 std::filesystem::path SettingsManager::GetPluginSettingsPath(
     const std::string& profile_id,
     const std::string& guid) const
 {
-    return base_dir_ / profile_id / (guid + ".json");
+    return base_dir_ / Das::Utils::PathFromUtf8(profile_id)
+           / Das::Utils::PathFromUtf8(guid + ".json");
 }
 
 std::filesystem::path SettingsManager::GetSchedulerIndexPath(
     const std::string& profile_id) const
 {
-    return base_dir_ / profile_id / "scheduler.json";
+    return base_dir_ / Das::Utils::PathFromUtf8(profile_id)
+           / DAS_PATH_LITERAL("scheduler.json");
 }
 
 std::filesystem::path SettingsManager::GetTaskInstancePath(
     const std::string& profile_id,
     int64_t            task_id) const
 {
-    return base_dir_ / profile_id
-           / ("taskId" + std::to_string(task_id) + ".json");
+    return base_dir_ / Das::Utils::PathFromUtf8(profile_id)
+           / Das::Utils::PathFromUtf8(
+               "taskId" + std::to_string(task_id) + ".json");
 }
 
 std::filesystem::path SettingsManager::GetTaskRepositoryEntryPath(
     const std::string& profile_id,
     int64_t            entry_id) const
 {
-    return base_dir_ / profile_id
-           / ("taskRepository" + std::to_string(entry_id) + ".json");
+    return base_dir_ / Das::Utils::PathFromUtf8(profile_id)
+           / Das::Utils::PathFromUtf8(
+               "taskRepository" + std::to_string(entry_id) + ".json");
 }
 
 void SettingsManager::SetSettingsNotifyCallback(

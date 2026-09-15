@@ -5,6 +5,7 @@
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/PathText.h>
 
 #include <chrono>
 #include <cstdio>
@@ -150,7 +151,8 @@ namespace Das::Core
                 {
                     continue;
                 }
-                const auto name = entry.path().filename().string();
+                const auto name =
+                    Das::Utils::PathToUtf8(entry.path().filename());
                 const auto pid = ParseSessionPid(name);
                 if (!pid)
                 {
@@ -166,14 +168,14 @@ namespace Das::Core
                 {
                     DAS_CORE_LOG_WARN(
                         "CleanupOrphanSessionDirs: failed to remove {}: {}",
-                        entry.path().string(),
+                        Das::Utils::PathToUtf8(entry.path()),
                         remove_ec.message());
                 }
                 else
                 {
                     DAS_CORE_LOG_INFO(
                         "CleanupOrphanSessionDirs: removed orphan session dir {}",
-                        entry.path().string());
+                        Das::Utils::PathToUtf8(entry.path()));
                 }
             }
         }
@@ -188,11 +190,13 @@ namespace Das::Core
 
         const auto resolved =
             std::filesystem::absolute(debug_directory).lexically_normal();
-        session_dir_ = resolved / SessionDirName();
-        user_jsonl_path_ = session_dir_ / "user.jsonl";
+        session_dir_ = resolved / Das::Utils::PathFromUtf8(SessionDirName());
+        user_jsonl_path_ = session_dir_ / DAS_PATH_LITERAL("user.jsonl");
 
         std::error_code ec;
-        std::filesystem::create_directories(session_dir_ / "img", ec);
+        std::filesystem::create_directories(
+            session_dir_ / DAS_PATH_LITERAL("img"),
+            ec);
         if (ec)
         {
             DAS_CORE_LOG_ERROR(
@@ -227,9 +231,9 @@ namespace Das::Core
         {
             return DAS_E_OBJECT_NOT_INIT;
         }
-        const auto directory_str = session_dir_.u8string();
+        const auto directory_str = Das::Utils::PathToUtf8(session_dir_);
         return CreateIDasReadOnlyStringFromUtf8(
-            reinterpret_cast<const char*>(directory_str.c_str()),
+            directory_str.c_str(),
             pp_out_directory);
     }
 
@@ -242,10 +246,8 @@ namespace Das::Core
         {
             return DAS_E_OBJECT_NOT_INIT;
         }
-        const auto path_str = user_jsonl_path_.u8string();
-        return CreateIDasReadOnlyStringFromUtf8(
-            reinterpret_cast<const char*>(path_str.c_str()),
-            pp_out_path);
+        const auto path_str = Das::Utils::PathToUtf8(user_jsonl_path_);
+        return CreateIDasReadOnlyStringFromUtf8(path_str.c_str(), pp_out_path);
     }
 
     DasResult DasLogSessionImpl::NextImageSeq(uint32_t* p_out_seq)
