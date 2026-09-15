@@ -1046,8 +1046,8 @@ namespace
             return *env_path;
         }
 
-        const auto resolved =
-            boost::process::v2::environment::find_executable("node");
+        const auto resolved = boost::process::v2::environment::find_executable(
+            DAS_PATH_LITERAL("node"));
         if (resolved.empty())
         {
             return {};
