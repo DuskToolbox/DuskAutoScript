@@ -577,7 +577,7 @@ namespace
             if (error_code)
             {
                 ADD_FAILURE() << "failed to stat the per-process log file: "
-                              << log_path_.string()
+                              << Das::Utils::PathToUtf8(log_path_)
                               << ", error: " << error_code.message();
                 log_path_.clear();
             }
@@ -604,7 +604,7 @@ namespace
             if (error_code)
             {
                 ADD_FAILURE() << "failed to stat the per-process log file: "
-                              << log_path_.string()
+                              << Das::Utils::PathToUtf8(log_path_)
                               << ", error: " << error_code.message();
                 return true;
             }
@@ -615,9 +615,10 @@ namespace
             std::string appended;
             if (current_size < window_start_)
             {
-                const auto rotated_bytes = ReadFileRange(
-                    std::filesystem::path{log_path_.string() + ".1"},
-                    window_start_);
+                std::filesystem::path rotated_path = log_path_;
+                rotated_path += DAS_PATH_LITERAL(".1");
+                const auto rotated_bytes =
+                    ReadFileRange(rotated_path, window_start_);
                 const auto fresh_bytes = ReadFileRange(log_path_, 0);
                 if (!rotated_bytes.has_value() || !fresh_bytes.has_value())
                 {
@@ -635,7 +636,7 @@ namespace
                 if (!appended_range.has_value())
                 {
                     ADD_FAILURE() << "failed to read the per-process log file: "
-                                  << log_path_.string();
+                                  << Das::Utils::PathToUtf8(log_path_);
                     return true;
                 }
                 appended = *appended_range;
@@ -657,15 +658,17 @@ namespace
                     DAS_IPC_TEST_CURRENT_PROCESS_ID()));
 
             std::error_code error_code;
-            if (!std::filesystem::exists("logs", error_code) || error_code)
+            if (!std::filesystem::exists(DAS_PATH_LITERAL("logs"), error_code)
+                || error_code)
             {
                 return {};
             }
 
             std::filesystem::path           matched_path;
             std::filesystem::file_time_type matched_write_time{};
-            for (const auto& entry :
-                 std::filesystem::directory_iterator("logs", error_code))
+            for (const auto& entry : std::filesystem::directory_iterator(
+                     DAS_PATH_LITERAL("logs"),
+                     error_code))
             {
                 if (error_code)
                 {
@@ -676,8 +679,9 @@ namespace
                     continue;
                 }
 
-                const std::string file_name = entry.path().filename().string();
-                std::smatch       match;
+                const std::string file_name =
+                    Das::Utils::PathToUtf8(entry.path().filename());
+                std::smatch match;
                 if (!std::regex_match(file_name, match, name_pattern)
                     || match[3].str() != current_pid)
                 {
@@ -1035,10 +1039,11 @@ namespace
     std::filesystem::path ResolveNodeExecutableForIntegration()
     {
         constexpr auto NODE_HOST_EXECUTABLE_ENV = "DAS_NODE_HOST_EXE_PATH";
-        if (const char* env = std::getenv(NODE_HOST_EXECUTABLE_ENV);
-            env != nullptr && env[0] != '\0')
+        if (const auto env_path =
+                Das::Utils::PathFromEnvironment(NODE_HOST_EXECUTABLE_ENV);
+            env_path.has_value() && !env_path->empty())
         {
-            return std::filesystem::path{env};
+            return *env_path;
         }
 
         const auto resolved =
@@ -1047,14 +1052,17 @@ namespace
         {
             return {};
         }
-        return std::filesystem::path{resolved.string()};
+        return Das::Utils::ToStdPath(resolved);
     }
 
-    constexpr auto NODE_RUNTIME_PACKAGE_NAME = DAS_NODE_PACKAGE_NAME;
-    constexpr auto NODE_HOST_SCRIPT_RELATIVE = "bin/das-node-host.cjs";
-    constexpr auto NODE_RUNTIME_WRAPPER_FILE = DAS_NODE_ADDON_NAME "_export.js";
+    constexpr auto NODE_RUNTIME_PACKAGE_NAME =
+        DAS_PATH_LITERAL(DAS_NODE_PACKAGE_NAME);
+    constexpr auto NODE_HOST_SCRIPT_RELATIVE =
+        DAS_PATH_LITERAL("bin/das-node-host.cjs");
+    constexpr auto NODE_RUNTIME_WRAPPER_FILE =
+        DAS_PATH_LITERAL(DAS_NODE_ADDON_NAME "_export.js");
     constexpr auto NODE_RUNTIME_ADDON_RELATIVE =
-        "native/" DAS_NODE_ADDON_NAME ".node";
+        DAS_PATH_LITERAL("native/" DAS_NODE_ADDON_NAME ".node");
 
 #ifdef _WIN32
     constexpr auto DYNAMIC_LIBRARY_PATH_ENV = "PATH";
@@ -1094,14 +1102,36 @@ namespace
 
     bool IsAutogenNodePath(const std::filesystem::path& path)
     {
-        const auto generic = path.generic_string();
-        return generic.find("_autogen/idl/node") != std::string::npos;
+        // 分量域游标搜索替代 generic_string 窄串子串匹配（'/' 不会出现
+        // 在单分量内，generic 串的合法命中必落在分量边界；分量中缀如
+        // "x_autogen" 属旧窄串匹配的误命中面，分量域天然排除）
+        const std::array<std::filesystem::path, 3> needle{
+            DAS_PATH_LITERAL("_autogen"),
+            DAS_PATH_LITERAL("idl"),
+            DAS_PATH_LITERAL("node")};
+        for (auto cursor = path.begin(); cursor != path.end(); ++cursor)
+        {
+            auto probe = cursor;
+            auto needle_it = needle.begin();
+            for (; probe != path.end() && needle_it != needle.end()
+                   && *probe == *needle_it;
+                 ++probe, ++needle_it)
+            {
+            }
+            if (needle_it == needle.end())
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     bool HasNormalizedNodeHostPackage(const std::filesystem::path& package_root)
     {
-        return std::filesystem::is_regular_file(package_root / "package.json")
-               && std::filesystem::is_regular_file(package_root / "index.cjs")
+        return std::filesystem::is_regular_file(
+                   package_root / DAS_PATH_LITERAL("package.json"))
+               && std::filesystem::is_regular_file(
+                   package_root / DAS_PATH_LITERAL("index.cjs"))
                && std::filesystem::is_regular_file(
                    package_root / NODE_HOST_SCRIPT_RELATIVE)
                && std::filesystem::is_regular_file(
@@ -1112,8 +1142,8 @@ namespace
 
     bool IsDasRuntimeLibraryArtifact(const std::filesystem::path& path)
     {
-        const auto file_name = path.filename().string();
-        const auto extension = path.extension().string();
+        const auto file_name = Das::Utils::PathToUtf8(path.filename());
+        const auto extension = Das::Utils::PathToUtf8(path.extension());
         if (extension == ".dll" && file_name.rfind("DasCore", 0) == 0)
         {
             return true;
@@ -1132,9 +1162,9 @@ namespace
         bool                         allow_collection_node_modules)
     {
         const std::array<std::filesystem::path, 3> forbidden_files{
-            "das-node-host.cjs",
+            DAS_PATH_LITERAL("das-node-host.cjs"),
             NODE_RUNTIME_WRAPPER_FILE,
-            DAS_NODE_ADDON_NAME ".node"};
+            DAS_PATH_LITERAL(DAS_NODE_ADDON_NAME ".node")};
 
         for (const auto& relative : forbidden_files)
         {
@@ -1143,17 +1173,18 @@ namespace
             {
                 return testing::AssertionFailure()
                        << "Node plugin root contains generated runtime artifact: "
-                       << candidate.string();
+                       << Das::Utils::PathToUtf8(candidate);
             }
         }
 
-        const auto node_modules = plugin_root / "node_modules";
+        const auto node_modules =
+            plugin_root / DAS_PATH_LITERAL("node_modules");
         if (!allow_collection_node_modules
             && std::filesystem::exists(node_modules))
         {
             return testing::AssertionFailure()
                    << "Node plugin root contains plugin-local node_modules: "
-                   << node_modules.string();
+                   << Das::Utils::PathToUtf8(node_modules);
         }
 
         return testing::AssertionSuccess();
@@ -1201,7 +1232,7 @@ namespace
         const auto app_root = node_modules_root.parent_path().parent_path();
         return std::string{R"({"version":1,"prepend":[{"name":")"}
                + DYNAMIC_LIBRARY_PATH_ENV + R"(","value":")"
-               + EscapeJsonString(app_root.string()) + R"("}]})";
+               + EscapeJsonString(Das::Utils::PathToUtf8(app_root)) + R"("}]})";
     }
 
     bool IsPluginCollectionRoot(
@@ -1240,23 +1271,24 @@ namespace
         {
             return testing::AssertionFailure()
                    << "Node host package must not resolve from _autogen/idl/node: "
-                   << package_root.string();
+                   << Das::Utils::PathToUtf8(package_root);
         }
 
         if (package_root.filename() != NODE_RUNTIME_PACKAGE_NAME
-            || package_root.parent_path().filename() != "node_modules")
+            || package_root.parent_path().filename()
+                   != DAS_PATH_LITERAL("node_modules"))
         {
             return testing::AssertionFailure()
                    << "Node host package must be plugins/node_modules/"
                    << NODE_RUNTIME_PACKAGE_NAME
-                   << ", got: " << package_root.string();
+                   << ", got: " << Das::Utils::PathToUtf8(package_root);
         }
 
         if (!HasNormalizedNodeHostPackage(package_root))
         {
             return testing::AssertionFailure()
                    << "Normalized Node host package missing from: "
-                   << package_root.string();
+                   << Das::Utils::PathToUtf8(package_root);
         }
 
         return testing::AssertionSuccess();
@@ -1276,13 +1308,15 @@ namespace
         }
 
         const auto host_script = runtime_root / NODE_HOST_SCRIPT_RELATIVE;
-        const auto executable_text = node_executable.string();
-        const auto script_text = host_script.string();
+        const auto executable_text = Das::Utils::PathToUtf8(node_executable);
+        const auto script_text = Das::Utils::PathToUtf8(host_script);
         const auto main_pid_value = std::to_string(
             static_cast<uint32_t>(DAS_IPC_TEST_CURRENT_PROCESS_ID()));
-        const auto working_directory_text = package_root.string();
-        const auto package_root_text = package_root.string();
-        const auto node_modules_root_text = node_modules_root.string();
+        const auto working_directory_text =
+            Das::Utils::PathToUtf8(package_root);
+        const auto package_root_text = Das::Utils::PathToUtf8(package_root);
+        const auto node_modules_root_text =
+            Das::Utils::PathToUtf8(node_modules_root);
         const auto environment_config_text =
             MakeNodeHostEnvironmentConfig(node_modules_root);
 
@@ -1418,12 +1452,13 @@ namespace
         const std::filesystem::path& host_exe_path)
     {
         const auto app_root = AppRootFromHostExePath(host_exe_path);
-        const auto python_module = app_root / "DuskAutoScript.py";
+        const auto python_module =
+            app_root / DAS_PATH_LITERAL("DuskAutoScript.py");
         if (!std::filesystem::is_regular_file(python_module))
         {
             return testing::AssertionFailure()
                    << "Python runtime module not found at: "
-                   << python_module.string();
+                   << Das::Utils::PathToUtf8(python_module);
         }
 
         bool has_native_export = false;
@@ -1435,8 +1470,10 @@ namespace
                 continue;
             }
 
-            const auto filename = entry.path().filename().string();
-            const auto extension = entry.path().extension().string();
+            const auto filename =
+                Das::Utils::PathToUtf8(entry.path().filename());
+            const auto extension =
+                Das::Utils::PathToUtf8(entry.path().extension());
             if (filename.find("DasCorePythonExport") != std::string::npos
                 && (extension == ".pyd" || extension == ".dll"
                     || extension == ".so" || extension == ".dylib"))
@@ -1455,18 +1492,19 @@ namespace
         {
             return testing::AssertionFailure()
                    << "Python native export artifact not found under: "
-                   << app_root.string();
+                   << Das::Utils::PathToUtf8(app_root);
         }
 
 #ifdef _WIN32
         const auto python_abi_runtime =
             app_root
-            / (needs_debug_python_abi ? "python3_d.dll" : "python3.dll");
+            / (needs_debug_python_abi ? DAS_PATH_LITERAL("python3_d.dll")
+                                      : DAS_PATH_LITERAL("python3.dll"));
         if (!std::filesystem::is_regular_file(python_abi_runtime))
         {
             return testing::AssertionFailure()
                    << "Python ABI runtime DLL not copied beside DasHostX.exe: "
-                   << python_abi_runtime.string();
+                   << Das::Utils::PathToUtf8(python_abi_runtime);
         }
 #endif
 
@@ -1491,7 +1529,7 @@ namespace
         {
             return testing::AssertionFailure()
                    << "Python plugin source not found at: "
-                   << plugin_source.string();
+                   << Das::Utils::PathToUtf8(plugin_source);
         }
 
         return testing::AssertionSuccess();
@@ -1508,7 +1546,8 @@ namespace
         {
             return testing::AssertionFailure()
                    << "Could not canonicalize parent directory: "
-                   << parent.string() << ", error=" << ec.message();
+                   << Das::Utils::PathToUtf8(parent)
+                   << ", error=" << ec.message();
         }
 
         const auto canonical_child =
@@ -1516,7 +1555,8 @@ namespace
         if (ec)
         {
             return testing::AssertionFailure()
-                   << "Could not canonicalize child path: " << child.string()
+                   << "Could not canonicalize child path: "
+                   << Das::Utils::PathToUtf8(child)
                    << ", error=" << ec.message();
         }
 
@@ -1526,18 +1566,18 @@ namespace
         {
             return testing::AssertionFailure()
                    << "Path is not inside expected directory: child="
-                   << canonical_child.string()
-                   << ", parent=" << canonical_parent.string();
+                   << Das::Utils::PathToUtf8(canonical_child)
+                   << ", parent=" << Das::Utils::PathToUtf8(canonical_parent);
         }
 
         for (const auto& part : relative)
         {
-            if (part == "..")
+            if (part == DAS_PATH_LITERAL(".."))
             {
                 return testing::AssertionFailure()
                        << "Path escapes expected directory: child="
-                       << canonical_child.string()
-                       << ", parent=" << canonical_parent.string();
+                       << Das::Utils::PathToUtf8(canonical_child) << ", parent="
+                       << Das::Utils::PathToUtf8(canonical_parent);
             }
         }
 
@@ -1568,18 +1608,18 @@ namespace
         {
             return testing::AssertionFailure()
                    << "DAS_PLUGIN_DIR is not a directory: "
-                   << plugin_dir.string();
+                   << Das::Utils::PathToUtf8(plugin_dir);
         }
 
         std::error_code ec;
         const auto      stale_root_manifest =
-            plugin_dir / "PythonFolderTestPlugin.json";
+            plugin_dir / DAS_PATH_LITERAL("PythonFolderTestPlugin.json");
         std::filesystem::remove(stale_root_manifest, ec);
         if (ec)
         {
             return testing::AssertionFailure()
                    << "Failed to remove stale Python folder root manifest: "
-                   << stale_root_manifest.string()
+                   << Das::Utils::PathToUtf8(stale_root_manifest)
                    << ", error=" << ec.message();
         }
 
@@ -1597,15 +1637,17 @@ namespace
         }
 
         const auto flat_root = flat_manifest_path.parent_path();
-        const auto flat_source = flat_root / "python_test_plugin.py";
+        const auto flat_source =
+            flat_root / DAS_PATH_LITERAL("python_test_plugin.py");
         if (!std::filesystem::is_regular_file(flat_source))
         {
             return testing::AssertionFailure()
                    << "PythonTestPlugin source not found for folder fixture: "
-                   << flat_source.string();
+                   << Das::Utils::PathToUtf8(flat_source);
         }
 
-        const auto folder_root = plugin_dir / "PythonFolderTestPlugin";
+        const auto folder_root =
+            plugin_dir / DAS_PATH_LITERAL("PythonFolderTestPlugin");
         const auto containment =
             AssertPathContainedInDirectory(folder_root, plugin_dir);
         if (!containment)
@@ -1618,7 +1660,8 @@ namespace
         {
             return testing::AssertionFailure()
                    << "Failed to remove Python folder fixture: "
-                   << folder_root.string() << ", error=" << ec.message();
+                   << Das::Utils::PathToUtf8(folder_root)
+                   << ", error=" << ec.message();
         }
 
         std::filesystem::create_directories(folder_root, ec);
@@ -1626,10 +1669,12 @@ namespace
         {
             return testing::AssertionFailure()
                    << "Failed to create Python folder fixture: "
-                   << folder_root.string() << ", error=" << ec.message();
+                   << Das::Utils::PathToUtf8(folder_root)
+                   << ", error=" << ec.message();
         }
 
-        const auto folder_source = folder_root / "python_folder_test_plugin.py";
+        const auto folder_source =
+            folder_root / DAS_PATH_LITERAL("python_folder_test_plugin.py");
         std::filesystem::copy_file(
             flat_source,
             folder_source,
@@ -1639,16 +1684,18 @@ namespace
         {
             return testing::AssertionFailure()
                    << "Failed to copy Python folder fixture source: "
-                   << folder_source.string() << ", error=" << ec.message();
+                   << Das::Utils::PathToUtf8(folder_source)
+                   << ", error=" << ec.message();
         }
 
-        const auto    manifest_path = folder_root / "manifest.json";
+        const auto manifest_path =
+            folder_root / DAS_PATH_LITERAL("manifest.json");
         std::ofstream manifest{manifest_path, std::ios::binary};
         if (!manifest)
         {
             return testing::AssertionFailure()
                    << "Failed to open Python folder fixture manifest: "
-                   << manifest_path.string();
+                   << Das::Utils::PathToUtf8(manifest_path);
         }
 
         manifest << "{\n"
@@ -1670,7 +1717,7 @@ namespace
         {
             return testing::AssertionFailure()
                    << "Failed to write Python folder fixture manifest: "
-                   << manifest_path.string();
+                   << Das::Utils::PathToUtf8(manifest_path);
         }
 
         *out_manifest_path = manifest_path;
@@ -2365,11 +2412,12 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonPlugin)
     }
 
     const auto plugin_root = plugin_json_path.parent_path();
-    const auto plugin_source = plugin_root / "python_test_plugin.py";
+    const auto plugin_source =
+        plugin_root / DAS_PATH_LITERAL("python_test_plugin.py");
     if (!std::filesystem::is_regular_file(plugin_source))
     {
         GTEST_SKIP() << "Python plugin source not found at: "
-                     << plugin_source.string();
+                     << Das::Utils::PathToUtf8(plugin_source);
     }
 
     const auto runtime_artifacts =
@@ -3680,10 +3728,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
 
     // 检查 JAR 文件是否存在
     const std::filesystem::path jar_path =
-        std::filesystem::path(plugin_json_path).parent_path()
-        / "JavaTestPlugin.jar";
+        plugin_json_path.parent_path() / DAS_PATH_LITERAL("JavaTestPlugin.jar");
     ASSERT_TRUE(std::filesystem::exists(jar_path))
-        << "JavaTestPlugin.jar not found at: " << jar_path.string();
+        << "JavaTestPlugin.jar not found at: "
+        << Das::Utils::PathToUtf8(jar_path);
 
     // 启动 Host 进程并注册到 ConnectionManager
     DasResult result = StartHostAndSetupRunLoop();
