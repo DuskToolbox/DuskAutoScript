@@ -89,6 +89,23 @@ inline std::optional<std::filesystem::path> PathFromEnvironment(
     }
 }
 
+/// 命令行参数文本物化为 path 的唯一通道。Windows CRT 交付的窄 argv 是
+/// ACP 编码（区别于仓内 UTF-8 std::string 约定）——此处的窄构造是与源
+/// 配对的正确通道，不是要消灭的隐式 ACP 介入；POSIX 窄 argv 跟随
+/// locale，现代系统的本码即 UTF-8。
+inline std::filesystem::path PathFromCommandLineArg(std::string_view arg_text)
+{
+    if constexpr (
+        std::is_same_v<typename std::filesystem::path::value_type, wchar_t>)
+    {
+        return std::filesystem::path{std::string(arg_text)};
+    }
+    else
+    {
+        return PathFromUtf8(arg_text);
+    }
+}
+
 DAS_UTILS_NS_END
 
 #endif // DAS_UTILS_PATHTEXT_H

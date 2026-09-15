@@ -380,8 +380,8 @@ int main(int argc, char* argv[])
 
         if (vm.count("plugin-dir"))
         {
-            handler_options.plugin_dir =
-                Das::Utils::PathFromUtf8(vm["plugin-dir"].as<std::string>());
+            handler_options.plugin_dir = Das::Utils::PathFromCommandLineArg(
+                vm["plugin-dir"].as<std::string>());
         }
         else
         {

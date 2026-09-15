@@ -1036,9 +1036,9 @@ int main(int argc, const char* argv[])
     boost::program_options::notify(vm);
 
     const std::filesystem::path plugin_dir =
-        Das::Utils::PathFromUtf8(vm["plugin-dir"].as<std::string>());
+        Das::Utils::PathFromCommandLineArg(vm["plugin-dir"].as<std::string>());
     const std::filesystem::path debug_dir =
-        Das::Utils::PathFromUtf8(vm["debug-dir"].as<std::string>());
+        Das::Utils::PathFromCommandLineArg(vm["debug-dir"].as<std::string>());
 
     std::optional<DAS::Core::IPC::MainProcess::WebSocketConfig> ws_config;
     if (vm.count("ipc-ws"))
