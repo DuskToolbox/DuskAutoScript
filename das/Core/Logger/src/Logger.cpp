@@ -12,6 +12,8 @@
 #include <das/Core/Logger/CrossProcessMutex.h>
 #include <das/Core/Logger/DasLogNotifierSink.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/BoostPathBridge.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
 #include <iomanip>
@@ -150,10 +152,12 @@ bool IsProcessAlive(unsigned long long pid)
 // 构造当前进程的日志文件路径：logs/<进程exe名>-<YYYYMMDD_HH-MM-SS>-<PID>.log。
 // 进程名取自 boost::dll::program_location()（与 DasDebug 崩溃 dump 命名一致），
 // 每个进程独立文件名，避免多进程并发写入同一文件互相覆盖。
-std::string MakeProcessLogPath()
+std::filesystem::path MakeProcessLogPath()
 {
-    const std::string process_stem =
-        boost::dll::program_location().stem().string();
+    // stem 经 boost→std 桥：两族 path 每平台 value_type 同型，native 搬运
+    // 零编码转换——进程 exe 名可能含非 ASCII，不走任何窄串通道。
+    const std::filesystem::path process_stem =
+        Das::Utils::ToStdPath(boost::dll::program_location()).stem();
 
     const std::time_t now = std::time(nullptr);
     std::tm           local_time{};
@@ -169,15 +173,18 @@ std::string MakeProcessLogPath()
         "%Y%m%d_%H-%M-%S",
         &local_time);
 
-    return DAS::fmt::format(
-        "logs/{}-{}-{}.log",
-        process_stem,
+    std::filesystem::path file_name = process_stem;
+    // 后缀成分纯 ASCII：窄拼接经 path 窄入向（Windows 走 ACP），ASCII 子集
+    // 在任意代码页下无损。
+    file_name += DAS::fmt::format(
+        "-{}-{}.log",
         time_buffer,
 #if defined(_WIN32) || defined(__CYGWIN__)
         static_cast<unsigned long long>(::GetCurrentProcessId()));
 #else
         static_cast<unsigned long long>(::getpid()));
 #endif
+    return std::filesystem::path{DAS_PATH_LITERAL("logs")} / file_name;
 }
 
 // 删除超过 max_age_days 且进程已退出的旧日志；活跃进程的日志不删。best-effort。
@@ -191,8 +198,11 @@ void CleanupStaleProcessLogs(
         return;
     }
 
-    const std::regex name_pattern(
-        R"(^(.+)-(\d{8}_\d{2}-\d{2}-\d{2})-(\d+)\.log(?:\.\d+)?$)");
+    // 文件名宽通道匹配：写入侧已是宽直达（进程 exe 名可能非 ASCII），窄
+    // .string() 读回在 ACP 不可表示字符下会异常/损坏——本函数挂在 g_logger
+    // 静态初始化路径上，异常即进程起不来。
+    const std::wregex name_pattern(
+        LR"(^(.+)-(\d{8}_\d{2}-\d{2}-\d{2})-(\d+)\.log(?:\.\d+)?$)");
     const std::time_t now = std::time(nullptr);
     const std::time_t cutoff =
         now - static_cast<std::time_t>(max_age_days) * 86400;
@@ -208,15 +218,23 @@ void CleanupStaleProcessLogs(
             continue;
         }
 
-        const std::string name = entry.path().filename().string();
-        std::smatch       match;
+        const std::wstring name = entry.path().filename().wstring();
+        std::wsmatch       match;
         if (!std::regex_match(name, match, name_pattern))
         {
             continue;
         }
 
-        std::tm            file_time{};
-        std::istringstream time_stream(match[2].str());
+        std::tm file_time{};
+        // 时间戳段纯 ASCII，逐字符收窄走窄流解析（get_time 的宽字符 facet
+        // 在 MinGW libstdc++ 上不可依赖）。
+        std::string narrow_time;
+        narrow_time.reserve(match[2].length());
+        for (const wchar_t time_character : match[2].str())
+        {
+            narrow_time.push_back(static_cast<char>(time_character));
+        }
+        std::istringstream time_stream(narrow_time);
         time_stream >> std::get_time(&file_time, "%Y%m%d_%H-%M-%S");
         if (time_stream.fail())
         {
@@ -248,16 +266,20 @@ namespace Core
 {
     const std::shared_ptr<spdlog::logger> g_logger = []()
     {
-        const std::string log_path = ::Details::MakeProcessLogPath();
+        const std::filesystem::path log_path = ::Details::MakeProcessLogPath();
         // 启动时清理：删除超期（默认 14 天）且对应进程已退出的旧日志，
         // 控制累计日志量。活跃进程的日志不会被删。
-        ::Details::CleanupStaleProcessLogs(std::filesystem::path{"logs"}, 14);
+        ::Details::CleanupStaleProcessLogs(
+            std::filesystem::path{DAS_PATH_LITERAL("logs")},
+            14);
 
         const auto std_sink =
             std::make_shared<::Details::ProcessSafeStdoutSink>();
+        // spdlog 的 filename_t 与 path::value_type 每平台同型（宽文件名
+        // 开关后 Windows 双 wstring），native() 原生搬运零编码转换。
         const auto file_sink =
             std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                log_path,
+                log_path.native(),
                 50 * 1024 * 1024, // 50mb
                 2);
         // DasLogNotifierSink：统一日志通知 sink（借用引用语义），多继承

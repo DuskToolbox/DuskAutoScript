@@ -320,7 +320,12 @@ public:
         // flush，未落盘的日志 ifstream 读不到。读前 flush
         // 一次把缓冲冲到磁盘，UI 轮询才能拿到最新。
         Das::Core::g_logger->flush();
-        std::ifstream f(file_sink_->filename(), std::ios::binary);
+        // filename() 返回 spdlog filename_t，与 path::value_type 每平台同型
+        // （宽文件名开关后 Windows 双 wstring）——经 path 构造全平台原生
+        // 搬运，ifstream 直接收 path。
+        std::ifstream f(
+            std::filesystem::path{file_sink_->filename()},
+            std::ios::binary);
         if (!f)
         {
             return EmitEmpty(pp_out_lines);
@@ -355,7 +360,9 @@ public:
         }
 
         Das::Core::g_logger->flush(); // 读前落盘（同上）
-        std::ifstream f(file_sink_->filename(), std::ios::binary);
+        std::ifstream f(
+            std::filesystem::path{file_sink_->filename()},
+            std::ios::binary);
         if (!f)
         {
             return EmitEmpty(pp_out_lines);
@@ -400,7 +407,9 @@ public:
         }
 
         Das::Core::g_logger->flush(); // 读前落盘（同上）
-        std::ifstream f(file_sink_->filename(), std::ios::binary);
+        std::ifstream f(
+            std::filesystem::path{file_sink_->filename()},
+            std::ios::binary);
         if (!f)
         {
             return EmitEmpty(pp_out_lines);

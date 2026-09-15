@@ -1335,13 +1335,14 @@ namespace Das::Plugins::DasMaaPi
                 {
                     return nullptr;
                 }
-                // spdlog 的 filename_t 是 ACP 窄串（_fsopen 打开），此处
-                // 保留 boost path 的 ACP 出向与其消费面一致；换 UTF-8
-                // 出向会在中文 plugin 目录下产生乱码文件名。
+                // spdlog 的 filename_t 与 boost path 的 string_type 每平台
+                // 同型（宽文件名开关后 Windows 双 wstring），native() 原生
+                // 搬运零编码转换——中文 plugin 目录下文件名不再依赖 ACP
+                // 往返巧合。
                 auto sink =
                     std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
                         (log_dir / DAS_PATH_LITERAL("DasMaaPi-agent.log"))
-                            .string(),
+                            .native(),
                         MAX_AGENT_LOG_BYTES,
                         MAX_AGENT_LOG_FILES);
                 auto logger =

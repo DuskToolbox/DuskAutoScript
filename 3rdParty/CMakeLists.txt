@@ -240,7 +240,10 @@ function(_download_and_config_spdlog)
 
     if (WIN32)
         set(SPDLOG_WCHAR_SUPPORT ON)
-        set(SPDLOG_WCHAR_FILENAMES OFF)
+        # filename_t 切到 std::wstring（_wfopen 原生打开），消除窄串经 ACP
+        # 的双向转换依赖。spdlog 上游以 PUBLIC 定义传播给所有消费者，
+        # 头/库 ABI 一致由其 CMake 自身保证。
+        set(SPDLOG_WCHAR_FILENAMES ON)
     endif ()
 
     FetchContent_MakeAvailable(spdlog)
