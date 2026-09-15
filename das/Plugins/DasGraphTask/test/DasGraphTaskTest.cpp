@@ -2788,7 +2788,7 @@ namespace
     TEST(GraphTaskFocusLogPublish, PublishNeverFailsTheTaskPath)
     {
         // 生产入口在无 recorder 服务/无 i18n 表的环境（单测进程）不抛不
-        // 崩，降级只落调试日志——Do 返回码不受 focus 发布影响。
+        // 崩，resolve 失败只落调试日志——Do 返回码不受 focus 发布影响。
         PublishGraphTaskFinishedFocusEntry(0);
         SUCCEED();
     }

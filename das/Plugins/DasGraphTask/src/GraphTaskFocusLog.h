@@ -20,8 +20,9 @@ namespace Das::Plugins::DasGraphTask
         const std::filesystem::path&                  i18n_directory,
         std::int64_t                                  end_value);
 
-    // 生产入口：主进程 das.focus-log-recorder 具名服务优先（失败降级本地
-    // 工厂）+ 插件包内 i18n/ 目录（DLL 自定位，cwd != 插件目录）。
+    // 生产入口：主进程 das.focus-log-recorder 具名服务；resolve 失败落调
+    // 试日志（含 end value），不降级 + 插件包内 i18n/ 目录（DLL 自定位，
+    // cwd != 插件目录）。
     void PublishGraphTaskFinishedFocusEntry(std::int64_t end_value);
 
 } // namespace Das::Plugins::DasGraphTask

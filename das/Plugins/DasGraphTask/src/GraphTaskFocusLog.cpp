@@ -143,10 +143,9 @@ namespace Das::Plugins::DasGraphTask
 
     void PublishGraphTaskFinishedFocusEntry(std::int64_t end_value)
     {
-        // 主进程具名服务优先（IPC 模式经 proxy 回主进程写 user.jsonl）；
-        // resolve 失败降级本地工厂——无 session 时 Record 返 OBJECT_NOT_INIT。
-        // 降级与失败均落调试日志（focus 面板看不到完成事件时按此定位），
-        // 任务返回码不受影响。
+        // 主进程具名服务（IPC 模式经 proxy 回主进程写 user.jsonl）；resolve
+        // 失败即落调试日志（含 end value），不降级、无本地工厂——focus 面板
+        // 看不到完成事件时按此定位，任务返回码不受影响。
         DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
         {
             DasPtr<IDasBase> resolved_base;
@@ -162,22 +161,11 @@ namespace Das::Plugins::DasGraphTask
                 DAS_LOG_ERROR(
                     DAS_FMT_NS::format(
                         "GraphTask focus recorder resolve failed "
-                        "(resolve_rc={}); falling back to local factory",
-                        static_cast<std::int64_t>(resolve_rc))
+                        "(resolve_rc={}); "
+                        "finished entry not published (end value={})",
+                        static_cast<std::int64_t>(resolve_rc),
+                        end_value)
                         .c_str());
-            }
-        }
-        if (!recorder)
-        {
-            if (DAS::IsFailed(CreateIDasProcessLogRecorder(
-                    nullptr,
-                    nullptr,
-                    recorder.Put()))
-                || !recorder)
-            {
-                DAS_LOG_ERROR(
-                    "GraphTask focus recorder unavailable; finished entry "
-                    "not published");
                 return;
             }
         }
