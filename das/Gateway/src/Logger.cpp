@@ -14,13 +14,17 @@ std::shared_ptr<spdlog::logger>& GetLogger()
         {
             const auto std_sink =
                 std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-            // 目标文件名来自 CMake target 标识符恒 ASCII：窄入向经 ACP
-            // 在任意代码页下无损；目录段走 DAS_PATH_LITERAL，native() 与
-            // spdlog filename_t 每平台同型原生搬运。
+            // 文件名基段是构建系统注入的字面量宏，与 ".log" 的拼接只能
+            // 在 path 域做 +=（宽窄字符串字面量相邻拼接非法，预处理层
+            // 无法完成）；native() 与 spdlog filename_t 每平台同型原生
+            // 搬运。
+            std::filesystem::path log_file_name{
+                DAS_PATH_LITERAL(DAS_GATEWAY_NAME)};
+            log_file_name += DAS_PATH_LITERAL(".log");
             const auto file_sink =
                 std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
                     (std::filesystem::path{DAS_PATH_LITERAL("logs")}
-                     / std::filesystem::path{DAS_GATEWAY_NAME ".log"})
+                     / log_file_name)
                         .native(),
                     50 * 1024 * 1024, // 50mb
                     2);
