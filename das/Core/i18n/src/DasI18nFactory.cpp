@@ -4,6 +4,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/PathText.h>
 
 #include <filesystem>
 #include <new>
@@ -52,7 +53,7 @@ DasResult CreateIDasI18nFromDirectory(
         impl = new DAS::Core::i18n::IDasI18nImpl{};
         impl->AddRef();
         const auto load_result =
-            impl->LoadDirectory(std::filesystem::path(dir_utf8));
+            impl->LoadDirectory(Das::Utils::PathFromUtf8(dir_utf8));
         if (DAS::IsFailed(load_result))
         {
             impl->Release();

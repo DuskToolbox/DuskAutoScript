@@ -4,6 +4,9 @@
 
 #include <boost/dll/runtime_symbol_info.hpp>
 
+#include <das/Utils/BoostPathBridge.h>
+#include <das/Utils/PathText.h>
+
 #include <ctime>
 #include <filesystem>
 #include <string>
@@ -23,8 +26,10 @@ namespace
     // 时间），交平台层在写 dump 时用其取异常记录。
     std::filesystem::path ResolveDumpPath(void* /*exception_context*/)
     {
-        const std::string process_name =
-            boost::dll::program_location().stem().string();
+        // 进程 exe 名可能含非 ASCII：boost→std 桥保 path 域（native 搬运
+        // 零编码转换），全程不经窄串通道。
+        const std::filesystem::path process_stem =
+            Das::Utils::ToStdPath(boost::dll::program_location()).stem();
 
         const std::time_t now = std::time(nullptr);
         std::tm           local_time{};
@@ -40,11 +45,16 @@ namespace
             "%Y-%m-%d_%H-%M-%S",
             &local_time);
 
-        const auto      dump_dir = std::filesystem::current_path() / "dmp";
+        const auto dump_dir =
+            std::filesystem::current_path() / DAS_PATH_LITERAL("dmp");
         std::error_code ec;
         std::filesystem::create_directories(dump_dir, ec);
 
-        return dump_dir / (process_name + "-" + time_buffer + ".dmp");
+        // 时间戳段纯 ASCII：窄拼接经 path 窄入向（Windows 走 ACP），ASCII
+        // 子集在任意代码页下无损。
+        std::filesystem::path file_name = process_stem;
+        file_name += std::string{"-"} + time_buffer + ".dmp";
+        return dump_dir / file_name;
     }
 } // namespace
 

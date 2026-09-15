@@ -7,6 +7,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 
 #include <chrono>
@@ -198,7 +199,8 @@ namespace
 } // namespace
 
 DebugWriterImpl::DebugWriterImpl(std::filesystem::path debug_dir)
-    : debug_dir_(std::move(debug_dir)), jsonl_path_(debug_dir_ / "debug.jsonl")
+    : debug_dir_(std::move(debug_dir)),
+      jsonl_path_(debug_dir_ / DAS_PATH_LITERAL("debug.jsonl"))
 {
     std::filesystem::create_directories(debug_dir_);
     worker_ = std::thread([this]() { WorkerLoop(); });

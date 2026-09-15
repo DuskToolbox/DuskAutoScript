@@ -16,6 +16,11 @@ endif()
 set_property(TARGET DasDebug PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 target_include_directories(DasDebug PUBLIC include)
+# CrashDumper 的路径通道消费 das/Utils 的 header-only helper 家族
+# （PathText.h/BoostPathBridge.h）；不链 DasUtils 库——那是带 yyjson/fmt
+# 依赖的静态库，会破坏 DasDebug 与 DasCore.dll 解耦的轻量设计。
+target_include_directories(
+    DasDebug PRIVATE ${CMAKE_SOURCE_DIR}/das/Utils/include)
 target_link_libraries(DasDebug PUBLIC DasPlatformDefs DasCommonHeaders)
 
 # boost::dll::program_location（跨平台取 exe 路径）需要。

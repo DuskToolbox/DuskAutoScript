@@ -7,6 +7,7 @@
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 
 #include <filesystem>
@@ -284,7 +285,7 @@ DasResult IDasI18nImpl::MergeFromFile(IDasReadOnlyString* json_path_utf8)
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    return MergeSingleFile(std::filesystem::path(path_utf8));
+    return MergeSingleFile(Das::Utils::PathFromUtf8(path_utf8));
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +307,7 @@ DasResult IDasI18nImpl::LoadDirectory(const std::filesystem::path& dir)
             continue;
         }
         const auto& path = entry.path();
-        if (path.extension() != ".json")
+        if (path.extension() != DAS_PATH_LITERAL(".json"))
         {
             continue;
         }
@@ -328,7 +329,7 @@ DasResult IDasI18nImpl::MergeSingleFile(const std::filesystem::path& json_path)
     {
         DAS_CORE_LOG_ERROR(
             "i18n merge: cannot open json file: {}",
-            DAS::Utils::U8AsString(json_path.u8string()));
+            Das::Utils::PathToUtf8(json_path));
         return DAS_E_INVALID_JSON;
     }
     const std::string content(
@@ -340,7 +341,7 @@ DasResult IDasI18nImpl::MergeSingleFile(const std::filesystem::path& json_path)
     {
         DAS_CORE_LOG_ERROR(
             "i18n merge: invalid JSON in file: {}",
-            DAS::Utils::U8AsString(json_path.u8string()));
+            Das::Utils::PathToUtf8(json_path));
         return DAS_E_INVALID_JSON;
     }
     const auto obj = parsed->as_object();
@@ -348,11 +349,11 @@ DasResult IDasI18nImpl::MergeSingleFile(const std::filesystem::path& json_path)
     {
         DAS_CORE_LOG_ERROR(
             "i18n merge: JSON root is not an object in file: {}",
-            DAS::Utils::U8AsString(json_path.u8string()));
+            Das::Utils::PathToUtf8(json_path));
         return DAS_E_INVALID_JSON;
     }
 
-    std::string locale = json_path.stem().string();
+    std::string locale = Das::Utils::PathToUtf8(json_path.stem());
     // locale 大小写无关：文件名 stem 统一小写入表（与 Lookup 的 normalized
     // 查询对齐）。
     DAS::Utils::ToLowerInPlace(locale);
@@ -367,7 +368,7 @@ DasResult IDasI18nImpl::MergeSingleFile(const std::filesystem::path& json_path)
             DAS_CORE_LOG_ERROR(
                 "i18n merge: value for key '{}' is not a string in file: {}",
                 std::string(json_key),
-                DAS::Utils::U8AsString(json_path.u8string()));
+                Das::Utils::PathToUtf8(json_path));
             return DAS_E_INVALID_JSON;
         }
         tmp[std::string(json_key)] = std::string(*str_opt);

@@ -8,6 +8,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/DasDebug.h>
 
 #include <chrono>
@@ -24,10 +25,10 @@ namespace
 {
     struct RuntimeState
     {
-        std::mutex                                mutex;
-        bool                                      initialized{false};
-        bool                                      enabled{false};
-        std::filesystem::path                     debug_dir{"logs/debug"};
+        std::mutex            mutex;
+        bool                  initialized{false};
+        bool                  enabled{false};
+        std::filesystem::path debug_dir{DAS_PATH_LITERAL("logs/debug")};
         std::vector<std::shared_ptr<IDebugSink>>  sinks;
         std::vector<std::shared_ptr<IDebugDrain>> drains;
         std::shared_ptr<DebugImageSnapshot>       latest_image;
@@ -42,9 +43,10 @@ namespace
     auto ResolveDebugDir(const std::filesystem::path& configured)
         -> std::filesystem::path
     {
-        const auto path = configured.empty()
-                              ? std::filesystem::path{"logs/debug"}
-                              : configured;
+        const auto path =
+            configured.empty()
+                ? std::filesystem::path{DAS_PATH_LITERAL("logs/debug")}
+                : configured;
         return std::filesystem::absolute(path).lexically_normal();
     }
 
@@ -187,7 +189,9 @@ DasResult DebugRuntime::Initialize(const DebugRuntimeOptions& options)
         {
             return DAS_E_INVALID_PATH;
         }
-        std::filesystem::create_directories(state.debug_dir / "img", ec);
+        std::filesystem::create_directories(
+            state.debug_dir / DAS_PATH_LITERAL("img"),
+            ec);
         if (ec)
         {
             return DAS_E_INVALID_PATH;
@@ -371,7 +375,7 @@ void DebugRuntime::ResetForTest()
     const std::scoped_lock lock{state.mutex};
     state.initialized = false;
     state.enabled = false;
-    state.debug_dir = std::filesystem::path{"logs/debug"};
+    state.debug_dir = std::filesystem::path{DAS_PATH_LITERAL("logs/debug")};
     state.sinks.clear();
     state.drains.clear();
     state.latest_image.reset();

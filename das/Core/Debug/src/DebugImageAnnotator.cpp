@@ -5,7 +5,7 @@
 #include <das/Core/OcvWrapper/IImageBackend.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
 
 #include <algorithm>
@@ -16,6 +16,7 @@
 #include <deque>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <mutex>
 #include <sstream>
@@ -375,17 +376,41 @@ namespace
             {
                 DAS_CORE_LOG_ERROR(
                     "Debug image directory creation failed for {}: {}",
-                    DAS::Utils::U8AsString(parent.u8string()),
+                    Das::Utils::PathToUtf8(parent),
                     ec.message());
                 return DAS_E_INVALID_PATH;
             }
         }
 
-        if (!cv::imwrite(path.string(), image))
+        // cv::imwrite 的落盘通道是 CRT 窄 fopen（Windows 按 ACP 解释路径），
+        // 中文 debug 目录会找不到目录而写失败；拆成编码到内存 + ofstream
+        // 直喂 path（ImageSaver 的 Encode→buffer→ofstream 同一定式）。
+        // 编码格式由调用方派生的文件名恒为 .png。
+        std::vector<unsigned char> encoded;
+        if (!cv::imencode(".png", image, encoded))
+        {
+            DAS_CORE_LOG_ERROR(
+                "Debug image encode failed for {}",
+                Das::Utils::PathToUtf8(path));
+            return DAS_E_INVALID_FILE;
+        }
+        std::ofstream output{path, std::ios::binary | std::ios::trunc};
+        if (!output)
         {
             DAS_CORE_LOG_ERROR(
                 "Debug image write failed for {}",
-                DAS::Utils::U8AsString(path.u8string()));
+                Das::Utils::PathToUtf8(path));
+            return DAS_E_INVALID_FILE;
+        }
+        output.write(
+            reinterpret_cast<const char*>(encoded.data()),
+            static_cast<std::streamsize>(encoded.size()));
+        output.flush();
+        if (!output)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Debug image write failed for {}",
+                Das::Utils::PathToUtf8(path));
             return DAS_E_INVALID_FILE;
         }
 
@@ -560,13 +585,13 @@ DebugImageWriteResult SaveOriginalAndAnnotated(
     auto annotated = snapshot->bgr_image.clone();
     DrawAnnotations(annotated, annotations);
 
-    const auto img_dir = DebugRuntime::DebugDir() / "img";
+    const auto img_dir = DebugRuntime::DebugDir() / DAS_PATH_LITERAL("img");
     EnqueueImageJob(
         ImageJob{
             snapshot->bgr_image.clone(),
             std::move(annotated),
-            img_dir / result.original_image_filename,
-            img_dir / result.image_filename});
+            img_dir / Das::Utils::PathFromUtf8(result.original_image_filename),
+            img_dir / Das::Utils::PathFromUtf8(result.image_filename)});
 
     return result;
 }
