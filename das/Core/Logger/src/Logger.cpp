@@ -173,16 +173,17 @@ std::filesystem::path MakeProcessLogPath()
         "%Y%m%d_%H-%M-%S",
         &local_time);
 
-    std::filesystem::path file_name = process_stem;
-    // 后缀成分纯 ASCII：窄拼接经 path 窄入向（Windows 走 ACP），ASCII 子集
-    // 在任意代码页下无损。
-    file_name += DAS::fmt::format(
-        "-{}-{}.log",
-        time_buffer,
+    // 文件名在 UTF-8 域一次拼好再物化：stem 可能非 ASCII，后缀段纯
+    // ASCII，拼接不改变编码边界。
+    const auto file_name = Das::Utils::PathFromUtf8(
+        Das::Utils::PathToUtf8(process_stem)
+        + DAS::fmt::format(
+            "-{}-{}.log",
+            time_buffer,
 #if defined(_WIN32) || defined(__CYGWIN__)
-        static_cast<unsigned long long>(::GetCurrentProcessId()));
+            static_cast<unsigned long long>(::GetCurrentProcessId())));
 #else
-        static_cast<unsigned long long>(::getpid()));
+            static_cast<unsigned long long>(::getpid())));
 #endif
     return std::filesystem::path{DAS_PATH_LITERAL("logs")} / file_name;
 }

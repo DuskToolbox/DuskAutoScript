@@ -50,11 +50,12 @@ namespace
         std::error_code ec;
         std::filesystem::create_directories(dump_dir, ec);
 
-        // 时间戳段纯 ASCII：窄拼接经 path 窄入向（Windows 走 ACP），ASCII
-        // 子集在任意代码页下无损。
-        std::filesystem::path file_name = process_stem;
-        file_name += std::string{"-"} + time_buffer + ".dmp";
-        return dump_dir / file_name;
+        // 文件名在 UTF-8 域一次拼好再物化：进程名可能非 ASCII，时间戳段
+        // 纯 ASCII，拼接不改变编码边界。
+        return dump_dir
+               / Das::Utils::PathFromUtf8(
+                   Das::Utils::PathToUtf8(process_stem) + std::string{"-"}
+                   + time_buffer + ".dmp");
     }
 } // namespace
 
