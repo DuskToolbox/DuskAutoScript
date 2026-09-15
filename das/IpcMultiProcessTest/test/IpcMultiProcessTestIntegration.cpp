@@ -3929,13 +3929,9 @@ TEST_F(
  * 模拟场景：启动一个辅助进程作为"假主进程"，完成真实握手后杀掉它，
  * 验证 Host 能感知并退出。
  *
- * 实现方式：
- * 1. 启动 FakeMain（等待 host_pid）
- * 2. 启动 DasHost，获得 host_pid
- * 3. 通过 shared_memory 将 host_pid 传给 FakeMain
- * 4. FakeMain 创建正确命名的管道，完成握手
- * 5. 测试框架杀掉 FakeMain
- * 6. 验证 DasHost 父进程监控检测到并退出
+ * 实现方式：启动 FakeMain 并等其控制共享内存就绪 → 启动 DasHost 获得
+ * host_pid → 写入 shared_memory 交给 FakeMain → FakeMain 创建正确命名
+ * 的管道并完成握手 → 杀掉 FakeMain → 验证 DasHost 父进程监控退出。
  */
 TEST_F(
     IpcMultiProcessTestIntegration,
@@ -3965,11 +3961,10 @@ TEST_F(
     // 2. 生成唯一信号名称
     const std::string signal_name = FakeMainProcess::GenerateUniqueSignalName();
 
-    // 3. 创建信号持有者（持有锁，FakeMain 会等待）
+    // 创建信号持有者（持有锁，FakeMain 会等待）
     FakeMainProcess::SignalHolder signal_holder(signal_name);
 
-    // 4. 启动假主进程（等待 host_pid）
-    //    FakeMain 会先创建共享内存，然后等待我们写入 host_pid
+    // 假主进程先启动并创建控制共享内存（随后等待写入 host_pid）
     boost::asio::io_context        fake_main_io_ctx;
     const std::vector<std::string> fake_main_args = {
         "--fake-main",
@@ -3985,8 +3980,18 @@ TEST_F(
 
     DAS_CORE_LOG_INFO("Fake main started: pid = {}", fake_main_pid);
 
-    // 5. 启动 DasHost（连接到假主进程）
-    //    先启动 DasHost 获取 host_pid，然后写入共享内存让 FakeMain 创建管道
+    // 必须等 FakeMain 就绪后再启动 DasHost：host 侧打开 SHM 池的重试
+    // 窗口有限，若与 FakeMain 的进程启动并发，大体积 ASAN 测试进程的
+    // 启动延迟会耗尽窗口，握手确定性超时
+    const bool shm_ready =
+        FakeMainProcess::KillParentSharedMemory::WaitForSharedMemoryReady(
+            FakeMainProcess::KILL_PARENT_SHM_NAME,
+            std::chrono::seconds(10));
+    ASSERT_TRUE(shm_ready) << "FakeMain did not create shared memory in time";
+    DAS_CORE_LOG_INFO("Shared memory is ready");
+
+    // FakeMain 已在等待 host_pid，此时启动 DasHost 的重试窗只需覆盖
+    // FakeMain 的管道创建
     boost::asio::io_context        host_io_ctx;
     const std::vector<std::string> host_args = {
         "--main-pid",
@@ -4004,14 +4009,6 @@ TEST_F(
         "Host started: pid = {}, main_pid = {}",
         host_pid,
         fake_main_pid);
-
-    // 6. 等待 FakeMain 创建共享内存（避免竞态条件）
-    const bool shm_ready =
-        FakeMainProcess::KillParentSharedMemory::WaitForSharedMemoryReady(
-            FakeMainProcess::KILL_PARENT_SHM_NAME,
-            std::chrono::seconds(10));
-    ASSERT_TRUE(shm_ready) << "FakeMain did not create shared memory in time";
-    DAS_CORE_LOG_INFO("Shared memory is ready");
 
     // 7. 将 host_pid 写入共享内存，让 FakeMain 可以创建正确命名的管道
     FakeMainProcess::KillParentSharedMemory::WriteHostPid(
