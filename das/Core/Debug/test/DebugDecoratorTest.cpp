@@ -8,6 +8,7 @@
 #include <das/DasConfig.h>
 #include <das/DasPtr.hpp>
 #include <das/DasTypes.hpp>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include "../src/DebugWriterImpl.h"
@@ -32,8 +33,10 @@ namespace Das::Core::Debug::Test
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
             auto path =
-                std::filesystem::current_path() / "debug-test-output"
-                / (std::string{test_name} + "-" + std::to_string(stamp));
+                std::filesystem::current_path()
+                / DAS_PATH_LITERAL("debug-test-output")
+                / Das::Utils::PathFromUtf8(
+                    std::string{test_name} + "-" + std::to_string(stamp));
             std::filesystem::remove_all(path);
             return path;
         }
@@ -174,7 +177,7 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(DebugRuntime::Initialize(fallback_options), DAS_S_OK);
         EXPECT_EQ(
             DebugRuntime::DebugDir(),
-            std::filesystem::absolute("logs/debug"));
+            std::filesystem::absolute(DAS_PATH_LITERAL("logs/debug")));
 
         DebugRuntime::Shutdown();
         DebugRuntime::ResetForTest();
@@ -206,8 +209,9 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(DebugRuntime::SubmitEvent(event), DAS_S_OK);
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
 
-        EXPECT_FALSE(std::filesystem::exists(dir / "debug.jsonl"));
-        EXPECT_FALSE(std::filesystem::exists(dir / "img"));
+        EXPECT_FALSE(
+            std::filesystem::exists(dir / DAS_PATH_LITERAL("debug.jsonl")));
+        EXPECT_FALSE(std::filesystem::exists(dir / DAS_PATH_LITERAL("img")));
     }
 
     TEST_F(
@@ -230,7 +234,7 @@ namespace Das::Core::Debug::Test
         writer->Shutdown();
         writer->Release();
 
-        const auto lines = ReadLines(dir / "debug.jsonl");
+        const auto lines = ReadLines(dir / DAS_PATH_LITERAL("debug.jsonl"));
         ASSERT_EQ(lines.size(), 2U);
         ExpectContains(lines[0], "\"step\":1");
         ExpectContains(lines[1], "\"step\":2");
@@ -281,7 +285,7 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(DebugRuntime::SubmitEvent(event), DAS_S_OK);
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
 
-        const auto lines = ReadLines(dir / "debug.jsonl");
+        const auto lines = ReadLines(dir / DAS_PATH_LITERAL("debug.jsonl"));
         ASSERT_EQ(lines.size(), 1U);
         ExpectContains(lines[0], R"("type":"flush_metadata")");
 
@@ -309,12 +313,17 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(DebugRuntime::SubmitEvent(event), DAS_S_OK);
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
 
-        EXPECT_TRUE(std::filesystem::exists(dir / "debug.jsonl"));
         EXPECT_TRUE(
-            std::filesystem::exists(dir / "img" / image_result.image_filename));
+            std::filesystem::exists(dir / DAS_PATH_LITERAL("debug.jsonl")));
         EXPECT_TRUE(
             std::filesystem::exists(
-                dir / "img" / image_result.original_image_filename));
+                dir / DAS_PATH_LITERAL("img")
+                / Das::Utils::PathFromUtf8(image_result.image_filename)));
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                dir / DAS_PATH_LITERAL("img")
+                / Das::Utils::PathFromUtf8(
+                    image_result.original_image_filename)));
 
         ctx->UnregisterServiceByName("debug.writer");
     }
@@ -380,9 +389,12 @@ namespace Das::Core::Debug::Test
 
         DebugRuntime::Shutdown();
 
-        EXPECT_TRUE(std::filesystem::exists(dir / "debug.jsonl"));
         EXPECT_TRUE(
-            std::filesystem::exists(dir / "img" / image_result.image_filename));
+            std::filesystem::exists(dir / DAS_PATH_LITERAL("debug.jsonl")));
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                dir / DAS_PATH_LITERAL("img")
+                / Das::Utils::PathFromUtf8(image_result.image_filename)));
         EXPECT_EQ(DebugRuntime::GetLatestImage(), nullptr);
 
         ctx->UnregisterServiceByName("debug.writer");
@@ -401,8 +413,9 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
 
         EXPECT_FALSE(IsImageWorkerRunningForTest());
-        EXPECT_FALSE(std::filesystem::exists(dir / "debug.jsonl"));
-        EXPECT_FALSE(std::filesystem::exists(dir / "img"));
+        EXPECT_FALSE(
+            std::filesystem::exists(dir / DAS_PATH_LITERAL("debug.jsonl")));
+        EXPECT_FALSE(std::filesystem::exists(dir / DAS_PATH_LITERAL("img")));
     }
 
 } // namespace Das::Core::Debug::Test

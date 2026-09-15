@@ -2,6 +2,7 @@
 #include <das/Core/Debug/DebugRuntime.h>
 #include <das/Core/OcvWrapper/CpuImageImpl.hpp>
 #include <das/DasPtr.hpp>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 DAS_DISABLE_WARNING_BEGIN
@@ -12,7 +13,10 @@ DAS_DISABLE_WARNING_END
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <vector>
 
 #ifdef DAS_WINDOWS
 #include <stdlib.h>
@@ -27,8 +31,10 @@ namespace Das::Core::Debug::Test
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
             auto path =
-                std::filesystem::current_path() / "debug-test-output"
-                / (std::string{test_name} + "-" + std::to_string(stamp));
+                std::filesystem::current_path()
+                / DAS_PATH_LITERAL("debug-test-output")
+                / Das::Utils::PathFromUtf8(
+                    std::string{test_name} + "-" + std::to_string(stamp));
             std::filesystem::remove_all(path);
             return path;
         }
@@ -93,6 +99,18 @@ namespace Das::Core::Debug::Test
             EXPECT_EQ(image.at<cv::Vec3b>(y, x), expected);
         }
 
+        // cv::imread 在 Windows 按 ACP 解释窄路径，非 ASCII 路径会打不开；
+        // 经 ifstream（path 原生宽通道）读字节再 imdecode 才与
+        // path 的编码语义一致。
+        auto ReadImageFile(const std::filesystem::path& path) -> cv::Mat
+        {
+            std::ifstream                    input{path, std::ios::binary};
+            const std::vector<unsigned char> bytes{
+                std::istreambuf_iterator<char>{input},
+                std::istreambuf_iterator<char>{}};
+            return cv::imdecode(bytes, cv::IMREAD_COLOR);
+        }
+
     } // namespace
 
     TEST_F(
@@ -122,12 +140,15 @@ namespace Das::Core::Debug::Test
             std::string::npos);
 
         const auto original_path =
-            dir / "img" / image_result.original_image_filename;
-        const auto annotated_path = dir / "img" / image_result.image_filename;
+            dir / DAS_PATH_LITERAL("img")
+            / Das::Utils::PathFromUtf8(image_result.original_image_filename);
+        const auto annotated_path =
+            dir / DAS_PATH_LITERAL("img")
+            / Das::Utils::PathFromUtf8(image_result.image_filename);
         EXPECT_TRUE(std::filesystem::exists(original_path));
         ASSERT_TRUE(std::filesystem::exists(annotated_path));
 
-        const auto annotated = cv::imread(annotated_path.string());
+        const auto annotated = ReadImageFile(annotated_path);
         ExpectBgrPixel(annotated, 4, 4, cv::Vec3b{0, 255, 0});
     }
 
@@ -150,10 +171,12 @@ namespace Das::Core::Debug::Test
             SaveOriginalAndAnnotated("ocr_recognize", snapshot, {line, ch});
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
 
-        const auto annotated_path = dir / "img" / image_result.image_filename;
+        const auto annotated_path =
+            dir / DAS_PATH_LITERAL("img")
+            / Das::Utils::PathFromUtf8(image_result.image_filename);
         ASSERT_TRUE(std::filesystem::exists(annotated_path));
 
-        const auto annotated = cv::imread(annotated_path.string());
+        const auto annotated = ReadImageFile(annotated_path);
         ExpectBgrPixel(annotated, 3, 3, cv::Vec3b{0, 255, 0});
         ExpectBgrPixel(annotated, 8, 8, cv::Vec3b{0, 255, 255});
     }

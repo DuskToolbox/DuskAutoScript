@@ -11,6 +11,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasRef.hpp>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCaptureFactory.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasInput.Implements.hpp>
@@ -124,8 +125,10 @@ namespace Das::Core::Debug::Test
         {
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
-            return std::filesystem::current_path() / "debug-integration-output"
-                   / (std::string{test_name} + "-" + std::to_string(stamp));
+            return std::filesystem::current_path()
+                   / DAS_PATH_LITERAL("debug-integration-output")
+                   / Das::Utils::PathFromUtf8(
+                       std::string{test_name} + "-" + std::to_string(stamp));
         }
 
         void SetDasDebug(const char* value)
@@ -192,15 +195,15 @@ namespace Das::Core::Debug::Test
             std::string_view             needle)
         {
             const auto lines = ReadLines(path);
-            ASSERT_FALSE(lines.empty()) << path.string();
+            ASSERT_FALSE(lines.empty()) << Das::Utils::PathToUtf8(path);
 
             bool found = false;
             for (const auto& line : lines)
             {
                 found = found || line.find(needle) != std::string::npos;
             }
-            EXPECT_TRUE(found)
-                << "Missing " << needle << " in " << path.string();
+            EXPECT_TRUE(found) << "Missing " << needle << " in "
+                               << Das::Utils::PathToUtf8(path);
         }
 
         auto CountPngFiles(const std::filesystem::path& dir) -> size_t
@@ -214,7 +217,7 @@ namespace Das::Core::Debug::Test
             for (const auto& entry : std::filesystem::directory_iterator(dir))
             {
                 if (entry.is_regular_file()
-                    && entry.path().extension() == ".png")
+                    && entry.path().extension() == DAS_PATH_LITERAL(".png"))
                 {
                     ++count;
                 }
@@ -238,7 +241,9 @@ namespace Das::Core::Debug::Test
             for (;;)
             {
                 if (std::filesystem::exists(
-                        current / "das" / "Plugins" / "DasAdbTouch"))
+                        current / DAS_PATH_LITERAL("das")
+                        / DAS_PATH_LITERAL("Plugins")
+                        / DAS_PATH_LITERAL("DasAdbTouch")))
                 {
                     return current;
                 }
@@ -629,8 +634,10 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(capture->Capture(image_guard.Put()), DAS_S_OK);
 
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
-        ExpectFileContains(dir / "debug.jsonl", R"("type":"capture")");
-        EXPECT_GE(CountPngFiles(dir / "img"), 2U);
+        ExpectFileContains(
+            dir / DAS_PATH_LITERAL("debug.jsonl"),
+            R"("type":"capture")");
+        EXPECT_GE(CountPngFiles(dir / DAS_PATH_LITERAL("img")), 2U);
         EXPECT_NE(DebugRuntime::GetLatestImage(), nullptr);
 
         ctx->UnregisterServiceByName("debug.writer");
@@ -662,8 +669,10 @@ namespace Das::Core::Debug::Test
 
         ASSERT_EQ(input->Click(10, 11), DAS_S_OK);
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
-        ExpectFileContains(dir / "debug.jsonl", R"("type":"input_click")");
-        EXPECT_GE(CountPngFiles(dir / "img"), 2U);
+        ExpectFileContains(
+            dir / DAS_PATH_LITERAL("debug.jsonl"),
+            R"("type":"input_click")");
+        EXPECT_GE(CountPngFiles(dir / DAS_PATH_LITERAL("img")), 2U);
 
         ctx->UnregisterServiceByName("debug.writer");
     }
@@ -728,7 +737,9 @@ namespace Das::Core::Debug::Test
         auto input = DasPtr<PluginInterface::IDasInput>::Attach(p_raw_input);
         ASSERT_EQ(input->Click(12, 13), DAS_S_OK);
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
-        ExpectFileContains(dir / "debug.jsonl", R"("type":"input_click")");
+        ExpectFileContains(
+            dir / DAS_PATH_LITERAL("debug.jsonl"),
+            R"("type":"input_click")");
 
         ctx->UnregisterServiceByName("debug.writer");
     }
@@ -750,8 +761,10 @@ namespace Das::Core::Debug::Test
         const PluginInterface::DasPoint to{30, 31};
         ASSERT_EQ(decorated_touch->Swipe(from, to, 250), DAS_S_OK);
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
-        ExpectFileContains(dir / "debug.jsonl", R"("type":"input_swipe")");
-        EXPECT_GE(CountPngFiles(dir / "img"), 2U);
+        ExpectFileContains(
+            dir / DAS_PATH_LITERAL("debug.jsonl"),
+            R"("type":"input_swipe")");
+        EXPECT_GE(CountPngFiles(dir / DAS_PATH_LITERAL("img")), 2U);
 
         ctx->UnregisterServiceByName("debug.writer");
     }
@@ -760,9 +773,12 @@ namespace Das::Core::Debug::Test
     {
         const auto                               root = FindSourceRoot();
         const std::vector<std::filesystem::path> plugin_dirs{
-            root / "das" / "Plugins" / "DasWindowsCapture",
-            root / "das" / "Plugins" / "DasAdbCapture",
-            root / "das" / "Plugins" / "DasAdbTouch"};
+            root / DAS_PATH_LITERAL("das") / DAS_PATH_LITERAL("Plugins")
+                / DAS_PATH_LITERAL("DasWindowsCapture"),
+            root / DAS_PATH_LITERAL("das") / DAS_PATH_LITERAL("Plugins")
+                / DAS_PATH_LITERAL("DasAdbCapture"),
+            root / DAS_PATH_LITERAL("das") / DAS_PATH_LITERAL("Plugins")
+                / DAS_PATH_LITERAL("DasAdbTouch")};
         const std::vector<std::string_view> needles{
             "Debug",
             "DasDebug",
@@ -771,7 +787,7 @@ namespace Das::Core::Debug::Test
         for (const auto& plugin_dir : plugin_dirs)
         {
             ASSERT_TRUE(std::filesystem::exists(plugin_dir))
-                << plugin_dir.string();
+                << Das::Utils::PathToUtf8(plugin_dir);
             for (const auto& entry :
                  std::filesystem::recursive_directory_iterator(plugin_dir))
             {
@@ -787,7 +803,8 @@ namespace Das::Core::Debug::Test
                 for (const auto needle : needles)
                 {
                     EXPECT_EQ(content.find(needle), std::string::npos)
-                        << entry.path().string() << " contains " << needle;
+                        << Das::Utils::PathToUtf8(entry.path()) << " contains "
+                        << needle;
                 }
             }
         }
@@ -850,8 +867,9 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(capture->Capture(image_guard.Put()), DAS_S_OK);
 
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
-        EXPECT_FALSE(std::filesystem::exists(dir / "debug.jsonl"));
-        EXPECT_FALSE(std::filesystem::exists(dir / "img"));
+        EXPECT_FALSE(
+            std::filesystem::exists(dir / DAS_PATH_LITERAL("debug.jsonl")));
+        EXPECT_FALSE(std::filesystem::exists(dir / DAS_PATH_LITERAL("img")));
     }
 
 } // namespace Das::Core::Debug::Test

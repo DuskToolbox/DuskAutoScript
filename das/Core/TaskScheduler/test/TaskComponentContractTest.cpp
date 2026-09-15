@@ -9,7 +9,9 @@
 #include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasString.hpp>
+#include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/TaskComponentPorts.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
@@ -181,19 +183,24 @@ namespace
 
     std::filesystem::path FindDasFlowControlManifest()
     {
-        if (const char* plugin_dir = std::getenv("DAS_PLUGIN_DIR");
-            plugin_dir != nullptr && plugin_dir[0] != '\0')
+        if (const auto plugin_dir =
+                Das::Utils::PathFromEnvironment("DAS_PLUGIN_DIR");
+            plugin_dir && !plugin_dir->empty())
         {
-            return std::filesystem::path{plugin_dir} / "DasFlowControl.json";
+            return *plugin_dir / DAS_PATH_LITERAL("DasFlowControl.json");
         }
 
         const auto cwd = std::filesystem::current_path();
         const std::array<std::filesystem::path, 3> candidates{
-            cwd / "plugins" / "DasFlowControl.json",
-            cwd.parent_path() / "bin" / "Debug" / "plugins"
-                / "DasFlowControl.json",
-            cwd / "build" / "mingw-debug" / "bin" / "Debug" / "plugins"
-                / "DasFlowControl.json",
+            cwd / DAS_PATH_LITERAL("plugins")
+                / DAS_PATH_LITERAL("DasFlowControl.json"),
+            cwd.parent_path() / DAS_PATH_LITERAL("bin")
+                / DAS_PATH_LITERAL("Debug") / DAS_PATH_LITERAL("plugins")
+                / DAS_PATH_LITERAL("DasFlowControl.json"),
+            cwd / DAS_PATH_LITERAL("build") / DAS_PATH_LITERAL("mingw-debug")
+                / DAS_PATH_LITERAL("bin") / DAS_PATH_LITERAL("Debug")
+                / DAS_PATH_LITERAL("plugins")
+                / DAS_PATH_LITERAL("DasFlowControl.json"),
         };
         const auto found = std::ranges::find_if(
             candidates,
@@ -201,12 +208,13 @@ namespace
             { return std::filesystem::exists(candidate); });
         return found != candidates.end()
                    ? *found
-                   : std::filesystem::path{"DasFlowControl.json"};
+                   : std::filesystem::path{
+                         DAS_PATH_LITERAL("DasFlowControl.json")};
     }
 
     std::filesystem::path SourceRoot()
     {
-        auto path = std::filesystem::path(__FILE__);
+        auto path = std::filesystem::path{DAS_PATH_LITERAL(__FILE__)};
         for (int i = 0; i < 5; ++i)
         {
             path = path.parent_path();
@@ -217,7 +225,7 @@ namespace
     std::string ReadFileText(const std::filesystem::path& path)
     {
         const std::ifstream input(path);
-        EXPECT_TRUE(input.is_open()) << path.string();
+        EXPECT_TRUE(input.is_open()) << Das::Utils::PathToUtf8(path);
         std::ostringstream buffer;
         buffer << input.rdbuf();
         return buffer.str();
@@ -1073,7 +1081,7 @@ namespace
             manifest_path_ = FindDasFlowControlManifest();
             ASSERT_TRUE(std::filesystem::exists(manifest_path_))
                 << "DasFlowControl manifest not found at "
-                << manifest_path_.string();
+                << Das::Utils::PathToUtf8(manifest_path_);
             ASSERT_EQ(plugin_manager_->LoadPlugin(manifest_path_), DAS_S_OK);
         }
 
@@ -1187,7 +1195,8 @@ TEST_F(
         std::string_view("das.flow.invokeRepository"));
 
     const auto maapi_manifest_path =
-        SourceRoot() / "das" / "Plugins" / "DasMaaPi" / "DasMaaPi.json";
+        SourceRoot() / DAS_PATH_LITERAL("das") / DAS_PATH_LITERAL("Plugins")
+        / DAS_PATH_LITERAL("DasMaaPi") / DAS_PATH_LITERAL("DasMaaPi.json");
     const auto maapi_manifest_text = ReadFileText(maapi_manifest_path);
     EXPECT_EQ(
         maapi_manifest_text.find("das.maapi.agentRuntime"),
@@ -1256,9 +1265,11 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     for (const auto& spec : manifests)
     {
         const auto manifest_path =
-            (SourceRoot() / "das" / "Plugins"
-             / std::string(spec.plugin_dir_name))
-            / (std::string(spec.plugin_dir_name) + ".json");
+            (SourceRoot() / DAS_PATH_LITERAL("das")
+             / DAS_PATH_LITERAL("Plugins")
+             / Das::Utils::PathFromUtf8(std::string(spec.plugin_dir_name)))
+            / Das::Utils::PathFromUtf8(
+                std::string(spec.plugin_dir_name) + ".json");
         auto manifest = ParseJson(ReadFileText(manifest_path));
         auto manifest_obj = manifest.as_object();
         ASSERT_TRUE(manifest_obj.has_value()) << spec.plugin_dir_name;
@@ -1350,7 +1361,8 @@ TEST_F(
     ASSERT_NE(runtime, nullptr);
     auto plugin_result = runtime->LoadPlugin(manifest_path_);
     ASSERT_TRUE(plugin_result.has_value())
-        << "Failed to load DasFlowControl from " << manifest_path_.string();
+        << "Failed to load DasFlowControl from "
+        << Das::Utils::PathToUtf8(manifest_path_);
 
     auto plugin_base = plugin_result.value();
     DasPtr<Das::PluginInterface::IDasPluginPackage> package;
@@ -1832,29 +1844,23 @@ TEST_F(TaskComponentContractTest, LaunchDoProductionSpawnSmoke)
     auto component = MakeLaunchComponent();
     ASSERT_NE(component.Get(), nullptr);
 
-#ifdef _WIN32
-    const std::filesystem::path self_path{
-        boost::dll::program_location().wstring()};
-#else
-    const std::filesystem::path self_path{
-        boost::dll::program_location().string()};
-#endif
-    const auto        self_exe_u8 = self_path.u8string();
-    const std::string self_exe(self_exe_u8.begin(), self_exe_u8.end());
+    const auto self_path =
+        Das::Utils::ToStdPath(boost::dll::program_location());
+    const std::string self_exe = Das::Utils::PathToUtf8(self_path);
 
-    const auto marker_u8 =
-        (std::filesystem::current_path()
-         / ("launch_spawn_smoke_child_" + std::to_string(std::random_device{}())
-            + ".xml"))
-            .u8string();
-    const std::string marker_path(marker_u8.begin(), marker_u8.end());
+    const auto marker_path =
+        std::filesystem::current_path()
+        / Das::Utils::PathFromUtf8(
+            "launch_spawn_smoke_child_" + std::to_string(std::random_device{}())
+            + ".xml");
+    const std::string marker_path_text = Das::Utils::PathToUtf8(marker_path);
     std::error_code   remove_error;
     std::filesystem::remove(marker_path, remove_error);
 
     const std::string settings_json =
         std::string{R"json({"exePath": ")json"} + JsonEscapePath(self_exe)
         + R"json(", "args": ["--gtest_filter=NoLaunchSmokeChildTests", )json"
-        + R"json("--gtest_output=xml:)json" + JsonEscapePath(marker_path)
+        + R"json("--gtest_output=xml:)json" + JsonEscapePath(marker_path_text)
         + R"json("]})json";
 
     ApplyLaunchConfig(component.Get(), settings_json);

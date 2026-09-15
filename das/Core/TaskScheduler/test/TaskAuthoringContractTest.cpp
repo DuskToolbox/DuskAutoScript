@@ -1,6 +1,7 @@
 #include <das/Core/TaskScheduler/TaskAuthoringContract.h>
 
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -42,7 +43,8 @@ namespace
         for (int depth = 0; depth < 8; ++depth)
         {
             const auto candidate =
-                directory / "TaskAuthoringHttpContract.schema.json";
+                directory
+                / DAS_PATH_LITERAL("TaskAuthoringHttpContract.schema.json");
             std::error_code error_code;
             if (fs::exists(candidate, error_code))
             {

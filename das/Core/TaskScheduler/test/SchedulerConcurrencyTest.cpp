@@ -3,6 +3,7 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -22,7 +23,7 @@ namespace
         static std::atomic<int> counter{0};
         auto                    name =
             "scheduler_concurrency_" + std::to_string(counter.fetch_add(1));
-        return std::filesystem::current_path() / name;
+        return std::filesystem::current_path() / Das::Utils::PathFromUtf8(name);
     }
 
     /// Helper to write scheduler index + task instance files directly.
@@ -60,9 +61,9 @@ protected:
     {
         test_dir_ = UniqueConcurrencyTestDir();
         std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
         std::filesystem::create_directories(settings_dir_);
-        plugin_dir_ = test_dir_ / "plugins";
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
         std::filesystem::create_directories(plugin_dir_);
 
         settings_manager_ =
