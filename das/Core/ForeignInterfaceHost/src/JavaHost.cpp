@@ -470,8 +470,8 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
 
         // 核心 JAR (DasCoreJavaExport.jar): 与插件 JAR 同目录
         {
-            auto core_jar_path =
-                plugin_file_path_.parent_path() / "DasCoreJavaExport.jar";
+            auto core_jar_path = plugin_file_path_.parent_path()
+                                 / DAS_PATH_LITERAL("DasCoreJavaExport.jar");
             if (std::filesystem::exists(core_jar_path))
             {
                 jar_paths.push_back(core_jar_path);

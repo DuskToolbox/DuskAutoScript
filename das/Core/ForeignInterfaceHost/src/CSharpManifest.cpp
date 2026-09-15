@@ -150,7 +150,7 @@ namespace
         const auto normalized = path.lexically_normal();
         for (const auto& part : normalized)
         {
-            if (part == "..")
+            if (part == DAS_PATH_LITERAL(".."))
             {
                 return true;
             }
