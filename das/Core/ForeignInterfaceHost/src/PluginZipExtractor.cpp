@@ -8,7 +8,6 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/PathText.h>
-#include <das/Utils/StringUtils.h>
 
 #include <algorithm>
 #include <array>
@@ -48,7 +47,7 @@ namespace
         }
 
         auto relative = canonical_entry.lexically_relative(canonical_target);
-        auto rel_str = std::string{DAS::Utils::U8AsString(relative.u8string())};
+        auto rel_str = Das::Utils::PathToUtf8(relative);
         if (rel_str.size() >= 2 && rel_str.substr(0, 2) == "..")
         {
             return false;
@@ -295,7 +294,7 @@ namespace
                 // 打开失败仍是 fail-closed 兜底。
                 DAS_CORE_LOG_WARN(
                     "Failed to create parent directory: {} ({})",
-                    DAS::Utils::U8AsString(parent.u8string()),
+                    Das::Utils::PathToUtf8(parent),
                     ec.message());
             }
         }
@@ -305,7 +304,7 @@ namespace
         {
             DAS_CORE_LOG_WARN(
                 "Failed to write file: {}",
-                DAS::Utils::U8AsString(target_path.u8string()));
+                Das::Utils::PathToUtf8(target_path));
             return DAS_E_FAIL;
         }
 
@@ -336,7 +335,7 @@ namespace
         {
             DAS_CORE_LOG_WARN(
                 "Failed to write file data: {}",
-                DAS::Utils::U8AsString(target_path.u8string()));
+                Das::Utils::PathToUtf8(target_path));
             return DAS_E_FAIL;
         }
 
@@ -453,7 +452,7 @@ namespace
         for (int attempt = 0; attempt < 8; ++attempt)
         {
             auto            name = fmt::format(".tmp_install_{:08x}", dist(rd));
-            auto            path = parent / name;
+            auto            path = parent / Das::Utils::PathFromUtf8(name);
             std::error_code ec;
             std::filesystem::create_directories(path, ec);
             if (!ec)
@@ -464,7 +463,7 @@ namespace
 
         DAS_CORE_LOG_WARN(
             "Failed to create temp directory under {}",
-            DAS::Utils::U8AsString(parent.u8string()));
+            Das::Utils::PathToUtf8(parent));
         return {};
     }
 
@@ -503,7 +502,7 @@ DasResult InstallPlugin(
         {
             DAS_CORE_LOG_WARN(
                 "Failed to create plugin directory: {}",
-                DAS::Utils::U8AsString(plugin_dir.u8string()));
+                Das::Utils::PathToUtf8(plugin_dir));
             return DAS_E_FAIL;
         }
     }
@@ -676,7 +675,7 @@ DasResult InstallPlugin(
             {
                 DAS_CORE_LOG_WARN(
                     "Failed to create directory: {}",
-                    DAS::Utils::U8AsString(target_path.u8string()));
+                    Das::Utils::PathToUtf8(target_path));
                 zip_discard(archive);
                 return DAS_E_FAIL;
             }
@@ -714,8 +713,7 @@ DasResult InstallPlugin(
         if (!manifest.empty())
         {
             found_manifest = true;
-            plugin_name = std::string{
-                DAS::Utils::U8AsString(entry.path().filename().u8string())};
+            plugin_name = Das::Utils::PathToUtf8(entry.path().filename());
             break;
         }
     }
@@ -739,7 +737,7 @@ DasResult InstallPlugin(
         {
             DAS_CORE_LOG_WARN(
                 "Failed to rename existing plugin: {}",
-                DAS::Utils::U8AsString(dst.u8string()));
+                Das::Utils::PathToUtf8(dst));
             return DAS_E_FAIL;
         }
     }
@@ -750,8 +748,8 @@ DasResult InstallPlugin(
     {
         DAS_CORE_LOG_WARN(
             "Failed to install plugin: {} -> {}",
-            DAS::Utils::U8AsString(src.u8string()),
-            DAS::Utils::U8AsString(dst.u8string()));
+            Das::Utils::PathToUtf8(src),
+            Das::Utils::PathToUtf8(dst));
         // Restore old plugin
         if (std::filesystem::exists(old))
         {
@@ -762,8 +760,8 @@ DasResult InstallPlugin(
                 // 供人工恢复。
                 DAS_CORE_LOG_ERROR(
                     "Failed to restore previous plugin version: {} -> {}",
-                    DAS::Utils::U8AsString(old.u8string()),
-                    DAS::Utils::U8AsString(dst.u8string()));
+                    Das::Utils::PathToUtf8(old),
+                    Das::Utils::PathToUtf8(dst));
             }
         }
         return DAS_E_FAIL;
@@ -777,7 +775,7 @@ DasResult InstallPlugin(
         {
             DAS_CORE_LOG_WARN(
                 "Failed to remove old plugin version: {}",
-                DAS::Utils::U8AsString(old.u8string()));
+                Das::Utils::PathToUtf8(old));
         }
     }
 
@@ -787,7 +785,7 @@ DasResult InstallPlugin(
     {
         DAS_CORE_LOG_WARN(
             "Failed to remove temp install directory: {}",
-            DAS::Utils::U8AsString(temp_dir.u8string()));
+            Das::Utils::PathToUtf8(temp_dir));
     }
 
     return DAS_S_OK;

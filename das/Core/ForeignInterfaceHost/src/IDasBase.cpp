@@ -8,6 +8,7 @@
 #include <das/DasException.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 
 #include "../../Debug/src/DebugWriterImpl.h"
@@ -68,7 +69,8 @@ DasResult InitializeDasCoreWithOptions(
     Das::Core::Debug::DebugRuntimeOptions debug_options{};
     if (p_options && p_options->p_debug_dir && p_options->p_debug_dir[0] != 0)
     {
-        debug_options.debug_dir = p_options->p_debug_dir;
+        debug_options.debug_dir =
+            Das::Utils::PathFromUtf8(p_options->p_debug_dir);
     }
 
     auto debug_result =

@@ -7,7 +7,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 
 #include <fstream>
 #include <iterator>
@@ -29,7 +29,7 @@ void PluginResourceIndex::ConfigurePluginResourceScanRoot(
     {
         DAS_CORE_LOG_INFO(
             "PluginResourceIndex: scan root unchanged: {}",
-            DAS::Utils::U8AsString(scan_root.u8string()));
+            Das::Utils::PathToUtf8(scan_root));
         return;
     }
 
@@ -39,7 +39,7 @@ void PluginResourceIndex::ConfigurePluginResourceScanRoot(
 
     DAS_CORE_LOG_INFO(
         "PluginResourceIndex: scan root configured: {}",
-        DAS::Utils::U8AsString(scan_root_.u8string()));
+        Das::Utils::PathToUtf8(scan_root_));
 }
 
 DasResult PluginResourceIndex::ResolvePluginResourceEntryByGuid(
@@ -100,7 +100,7 @@ DasResult PluginResourceIndex::ResolveResourceFullPath(
         return DAS_E_INVALID_PATH;
     }
 
-    const std::filesystem::path rp(relative_path);
+    const std::filesystem::path rp = Das::Utils::PathFromUtf8(relative_path);
 
     if (rp.is_absolute())
     {
@@ -137,7 +137,7 @@ DasResult PluginResourceIndex::ResolveResourceFullPath(
     }
 
     auto relative = canonical_resolved.lexically_relative(canonical_root);
-    auto rel_str = std::string{DAS::Utils::U8AsString(relative.u8string())};
+    auto rel_str = Das::Utils::PathToUtf8(relative);
     if (rel_str.empty())
     {
         DAS_CORE_LOG_WARN(
@@ -176,13 +176,13 @@ DasResult PluginResourceIndex::ScanAndPublish()
 
     DAS_CORE_LOG_INFO(
         "PluginResourceIndex: starting full scan of {}",
-        DAS::Utils::U8AsString(scan_root.u8string()));
+        Das::Utils::PathToUtf8(scan_root));
 
     if (!std::filesystem::exists(scan_root))
     {
         DAS_CORE_LOG_WARN(
             "PluginResourceIndex: scan root does not exist: {}",
-            DAS::Utils::U8AsString(scan_root.u8string()));
+            Das::Utils::PathToUtf8(scan_root));
         return DAS_E_NOT_FOUND;
     }
 
@@ -236,7 +236,7 @@ DasResult PluginResourceIndex::ScanAndPublish()
             {
                 DAS_CORE_LOG_WARN(
                     "PluginResourceIndex: failed to parse manifest {}",
-                    DAS::Utils::U8AsString(manifest_path.u8string()));
+                    Das::Utils::PathToUtf8(manifest_path));
                 continue;
             }
         }
@@ -244,7 +244,7 @@ DasResult PluginResourceIndex::ScanAndPublish()
         {
             DAS_CORE_LOG_WARN(
                 "PluginResourceIndex: failed to parse manifest {}: {}",
-                DAS::Utils::U8AsString(manifest_path.u8string()),
+                Das::Utils::PathToUtf8(manifest_path),
                 e.what());
             continue;
         }
@@ -300,7 +300,7 @@ DasResult PluginResourceIndex::ScanAndPublish()
         DAS_CORE_LOG_INFO(
             "PluginResourceIndex: indexed plugin '{}' with resource_root={}",
             desc.name,
-            DAS::Utils::U8AsString(resource_root.u8string()));
+            Das::Utils::PathToUtf8(resource_root));
     }
 
     size_t published_count = 0;
@@ -329,7 +329,7 @@ DasResult PluginResourceIndex::ValidateResourcePath(
         return DAS_E_INVALID_PATH;
     }
 
-    const std::filesystem::path rp(resource_path);
+    const std::filesystem::path rp = Das::Utils::PathFromUtf8(resource_path);
 
     if (rp.is_absolute())
     {
@@ -339,7 +339,7 @@ DasResult PluginResourceIndex::ValidateResourcePath(
         return DAS_E_INVALID_PATH;
     }
 
-    const std::string rp_str{DAS::Utils::U8AsString(rp.u8string())};
+    const std::string rp_str = Das::Utils::PathToUtf8(rp);
     if (rp_str.find("..") != std::string::npos)
     {
         DAS_CORE_LOG_WARN(
@@ -368,7 +368,7 @@ DasResult PluginResourceIndex::ValidateResourcePath(
     }
 
     auto relative = canonical_resource.lexically_relative(canonical_root);
-    auto rel_str = std::string{DAS::Utils::U8AsString(relative.u8string())};
+    auto rel_str = Das::Utils::PathToUtf8(relative);
     if (rel_str.empty())
     {
         DAS_CORE_LOG_WARN(
