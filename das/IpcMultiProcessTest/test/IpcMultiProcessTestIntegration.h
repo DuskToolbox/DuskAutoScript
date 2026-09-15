@@ -57,7 +57,9 @@ protected:
     {
         host_exe_path_ = IpcTestConfig::GetDasHostPath();
 
-        DAS_CORE_LOG_INFO("DasHost path: {}", host_exe_path_);
+        DAS_CORE_LOG_INFO(
+            "DasHost path: {}",
+            Das::Utils::PathToUtf8(host_exe_path_));
 
         // 创建 IPC 上下文
         const auto* test_info =
@@ -155,7 +157,7 @@ protected:
         // 启动 Host 进程
         uint16_t  session_id = 0;
         DasResult result = launcher_->Start(
-            host_exe_path_,
+            Das::Utils::PathToUtf8(host_exe_path_),
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
         if (DAS::IsFailed(result))
@@ -205,7 +207,7 @@ protected:
         return 0;
     }
 
-    std::string                                           host_exe_path_;
+    std::filesystem::path                                 host_exe_path_;
     DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
     DAS::DasPtr<DAS::Core::IPC::IHostLauncher>            launcher_;
     std::thread                                           run_thread_;

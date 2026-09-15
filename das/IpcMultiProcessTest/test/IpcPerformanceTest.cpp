@@ -44,6 +44,8 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
+#include <das/Utils/BoostPathBridge.h>
+#include <das/Utils/PathText.h>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <optional>
@@ -186,15 +188,15 @@ namespace
     {
     public:
         HostProcessGuard(
-            const std::string&              exe_path,
+            const std::filesystem::path&    exe_path,
             const std::vector<std::string>& args)
         {
             process_.emplace(
                 io_context_,
-                exe_path,
+                Das::Utils::ToBoostPath(exe_path),
                 args,
                 boost::process::v2::process_start_dir(
-                    std::filesystem::path(exe_path).parent_path().string()));
+                    Das::Utils::ToBoostPath(exe_path.parent_path())));
         }
 
         ~HostProcessGuard() { Stop(); }
@@ -537,7 +539,7 @@ protected:
 
         uint16_t session_id = 0;
         result = launcher->Start(
-            host_exe_path_,
+            Das::Utils::PathToUtf8(host_exe_path_),
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
         if (DAS::IsFailed(result))
@@ -603,7 +605,7 @@ protected:
         }
 
         // 1. 获取插件 JSON 路径
-        std::string plugin_path;
+        std::filesystem::path plugin_path;
         try
         {
             plugin_path =
@@ -616,8 +618,10 @@ protected:
 
         // 2. LoadPluginAsync
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-        const DasResult                           result =
-            ctx_->LoadPluginAsync(launcher, plugin_path.c_str(), op.Put());
+        const DasResult result = ctx_->LoadPluginAsync(
+            launcher,
+            Das::Utils::PathToUtf8(plugin_path).c_str(),
+            op.Put());
         if (DAS::IsFailed(result))
         {
             return nullptr;
@@ -712,7 +716,7 @@ protected:
         }
 
         // 1. 获取插件 JSON 路径
-        std::string plugin_path;
+        std::filesystem::path plugin_path;
         try
         {
             plugin_path =
@@ -725,8 +729,10 @@ protected:
 
         // 2. LoadPluginAsync
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-        const DasResult                           result =
-            ctx_->LoadPluginAsync(launcher, plugin_path.c_str(), op.Put());
+        const DasResult result = ctx_->LoadPluginAsync(
+            launcher,
+            Das::Utils::PathToUtf8(plugin_path).c_str(),
+            op.Put());
         if (DAS::IsFailed(result))
         {
             return nullptr;
@@ -799,7 +805,7 @@ protected:
 
     DAS::DasPtr<IDasBase> LoadPluginPackageForHost(
         DAS::Core::IPC::IHostLauncher* launcher,
-        const std::string&             plugin_path,
+        const std::filesystem::path&   plugin_path,
         size_t                         attempts)
     {
         for (size_t attempt = 0; attempt < attempts; ++attempt)
@@ -807,7 +813,7 @@ protected:
             DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
             const DasResult result = ctx_->LoadPluginAsync(
                 launcher,
-                plugin_path.c_str(),
+                Das::Utils::PathToUtf8(plugin_path).c_str(),
                 op.Put(),
                 IpcTestConfig::GetPluginLoadTimeout());
             if (DAS::IsOk(result))
@@ -949,7 +955,7 @@ protected:
 
     // ====== 成员变量 ======
 
-    std::string                                           host_exe_path_;
+    std::filesystem::path                                 host_exe_path_;
     DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
     std::thread                                           run_thread_;
     uint16_t                                              http_port_ = 0;
@@ -1353,7 +1359,7 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
     setenv("DAS_LOG_LEVEL", "warn", 1);
 #endif
 
-    const std::string host_exe_path = IpcTestConfig::GetDasHostPath();
+    const std::filesystem::path host_exe_path = IpcTestConfig::GetDasHostPath();
 
     if (!std::filesystem::exists(host_exe_path))
     {
@@ -1395,7 +1401,7 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
 
         uint16_t session_id = 0;
         result = launcher->Start(
-            host_exe_path,
+            Das::Utils::PathToUtf8(host_exe_path),
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
         if (DAS::IsFailed(result))
@@ -1406,7 +1412,7 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
         }
 
         // 4. Load IpcTestPlugin2
-        std::string plugin_path;
+        std::filesystem::path plugin_path;
         try
         {
             plugin_path =
@@ -1420,8 +1426,10 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
         }
 
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-        result =
-            ctx->LoadPluginAsync(launcher.Get(), plugin_path.c_str(), op.Put());
+        result = ctx->LoadPluginAsync(
+            launcher.Get(),
+            Das::Utils::PathToUtf8(plugin_path).c_str(),
+            op.Put());
         if (DAS::IsFailed(result))
         {
             ctx->RequestStop();
@@ -1882,8 +1890,8 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
         expected_http_session,
         http_host.GetPid());
 
-    std::string ipc_plugin_path;
-    std::string http_plugin_path;
+    std::filesystem::path ipc_plugin_path;
+    std::filesystem::path http_plugin_path;
     try
     {
         ipc_plugin_path =
@@ -2100,7 +2108,7 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
     }
 
     // Load IpcTestPlugin2 and get IDasComponentFactory
-    std::string plugin_path;
+    std::filesystem::path plugin_path;
     try
     {
         plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
@@ -2111,8 +2119,10 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
     }
 
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-    const DasResult                           result =
-        ctx_->LoadPluginAsync(launcher.Get(), plugin_path.c_str(), op.Put());
+    const DasResult                           result = ctx_->LoadPluginAsync(
+        launcher.Get(),
+        Das::Utils::PathToUtf8(plugin_path).c_str(),
+        op.Put());
     if (DAS::IsFailed(result))
     {
         GTEST_SKIP() << "LoadPluginAsync failed";
@@ -2342,7 +2352,7 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
     }
 
     // 2. Get plugin path
-    std::string plugin_path;
+    std::filesystem::path plugin_path;
     try
     {
         plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
@@ -2354,14 +2364,18 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
 
     // 3. Load plugins concurrently via when_all
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op1, op2;
-    DasResult                                 result =
-        ctx_->LoadPluginAsync(launcher1.Get(), plugin_path.c_str(), op1.Put());
+    DasResult                                 result = ctx_->LoadPluginAsync(
+        launcher1.Get(),
+        Das::Utils::PathToUtf8(plugin_path).c_str(),
+        op1.Put());
     if (DAS::IsFailed(result))
     {
         GTEST_SKIP() << "LoadPluginAsync for Host A failed";
     }
-    result =
-        ctx_->LoadPluginAsync(launcher2.Get(), plugin_path.c_str(), op2.Put());
+    result = ctx_->LoadPluginAsync(
+        launcher2.Get(),
+        Das::Utils::PathToUtf8(plugin_path).c_str(),
+        op2.Put());
     if (DAS::IsFailed(result))
     {
         GTEST_SKIP() << "LoadPluginAsync for Host B failed";
@@ -2601,7 +2615,7 @@ TEST_F(IpcPerformanceTest, FirstCallOutboundFrameAudit)
         GTEST_SKIP() << "Failed to start Host process";
     }
 
-    std::string plugin_path;
+    std::filesystem::path plugin_path;
     try
     {
         plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
@@ -2612,8 +2626,10 @@ TEST_F(IpcPerformanceTest, FirstCallOutboundFrameAudit)
     }
 
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-    const DasResult                           result =
-        ctx_->LoadPluginAsync(launcher.Get(), plugin_path.c_str(), op.Put());
+    const DasResult                           result = ctx_->LoadPluginAsync(
+        launcher.Get(),
+        Das::Utils::PathToUtf8(plugin_path).c_str(),
+        op.Put());
     if (DAS::IsFailed(result))
     {
         GTEST_SKIP() << "LoadPluginAsync failed";

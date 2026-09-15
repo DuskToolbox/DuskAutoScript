@@ -21,6 +21,7 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
 #include <fstream>
@@ -38,11 +39,20 @@ namespace
     public:
         explicit ScopedEnvVar(const char* name) : name_(name)
         {
-            const char* value = std::getenv(name_.c_str());
-            if (value != nullptr)
+#ifdef _WIN32
+            // 环境值读写都在宽通道闭环：窄 getenv/_putenv_s 经 ANSI 代码页，
+            // 非 ASCII 路径值会与 PathFromEnvironment 的 _wgetenv 读端断裂
+            if (const wchar_t* value = _wgetenv(WideName().c_str()))
+            {
+                old_value_ = Das::Utils::PathToUtf8(
+                    std::filesystem::path{std::wstring_view{value}});
+            }
+#else
+            if (const char* value = std::getenv(name_.c_str()))
             {
                 old_value_ = value;
             }
+#endif
         }
 
         ~ScopedEnvVar()
@@ -55,25 +65,32 @@ namespace
             Clear();
         }
 
-        void Set(const std::string& value)
+        void Set(std::string_view value)
         {
 #ifdef _WIN32
-            _putenv_s(name_.c_str(), value.c_str());
+            _wputenv_s(
+                WideName().c_str(),
+                Das::Utils::PathFromUtf8(value).native().c_str());
 #else
-            setenv(name_.c_str(), value.c_str(), 1);
+            setenv(name_.c_str(), std::string(value).c_str(), 1);
 #endif
         }
 
         void Clear()
         {
 #ifdef _WIN32
-            _putenv_s(name_.c_str(), "");
+            _wputenv_s(WideName().c_str(), L"");
 #else
             unsetenv(name_.c_str());
 #endif
         }
 
     private:
+        std::wstring WideName() const
+        {
+            return std::wstring(name_.begin(), name_.end());
+        }
+
         std::string                name_;
         std::optional<std::string> old_value_;
     };
@@ -98,45 +115,45 @@ TEST(IpcMultiProcessTestBasic, TestPluginJsonPathResolvesFlatAndFolderManifests)
 {
     auto test_root =
         std::filesystem::temp_directory_path()
-        / DAS_FMT_NS::format(
-            "das_ipc_manifest_lookup_{}",
-            std::chrono::steady_clock::now().time_since_epoch().count());
+        / Das::Utils::PathFromUtf8(
+            DAS_FMT_NS::format(
+                "das_ipc_manifest_lookup_{}",
+                std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(test_root);
 
     ScopedEnvVar plugin_dir("DAS_PLUGIN_DIR");
-    plugin_dir.Set(test_root.string());
+    plugin_dir.Set(Das::Utils::PathToUtf8(test_root));
 
-    const auto flat_manifest = test_root / "FlatPlugin.json";
+    const auto flat_manifest = test_root / DAS_PATH_LITERAL("FlatPlugin.json");
     {
         std::ofstream ofs(flat_manifest);
         ofs << "{}";
     }
     EXPECT_EQ(
-        std::filesystem::path{
-            IpcTestConfig::GetTestPluginJsonPath("FlatPlugin")},
+        IpcTestConfig::GetTestPluginJsonPath("FlatPlugin"),
         flat_manifest);
 
-    const auto folder_root = test_root / "FolderPlugin";
+    const auto folder_root = test_root / DAS_PATH_LITERAL("FolderPlugin");
     std::filesystem::create_directories(folder_root);
-    const auto folder_primary = folder_root / "FolderPlugin.json";
+    const auto folder_primary =
+        folder_root / DAS_PATH_LITERAL("FolderPlugin.json");
     {
         std::ofstream ofs(folder_primary);
         ofs << "{}";
     }
     EXPECT_EQ(
-        std::filesystem::path{
-            IpcTestConfig::GetTestPluginJsonPath("FolderPlugin")},
+        IpcTestConfig::GetTestPluginJsonPath("FolderPlugin"),
         folder_primary);
 
     std::filesystem::remove(folder_primary);
-    const auto folder_fallback = folder_root / "manifest.json";
+    const auto folder_fallback =
+        folder_root / DAS_PATH_LITERAL("manifest.json");
     {
         std::ofstream ofs(folder_fallback);
         ofs << "{}";
     }
     EXPECT_EQ(
-        std::filesystem::path{
-            IpcTestConfig::GetTestPluginJsonPath("FolderPlugin")},
+        IpcTestConfig::GetTestPluginJsonPath("FolderPlugin"),
         folder_fallback);
 
     try

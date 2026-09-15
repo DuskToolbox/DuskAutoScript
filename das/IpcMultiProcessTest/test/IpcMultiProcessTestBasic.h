@@ -32,8 +32,9 @@ protected:
     {
         host_exe_path_ = IpcTestConfig::GetDasHostPath();
 
-        std::string msg =
-            DAS_FMT_NS::format("DasHost path: {}", host_exe_path_);
+        std::string msg = DAS_FMT_NS::format(
+            "DasHost path: {}",
+            Das::Utils::PathToUtf8(host_exe_path_));
         DAS_LOG_INFO(msg.c_str());
 
         // 创建 IPC 上下文（替代 MainProcessServer 单例）
@@ -81,7 +82,7 @@ protected:
 
         uint16_t session_id = 0;
         result = launcher_->Start(
-            host_exe_path_,
+            Das::Utils::PathToUtf8(host_exe_path_),
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
         if (DAS::IsFailed(result))
@@ -93,7 +94,7 @@ protected:
     }
 
 protected:
-    std::string                                           host_exe_path_;
+    std::filesystem::path                                 host_exe_path_;
     DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
     DAS::DasPtr<DAS::Core::IPC::IHostLauncher>            launcher_;
     std::thread                                           run_thread_;

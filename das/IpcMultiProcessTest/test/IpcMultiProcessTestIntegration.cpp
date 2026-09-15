@@ -34,7 +34,9 @@
 #include "das/DasTypes.hpp"
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
@@ -221,15 +223,15 @@ namespace
     {
     public:
         HostProcessGuard(
-            const std::string&              exe_path,
+            const std::filesystem::path&    exe_path,
             const std::vector<std::string>& args)
         {
             process_.emplace(
                 io_context_,
-                exe_path,
+                Das::Utils::ToBoostPath(exe_path),
                 args,
                 boost::process::v2::process_start_dir(
-                    std::filesystem::path(exe_path).parent_path().string()));
+                    Das::Utils::ToBoostPath(exe_path.parent_path())));
         }
 
         ~HostProcessGuard() { Stop(); }
@@ -443,7 +445,7 @@ namespace
     DAS::DasPtr<IDasBase> LoadPluginPackageForHost(
         DAS::Core::IPC::MainProcess::IIpcContext& context,
         DAS::Core::IPC::IHostLauncher*            launcher,
-        const std::string&                        plugin_path,
+        const std::filesystem::path&              plugin_path,
         size_t                                    attempts)
     {
         for (size_t attempt = 0; attempt < attempts; ++attempt)
@@ -451,7 +453,7 @@ namespace
             DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
             const DasResult result = context.LoadPluginAsync(
                 launcher,
-                plugin_path.c_str(),
+                Das::Utils::PathToUtf8(plugin_path).c_str(),
                 op.Put(),
                 IpcTestConfig::GetPluginLoadTimeout());
             if (DAS::IsOk(result))
@@ -814,9 +816,9 @@ namespace
     // 由调用方断言。
     DasResult DeployHostToHostCallTopology(
         DAS::Core::IPC::MainProcess::IIpcContext& context,
-        const std::string&                        host_exe_path,
-        const std::string&                        plugin1_path,
-        const std::string&                        plugin2_path,
+        const std::filesystem::path&              host_exe_path,
+        const std::filesystem::path&              plugin1_path,
+        const std::filesystem::path&              plugin2_path,
         HostToHostCallDeployment&                 deployment)
     {
         DasResult result = context.CreateHostLauncher(deployment.host_b.Put());
@@ -826,7 +828,7 @@ namespace
         }
 
         result = deployment.host_b->Start(
-            host_exe_path,
+            Das::Utils::PathToUtf8(host_exe_path),
             deployment.session_b,
             IpcTestConfig::GetHostStartTimeoutMs());
         if (DAS::IsFailed(result))
@@ -841,7 +843,7 @@ namespace
         }
 
         result = deployment.host_a->Start(
-            host_exe_path,
+            Das::Utils::PathToUtf8(host_exe_path),
             deployment.session_a,
             IpcTestConfig::GetHostStartTimeoutMs());
         if (DAS::IsFailed(result))
@@ -852,7 +854,7 @@ namespace
         DAS::DasPtr<IDasAsyncLoadPluginOperation> operation_a;
         result = context.LoadPluginAsync(
             deployment.host_a.Get(),
-            plugin1_path.c_str(),
+            Das::Utils::PathToUtf8(plugin1_path).c_str(),
             operation_a.Put());
         if (DAS::IsFailed(result))
         {
@@ -861,7 +863,7 @@ namespace
         DAS::DasPtr<IDasAsyncLoadPluginOperation> operation_b;
         result = context.LoadPluginAsync(
             deployment.host_b.Get(),
-            plugin2_path.c_str(),
+            Das::Utils::PathToUtf8(plugin2_path).c_str(),
             operation_b.Put());
         if (DAS::IsFailed(result))
         {
@@ -967,7 +969,7 @@ namespace
     {
         ASSERT_NE(launcher, nullptr);
 
-        std::string plugin_path;
+        std::filesystem::path plugin_path;
         try
         {
             plugin_path =
@@ -1063,28 +1065,28 @@ namespace
 #endif
 
     std::filesystem::path AppRootFromHostExePath(
-        const std::string& host_exe_path)
+        const std::filesystem::path& host_exe_path)
     {
-        const auto absolute_host =
-            std::filesystem::absolute(std::filesystem::path{host_exe_path});
+        const auto absolute_host = std::filesystem::absolute(host_exe_path);
         return absolute_host.parent_path();
     }
 
     std::filesystem::path PluginCollectionRootFromHostExePath(
-        const std::string& host_exe_path)
+        const std::filesystem::path& host_exe_path)
     {
-        return AppRootFromHostExePath(host_exe_path) / "plugins";
+        return AppRootFromHostExePath(host_exe_path)
+               / DAS_PATH_LITERAL("plugins");
     }
 
     std::filesystem::path NodeModulesRootFromHostExePath(
-        const std::string& host_exe_path)
+        const std::filesystem::path& host_exe_path)
     {
         return PluginCollectionRootFromHostExePath(host_exe_path)
-               / "node_modules";
+               / DAS_PATH_LITERAL("node_modules");
     }
 
     std::filesystem::path NodePackageRootFromHostExePath(
-        const std::string& host_exe_path)
+        const std::filesystem::path& host_exe_path)
     {
         return NodeModulesRootFromHostExePath(host_exe_path)
                / NODE_RUNTIME_PACKAGE_NAME;
@@ -1204,7 +1206,7 @@ namespace
 
     bool IsPluginCollectionRoot(
         const std::filesystem::path& plugin_root,
-        const std::string&           host_exe_path)
+        const std::filesystem::path& host_exe_path)
     {
         std::error_code ec;
         const auto      expected = std::filesystem::weakly_canonical(
@@ -1413,7 +1415,7 @@ namespace
     }
 
     testing::AssertionResult ValidatePythonRuntimeArtifacts(
-        const std::string& host_exe_path)
+        const std::filesystem::path& host_exe_path)
     {
         const auto app_root = AppRootFromHostExePath(host_exe_path);
         const auto python_module = app_root / "DuskAutoScript.py";
@@ -1472,20 +1474,19 @@ namespace
     }
 
     testing::AssertionResult ValidatePythonPluginPackageArtifacts(
-        const std::string& plugin_json_path,
-        std::string_view   plugin_source_name)
+        const std::filesystem::path& plugin_json_path,
+        std::string_view             plugin_source_name)
     {
         if (!std::filesystem::is_regular_file(plugin_json_path))
         {
             return testing::AssertionFailure()
                    << "Python plugin manifest not found at: "
-                   << plugin_json_path;
+                   << Das::Utils::PathToUtf8(plugin_json_path);
         }
 
-        const auto plugin_root =
-            std::filesystem::path{plugin_json_path}.parent_path();
+        const auto plugin_root = plugin_json_path.parent_path();
         const auto plugin_source =
-            plugin_root / std::filesystem::path{plugin_source_name};
+            plugin_root / Das::Utils::PathFromUtf8(plugin_source_name);
         if (!std::filesystem::is_regular_file(plugin_source))
         {
             return testing::AssertionFailure()
@@ -1837,8 +1838,8 @@ namespace
     void AssertPythonHostIpcPluginLoadAndDispatch(
         DAS::Core::IPC::MainProcess::IIpcContext&  context,
         DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher,
-        const std::string&                         host_exe_path,
-        const std::string&                         plugin_json_path,
+        const std::filesystem::path&               host_exe_path,
+        const std::filesystem::path&               plugin_json_path,
         std::string_view                           expected_component_name)
     {
         ASSERT_NE(launcher.Get(), nullptr);
@@ -1846,7 +1847,7 @@ namespace
 
         uint16_t        session_id = 0;
         const DasResult start_result = launcher->Start(
-            host_exe_path,
+            Das::Utils::PathToUtf8(host_exe_path),
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
         ASSERT_EQ(start_result, DAS_S_OK);
@@ -1909,12 +1910,13 @@ TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     uint16_t        session_id = 0;
     const DasResult result = launcher_->Start(
-        host_exe_path_,
+        Das::Utils::PathToUtf8(host_exe_path_),
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -1928,7 +1930,8 @@ TEST_F(IpcMultiProcessTestIntegration, HeartbeatResponse_KeepsRealHostAlive)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
     ASSERT_FALSE(IpcTestConfig::ShouldDisableHeartbeat())
         << "Heartbeat keepalive test requires heartbeat to be enabled";
@@ -1958,7 +1961,8 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
     ASSERT_FALSE(IpcTestConfig::ShouldDisableHeartbeat())
         << "Heartbeat timeout test requires heartbeat to be enabled";
@@ -1994,7 +1998,7 @@ TEST_F(
 
     uint16_t restarted_session_id = 0;
     result = restart_launcher->Start(
-        host_exe_path_,
+        Das::Utils::PathToUtf8(host_exe_path_),
         restarted_session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -2021,7 +2025,8 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_
+        GTEST_SKIP() << "DasHost.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_)
                      << " — phase gate 多进程并发覆盖未验证，需在具备 "
                         "DasHost.exe 的环境补跑";
     }
@@ -2097,7 +2102,7 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLauncherStart)
 
 TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
 {
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -2113,8 +2118,7 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
         NodePackageRootFromHostExePath(host_exe_path_);
     const auto node_modules_root =
         NodeModulesRootFromHostExePath(host_exe_path_);
-    const auto plugin_package_root =
-        std::filesystem::path{plugin_json_path}.parent_path();
+    const auto plugin_package_root = plugin_json_path.parent_path();
     const auto node_host_package =
         ValidateNodeHostPackage(node_executable, node_package_root);
     if (!node_host_package)
@@ -2141,7 +2145,7 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        plugin_json_path.c_str(),
+        Das::Utils::PathToUtf8(plugin_json_path).c_str(),
         op.Put(),
         IpcTestConfig::GetPluginLoadTimeout());
     ASSERT_EQ(result, DAS_S_OK);
@@ -2179,7 +2183,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodePlugin)
     GTEST_SKIP() << "DAS_EXPORT_NODE is not enabled";
 #endif
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -2195,8 +2199,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodePlugin)
         NodePackageRootFromHostExePath(host_exe_path_);
     const auto node_modules_root =
         NodeModulesRootFromHostExePath(host_exe_path_);
-    const auto plugin_package_root =
-        std::filesystem::path{plugin_json_path}.parent_path();
+    const auto plugin_package_root = plugin_json_path.parent_path();
     const auto node_host_package =
         ValidateNodeHostPackage(node_executable, node_package_root);
     if (!node_host_package)
@@ -2223,7 +2226,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodePlugin)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        plugin_json_path.c_str(),
+        Das::Utils::PathToUtf8(plugin_json_path).c_str(),
         op.Put(),
         IpcTestConfig::GetPluginLoadTimeout());
     ASSERT_EQ(result, DAS_S_OK);
@@ -2273,7 +2276,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodeFolderPlugin)
     GTEST_SKIP() << "DAS_EXPORT_NODE is not enabled";
 #endif
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -2289,8 +2292,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodeFolderPlugin)
         NodePackageRootFromHostExePath(host_exe_path_);
     const auto node_modules_root =
         NodeModulesRootFromHostExePath(host_exe_path_);
-    const auto plugin_package_root =
-        std::filesystem::path{plugin_json_path}.parent_path();
+    const auto plugin_package_root = plugin_json_path.parent_path();
     const auto node_host_package =
         ValidateNodeHostPackage(node_executable, node_package_root);
     if (!node_host_package)
@@ -2347,10 +2349,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonPlugin)
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -2361,8 +2364,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonPlugin)
         GTEST_SKIP() << "PythonTestPlugin manifest not found: " << e.what();
     }
 
-    const auto plugin_root =
-        std::filesystem::path{plugin_json_path}.parent_path();
+    const auto plugin_root = plugin_json_path.parent_path();
     const auto plugin_source = plugin_root / "python_test_plugin.py";
     if (!std::filesystem::is_regular_file(plugin_source))
     {
@@ -2401,13 +2403,14 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonFolderPlugin)
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     std::filesystem::path folder_manifest_path;
     ASSERT_TRUE(PreparePythonFolderTestPluginFixture(&folder_manifest_path));
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -2450,14 +2453,15 @@ TEST_F(IpcMultiProcessTestIntegration, MultipleStartStop)
     // 测试多次启动/停止
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     for (int i = 0; i < 3; ++i)
     {
         uint16_t        session_id = 0;
         const DasResult result = launcher_->Start(
-            host_exe_path_,
+            Das::Utils::PathToUtf8(host_exe_path_),
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
         ASSERT_EQ(result, DAS_S_OK) << "Failed at iteration " << i;
@@ -2475,12 +2479,13 @@ TEST_F(IpcMultiProcessTestIntegration, StopTerminatesProcess)
     // 测试 Stop() 正确终止进程
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     uint16_t        session_id = 0;
     const DasResult result = launcher_->Start(
-        host_exe_path_,
+        Das::Utils::PathToUtf8(host_exe_path_),
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -2505,7 +2510,8 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     std::atomic<int> callback_count{0};
@@ -2563,7 +2569,8 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     std::atomic<int> callback_count{0};
@@ -2608,7 +2615,8 @@ TEST_F(IpcMultiProcessTestIntegration, ExitWatcher_FiresAfterLauncherReuse)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     const ScopedHostStop guard{launcher_};
@@ -2678,7 +2686,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPlugin)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     // 1. 启动 Host 进程并注册到 ConnectionManager
@@ -2687,7 +2696,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPlugin)
     EXPECT_TRUE(launcher_->IsRunning());
 
     // 2. 获取插件 JSON 路径
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -2702,7 +2711,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPlugin)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        plugin_json_path.c_str(),
+        Das::Utils::PathToUtf8(plugin_json_path).c_str(),
         op.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
@@ -2724,13 +2733,14 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -2744,7 +2754,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        plugin_json_path.c_str(),
+        Das::Utils::PathToUtf8(plugin_json_path).c_str(),
         op.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
@@ -2812,13 +2822,14 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path = IpcTestConfig::GetTestPluginJsonPath("DasMaaPi");
@@ -2831,7 +2842,7 @@ TEST_F(
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        plugin_json_path.c_str(),
+        Das::Utils::PathToUtf8(plugin_json_path).c_str(),
         op.Put(),
         IpcTestConfig::GetPluginLoadTimeout());
     ASSERT_EQ(result, DAS_S_OK);
@@ -2903,13 +2914,14 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -2923,7 +2935,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        plugin_json_path.c_str(),
+        Das::Utils::PathToUtf8(plugin_json_path).c_str(),
         op.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
@@ -2999,7 +3011,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     // 0. 析构观测段先于 host spawn 建立：host 子进程经继承的环境变量
@@ -3013,7 +3026,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
 
     uint16_t session_b = 0;
     result = host_b->Start(
-        host_exe_path_,
+        Das::Utils::PathToUtf8(host_exe_path_),
         session_b,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -3026,7 +3039,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
 
     uint16_t session_a = 0;
     result = host_a->Start(
-        host_exe_path_,
+        Das::Utils::PathToUtf8(host_exe_path_),
         session_a,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -3034,7 +3047,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     EXPECT_NE(session_a, session_b);
 
     // 3. 获取插件 JSON 路径
-    std::string plugin1_path, plugin2_path;
+    std::filesystem::path plugin1_path, plugin2_path;
     try
     {
         plugin1_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
@@ -3050,11 +3063,15 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     // 4. 使用异步接口并发加载两个插件
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_a;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_b;
-    result =
-        ctx_->LoadPluginAsync(host_a.Get(), plugin1_path.c_str(), op_a.Put());
+    result = ctx_->LoadPluginAsync(
+        host_a.Get(),
+        Das::Utils::PathToUtf8(plugin1_path).c_str(),
+        op_a.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    result =
-        ctx_->LoadPluginAsync(host_b.Get(), plugin2_path.c_str(), op_b.Put());
+    result = ctx_->LoadPluginAsync(
+        host_b.Get(),
+        Das::Utils::PathToUtf8(plugin2_path).c_str(),
+        op_b.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     auto both = stdexec::when_all(
@@ -3311,10 +3328,11 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
-    std::string plugin1_path, plugin2_path;
+    std::filesystem::path plugin1_path, plugin2_path;
     try
     {
         plugin1_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
@@ -3449,7 +3467,8 @@ TEST_F(IpcMultiProcessTestIntegration, StopAllStopsHostsInOnePass)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     const auto make_launcher =
@@ -3487,7 +3506,7 @@ TEST_F(IpcMultiProcessTestIntegration, StopAllStopsHostsInOnePass)
 
     uint16_t session_first = 0;
     auto     result = host_first->Start(
-        host_exe_path_,
+        Das::Utils::PathToUtf8(host_exe_path_),
         session_first,
         IpcTestConfig::GetHostStartTimeoutMs());
     if (DAS::IsFailed(result))
@@ -3497,7 +3516,7 @@ TEST_F(IpcMultiProcessTestIntegration, StopAllStopsHostsInOnePass)
     }
     uint16_t session_second = 0;
     result = host_second->Start(
-        host_exe_path_,
+        Das::Utils::PathToUtf8(host_exe_path_),
         session_second,
         IpcTestConfig::GetHostStartTimeoutMs());
     if (DAS::IsFailed(result))
@@ -3520,7 +3539,8 @@ TEST_F(IpcMultiProcessTestIntegration, MixedTransport_HttpAndIpcHostToHostCall)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     ASSERT_GT(http_port_, static_cast<uint16_t>(0))
@@ -3530,7 +3550,7 @@ TEST_F(IpcMultiProcessTestIntegration, MixedTransport_HttpAndIpcHostToHostCall)
 
     uint16_t  ipc_session = 0;
     DasResult result = launcher_->Start(
-        host_exe_path_,
+        Das::Utils::PathToUtf8(host_exe_path_),
         ipc_session,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -3549,8 +3569,8 @@ TEST_F(IpcMultiProcessTestIntegration, MixedTransport_HttpAndIpcHostToHostCall)
         expected_http_session,
         http_host.GetPid());
 
-    std::string ipc_plugin_path;
-    std::string http_plugin_path;
+    std::filesystem::path ipc_plugin_path;
+    std::filesystem::path http_plugin_path;
     try
     {
         ipc_plugin_path =
@@ -3643,10 +3663,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     GTEST_SKIP() << "DAS_EXPORT_JAVA is not enabled";
 #endif
     ASSERT_TRUE(std::filesystem::exists(host_exe_path_))
-        << "DasHost.exe not found at: " << host_exe_path_;
+        << "DasHost.exe not found at: "
+        << Das::Utils::PathToUtf8(host_exe_path_);
 
     // 获取 JavaTestPlugin JSON 路径（检查是否存在）
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -3673,7 +3694,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        plugin_json_path.c_str(),
+        Das::Utils::PathToUtf8(plugin_json_path).c_str(),
         op.Put(),
         IpcTestConfig::
             GetPluginLoadTimeout()); // Java 插件可能需要更长时间（JVM 初始化）
@@ -3798,7 +3819,8 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     // 使用一个不存在的 PID（极大值，几乎不可能有进程使用）
@@ -3812,10 +3834,10 @@ TEST_F(
 
     boost::process::v2::process host_process(
         io_ctx,
-        host_exe_path_,
+        Das::Utils::ToBoostPath(host_exe_path_),
         args,
         boost::process::v2::process_start_dir(
-            std::filesystem::path(host_exe_path_).parent_path().string()));
+            Das::Utils::ToBoostPath(host_exe_path_.parent_path())));
 
     uint32_t host_pid = static_cast<uint32_t>(host_process.id());
     ASSERT_GT(host_pid, 0u);
@@ -3873,22 +3895,23 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     FakeMainProcess::KillParentSharedMemory::Cleanup(
         FakeMainProcess::KILL_PARENT_SHM_NAME);
 
     // 1. 获取当前可执行程序路径
-    std::string test_exe_path;
+    std::filesystem::path test_exe_path;
     {
-        char        buffer[MAX_PATH];
-        DWORD const len = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+        wchar_t     buffer[MAX_PATH];
+        DWORD const len = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
         if (len == 0 || len >= MAX_PATH)
         {
             GTEST_SKIP() << "Failed to get current executable path";
         }
-        test_exe_path = std::string(buffer, len);
+        test_exe_path = std::filesystem::path{std::wstring_view{buffer, len}};
     }
 
     // 2. 生成唯一信号名称
@@ -3907,7 +3930,7 @@ TEST_F(
 
     boost::process::v2::process fake_main(
         fake_main_io_ctx,
-        test_exe_path,
+        Das::Utils::ToBoostPath(test_exe_path),
         fake_main_args);
 
     auto fake_main_pid = static_cast<uint32_t>(fake_main.id());
@@ -3923,10 +3946,10 @@ TEST_F(
 
     boost::process::v2::process host_process(
         host_io_ctx,
-        host_exe_path_,
+        Das::Utils::ToBoostPath(host_exe_path_),
         host_args,
         boost::process::v2::process_start_dir(
-            std::filesystem::path(host_exe_path_).parent_path().string()));
+            Das::Utils::ToBoostPath(host_exe_path_.parent_path())));
 
     auto host_pid = static_cast<uint32_t>(host_process.id());
     DAS_CORE_LOG_INFO(
@@ -4021,7 +4044,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     // 1. 启动第一个 Host 进程
@@ -4030,7 +4054,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
     EXPECT_TRUE(launcher_->IsRunning());
 
     // 2. 获取插件 JSON 路径
-    std::string plugin1_path, plugin2_path;
+    std::filesystem::path plugin1_path, plugin2_path;
     try
     {
         plugin1_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
@@ -4047,7 +4071,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
         result = ctx_->LoadPluginAsync(
             launcher_.Get(),
-            plugin1_path.c_str(),
+            Das::Utils::PathToUtf8(plugin1_path).c_str(),
             op.Put());
         ASSERT_EQ(result, DAS_S_OK);
         auto opt = DAS::Core::IPC::wait(
@@ -4069,7 +4093,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
 
         uint16_t session_id2 = 0;
         result = launcher2->Start(
-            host_exe_path_,
+            Das::Utils::PathToUtf8(host_exe_path_),
             session_id2,
             IpcTestConfig::GetHostStartTimeoutMs());
         ASSERT_EQ(result, DAS_S_OK);
@@ -4081,7 +4105,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
         result = ctx_->LoadPluginAsync(
             launcher2.Get(),
-            plugin2_path.c_str(),
+            Das::Utils::PathToUtf8(plugin2_path).c_str(),
             op.Put());
         ASSERT_EQ(result, DAS_S_OK);
         auto opt = DAS::Core::IPC::wait(
@@ -4115,7 +4139,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     // 1. 启动第一个 Host 进程
@@ -4132,14 +4157,14 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
 
         uint16_t session_id2 = 0;
         result = launcher2->Start(
-            host_exe_path_,
+            Das::Utils::PathToUtf8(host_exe_path_),
             session_id2,
             IpcTestConfig::GetHostStartTimeoutMs());
         ASSERT_EQ(result, DAS_S_OK);
     }
 
     // 3. 获取插件 JSON 路径
-    std::string plugin1_path, plugin2_path;
+    std::filesystem::path plugin1_path, plugin2_path;
     try
     {
         plugin1_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
@@ -4153,11 +4178,15 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
     // 4. 创建两个异步操作，分别发到不同 Host
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op1;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op2;
-    result =
-        ctx_->LoadPluginAsync(launcher_.Get(), plugin1_path.c_str(), op1.Put());
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        Das::Utils::PathToUtf8(plugin1_path).c_str(),
+        op1.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    result =
-        ctx_->LoadPluginAsync(launcher2.Get(), plugin2_path.c_str(), op2.Put());
+    result = ctx_->LoadPluginAsync(
+        launcher2.Get(),
+        Das::Utils::PathToUtf8(plugin2_path).c_str(),
+        op2.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     // 5. when_all 并发等待
@@ -4205,12 +4234,14 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
     DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
 
-    const std::string plugin_path =
+    const std::filesystem::path plugin_path =
         IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
 
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-    result =
-        ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put());
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        Das::Utils::PathToUtf8(plugin_path).c_str(),
+        op.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     auto opt = DAS::Core::IPC::wait(
@@ -4296,10 +4327,11 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
-    std::string plugin_path;
+    std::filesystem::path plugin_path;
     try
     {
         plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
@@ -4350,7 +4382,10 @@ TEST_F(
 
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     ASSERT_EQ(
-        ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put()),
+        ctx_->LoadPluginAsync(
+            launcher_.Get(),
+            Das::Utils::PathToUtf8(plugin_path).c_str(),
+            op.Put()),
         DAS_S_OK);
     auto load_opt = DAS::Core::IPC::wait(
         GetContext(),
@@ -4499,7 +4534,7 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
     }
 
     // 1. 获取插件 JSON 路径
-    std::string plugin_path;
+    std::filesystem::path plugin_path;
     try
     {
         plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
@@ -4631,8 +4666,10 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
 
     // 4. 加载 IpcTestPlugin1
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-    result =
-        ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put());
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        Das::Utils::PathToUtf8(plugin_path).c_str(),
+        op.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     auto opt = DAS::Core::IPC::wait(
@@ -4758,7 +4795,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
     }
 
     // 1. 获取插件 JSON 路径
-    std::string plugin_path;
+    std::filesystem::path plugin_path;
     try
     {
         plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
@@ -4789,8 +4826,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
 
     // 4. 加载 IpcTestPlugin1
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-    result =
-        ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put());
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        Das::Utils::PathToUtf8(plugin_path).c_str(),
+        op.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     auto opt = DAS::Core::IPC::wait(
@@ -5096,8 +5135,8 @@ private:
 void AssertPythonDirectorLifecycleBehavior(
     DAS::Core::IPC::MainProcess::IIpcContext&  context,
     DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher,
-    const std::string&                         host_exe_path,
-    const std::string&                         plugin_json_path,
+    const std::filesystem::path&               host_exe_path,
+    const std::filesystem::path&               plugin_json_path,
     std::string_view                           expected_component_name,
     std::string_view                           marker,
     LifecycleCallbackComponent*                callback)
@@ -5108,7 +5147,7 @@ void AssertPythonDirectorLifecycleBehavior(
 
     uint16_t        session_id = 0;
     const DasResult start_result = launcher->Start(
-        host_exe_path,
+        Das::Utils::PathToUtf8(host_exe_path),
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(start_result, DAS_S_OK);
@@ -5234,8 +5273,8 @@ void AssertPythonDirectorLifecycleBehavior(
 void RunCSharpBridgeLifecycleTest(
     DAS::Core::IPC::MainProcess::IIpcContext&  context,
     DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher,
-    const std::string&                         host_exe_path,
-    const std::string&                         plugin_json_path,
+    const std::filesystem::path&               host_exe_path,
+    const std::filesystem::path&               plugin_json_path,
     std::string_view                           marker,
     std::string_view                           runtime_label,
     LifecycleCallbackComponent*                callback)
@@ -5246,7 +5285,7 @@ void RunCSharpBridgeLifecycleTest(
 
     uint16_t        session_id = 0;
     const DasResult start_result = launcher->Start(
-        host_exe_path,
+        Das::Utils::PathToUtf8(host_exe_path),
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(start_result, DAS_S_OK);
@@ -5365,10 +5404,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonDirectorLifecycleTest)
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -5423,13 +5463,14 @@ TEST_F(
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     std::filesystem::path folder_manifest_path;
     ASSERT_TRUE(PreparePythonFolderTestPluginFixture(&folder_manifest_path));
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -5532,8 +5573,8 @@ void ExpectPythonDispatchFailure(
 void AssertPythonFailurePathBehavior(
     DAS::Core::IPC::MainProcess::IIpcContext&  context,
     DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher,
-    const std::string&                         host_exe_path,
-    const std::string&                         plugin_json_path,
+    const std::filesystem::path&               host_exe_path,
+    const std::filesystem::path&               plugin_json_path,
     std::string_view                           expected_component_name)
 {
     ASSERT_NE(launcher.Get(), nullptr);
@@ -5551,7 +5592,7 @@ void AssertPythonFailurePathBehavior(
     const ScopedHostStop guard{launcher};
     uint16_t             session_id = 0;
     const DasResult      start_result = launcher->Start(
-        host_exe_path,
+        Das::Utils::PathToUtf8(host_exe_path),
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(start_result, DAS_S_OK);
@@ -5653,10 +5694,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonFailurePathTest)
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -5698,13 +5740,14 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonFolderFailurePathTest)
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
     std::filesystem::path folder_manifest_path;
     ASSERT_TRUE(PreparePythonFolderTestPluginFixture(&folder_manifest_path));
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -5748,7 +5791,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
     GTEST_SKIP() << "DAS_EXPORT_NODE is not enabled";
 #endif
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -5764,8 +5807,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
         NodePackageRootFromHostExePath(host_exe_path_);
     const auto node_modules_root =
         NodeModulesRootFromHostExePath(host_exe_path_);
-    const auto plugin_package_root =
-        std::filesystem::path{plugin_json_path}.parent_path();
+    const auto plugin_package_root = plugin_json_path.parent_path();
     const auto node_host_package =
         ValidateNodeHostPackage(node_executable, node_package_root);
     if (!node_host_package)
@@ -5801,7 +5843,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        plugin_json_path.c_str(),
+        Das::Utils::PathToUtf8(plugin_json_path).c_str(),
         op.Put(),
         IpcTestConfig::GetPluginLoadTimeout());
     ASSERT_EQ(result, DAS_S_OK);
@@ -5977,10 +6019,11 @@ TEST_F(
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path = IpcTestConfig::GetCSharpTestPluginJsonPath(
@@ -6024,10 +6067,11 @@ TEST_F(
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: "
+                     << Das::Utils::PathToUtf8(host_exe_path_);
     }
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path = IpcTestConfig::GetCSharpTestPluginJsonPath(
@@ -6064,9 +6108,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
     GTEST_SKIP() << "DAS_EXPORT_JAVA is not enabled";
 #endif
     ASSERT_TRUE(std::filesystem::exists(host_exe_path_))
-        << "DasHost.exe not found at: " << host_exe_path_;
+        << "DasHost.exe not found at: "
+        << Das::Utils::PathToUtf8(host_exe_path_);
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -6096,7 +6141,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        plugin_json_path.c_str(),
+        Das::Utils::PathToUtf8(plugin_json_path).c_str(),
         op.Put(),
         IpcTestConfig::GetPluginLoadTimeout());
     ASSERT_EQ(result, DAS_S_OK);
@@ -6238,9 +6283,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
     GTEST_SKIP() << "DAS_EXPORT_LUA is not enabled";
 #endif
     ASSERT_TRUE(std::filesystem::exists(host_exe_path_))
-        << "DasHost.exe not found at: " << host_exe_path_;
+        << "DasHost.exe not found at: "
+        << Das::Utils::PathToUtf8(host_exe_path_);
 
-    std::string plugin_json_path;
+    std::filesystem::path plugin_json_path;
     try
     {
         plugin_json_path =
@@ -6268,7 +6314,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        plugin_json_path.c_str(),
+        Das::Utils::PathToUtf8(plugin_json_path).c_str(),
         op.Put(),
         IpcTestConfig::GetPluginLoadTimeout());
     ASSERT_EQ(result, DAS_S_OK);
@@ -6417,7 +6463,7 @@ TEST_F(
     }
 
     // 1. 获取插件 JSON 路径
-    std::string plugin_path;
+    std::filesystem::path plugin_path;
     try
     {
         plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
@@ -6464,8 +6510,10 @@ TEST_F(
 
     // 4. 加载 IpcTestPlugin1
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-    result =
-        ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put());
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        Das::Utils::PathToUtf8(plugin_path).c_str(),
+        op.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     auto opt = DAS::Core::IPC::wait(
