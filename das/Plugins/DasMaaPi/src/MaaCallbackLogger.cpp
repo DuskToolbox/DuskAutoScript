@@ -3,8 +3,10 @@
 #include "PiHttpClient.h"
 
 #include <das/DasString.hpp>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -296,15 +298,20 @@ namespace Das::Plugins::DasMaaPi
                 return text;
             }
             const auto full = std::filesystem::weakly_canonical(
-                context.interface_directory / text,
+                context.interface_directory / Das::Utils::PathFromUtf8(text),
                 ec);
             if (ec || !std::filesystem::exists(full, ec))
             {
                 return text;
             }
-            const auto base_str = base.string();
-            const auto full_str = full.string();
-            if (full_str.rfind(base_str, 0) != 0)
+            // 字符串前缀判定有跨分量误匹配面（"dir_a" 前缀误中 "dir_ab"），
+            // 成分迭代器逐分量比较才与目录包含语义一致。
+            const auto prefix_mismatch = std::mismatch(
+                base.begin(),
+                base.end(),
+                full.begin(),
+                full.end());
+            if (prefix_mismatch.first != base.end())
             {
                 return text;
             }

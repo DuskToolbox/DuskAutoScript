@@ -3,8 +3,9 @@
 #include "DasProgressReporter.h"
 
 #include <das/DasApi.h>
+#include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressCallback.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressUpdate.Implements.hpp>
@@ -110,18 +111,11 @@ namespace Plugins::DasMaaPi
         }
 
         // boost::filesystem::path（this_line_location 返回）→ UTF-8
-        // std::string。 经 std::filesystem::path 桥接：Windows 走
-        // wstring（UTF-16），Unix 走 string（native narrow），再 u8string() 出
-        // UTF-8 字节。boost path 没有 u8string()，.string() 在 Windows 是 ACP
-        // narrow（中文路径乱码）。
+        // std::string。 boost path 没有 u8string()，.string() 在 Windows 是
+        // ACP narrow（中文路径乱码）——经公共桥转 std path 后取 UTF-8 文本。
         std::string BoostPathToUtf8(const boost::filesystem::path& boost_path)
         {
-#ifdef _WIN32
-            const std::filesystem::path std_path{boost_path.wstring()};
-#else
-            const std::filesystem::path std_path{boost_path.string()};
-#endif
-            return std::string{DAS::Utils::U8AsString(std_path.u8string())};
+            return Das::Utils::PathToUtf8(Das::Utils::ToStdPath(boost_path));
         }
 
         // 插件侧 IDasJson 构造惯例（SchedulerTestPluginImpl / DasFlowControl
@@ -364,7 +358,8 @@ namespace Plugins::DasMaaPi
         try
         {
             const auto plugin_module = boost::dll::this_line_location();
-            const auto boost_i18n_dir = plugin_module.parent_path() / "i18n";
+            const auto boost_i18n_dir =
+                plugin_module.parent_path() / DAS_PATH_LITERAL("i18n");
             const auto dir_utf8 = BoostPathToUtf8(boost_i18n_dir);
 
             DasPtr<IDasReadOnlyString> dir_str;

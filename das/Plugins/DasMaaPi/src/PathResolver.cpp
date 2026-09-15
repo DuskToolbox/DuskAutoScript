@@ -1,5 +1,7 @@
 #include "PathResolver.h"
 
+#include <das/Utils/PathText.h>
+
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -30,7 +32,7 @@ namespace Das::Plugins::DasMaaPi
                 return;
             }
             auto executable_path = resolved_path;
-            executable_path += ".exe";
+            executable_path += DAS_PATH_LITERAL(".exe");
             if (std::filesystem::exists(executable_path, error_code))
             {
                 resolved_path = std::move(executable_path);
@@ -50,7 +52,7 @@ namespace Das::Plugins::DasMaaPi
             return false;
         }
 
-        const std::filesystem::path path(value);
+        const std::filesystem::path path = Das::Utils::PathFromUtf8(value);
         return !path.empty() && !path.has_parent_path() && !path.has_root_name()
                && !path.has_root_directory();
     }
@@ -59,7 +61,8 @@ namespace Das::Plugins::DasMaaPi
         const std::string& child_exec,
         const std::string& interface_directory)
     {
-        const std::filesystem::path exec_path(child_exec);
+        const std::filesystem::path exec_path =
+            Das::Utils::PathFromUtf8(child_exec);
         if (IsBareCommand(child_exec))
         {
             return exec_path;
@@ -74,7 +77,7 @@ namespace Das::Plugins::DasMaaPi
             return resolved_path;
         }
         auto joined_path =
-            (std::filesystem::path(interface_directory) / exec_path)
+            (Das::Utils::PathFromUtf8(interface_directory) / exec_path)
                 .lexically_normal();
 #ifdef _WIN32
         AppendWindowsExecutableExtensionIfNeeded(joined_path);

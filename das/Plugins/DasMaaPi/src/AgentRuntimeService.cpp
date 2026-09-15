@@ -4,6 +4,7 @@
 #include "PathResolver.h"
 
 #include <das/DasApi.h>
+#include <das/Utils/PathText.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
 
 #include <algorithm>
@@ -294,7 +295,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 launch.executable = ResolveChildExec(
                     spec.child_exec,
                     request.interface_directory);
-                launch.working_directory = request.interface_directory;
+                launch.working_directory =
+                    Das::Utils::PathFromUtf8(request.interface_directory);
                 launch.arguments = spec.child_args;
                 launch.arguments.push_back(*agent.identifier);
                 launch.environment = env;

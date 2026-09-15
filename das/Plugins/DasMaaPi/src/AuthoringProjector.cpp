@@ -17,8 +17,9 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
+#include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/StringUtils.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasI18n.h>
 
@@ -71,17 +72,10 @@ namespace Das::Plugins::DasMaaPi
 
         // boost::filesystem::path（this_line_location 返回）→ UTF-8
         // std::string。 boost path 没有 u8string()；.string() 在 Windows 是 ACP
-        // narrow（中文 路径乱码）。经 std::filesystem::path 桥接：Windows 走
-        // wstring（UTF-16）， Unix 走 string（native narrow），再 u8string() 出
-        // UTF-8 字节。
+        // narrow（中文 路径乱码）——经公共桥转 std path 后取 UTF-8 文本。
         std::string BoostPathToUtf8(const boost::filesystem::path& boost_path)
         {
-#ifdef _WIN32
-            const std::filesystem::path std_path{boost_path.wstring()};
-#else
-            const std::filesystem::path std_path{boost_path.string()};
-#endif
-            return std::string{DAS::Utils::U8AsString(std_path.u8string())};
+            return Das::Utils::PathToUtf8(Das::Utils::ToStdPath(boost_path));
         }
 
         // 取 host i18n 翻译表（DasMaaPi 自有 UI 文案）。函数内 static cache：
@@ -98,7 +92,7 @@ namespace Das::Plugins::DasMaaPi
                 {
                     const auto plugin_module = boost::dll::this_line_location();
                     const auto boost_i18n_dir =
-                        plugin_module.parent_path() / "i18n";
+                        plugin_module.parent_path() / DAS_PATH_LITERAL("i18n");
                     const auto dir_utf8 = BoostPathToUtf8(boost_i18n_dir);
                     DasPtr<IDasReadOnlyString> dir_str;
                     if (DAS::IsFailed(
@@ -283,10 +277,12 @@ namespace Das::Plugins::DasMaaPi
             }
             if (catalog && !catalog->interface_directory.empty())
             {
-                const std::filesystem::path base(catalog->interface_directory);
-                const std::filesystem::path leaf(icon);
-                auto                        combined = base / leaf;
-                return combined.generic_string();
+                const auto base = catalog->interface_directory;
+                const auto leaf = Das::Utils::PathFromUtf8(icon);
+                const auto combined = base / leaf;
+                // icon 进 authoring 文档（UI 消费），正斜杠 + UTF-8 形态
+                const auto combined_u8 = combined.generic_u8string();
+                return std::string{combined_u8.begin(), combined_u8.end()};
             }
             return std::string(icon);
         }
@@ -2758,7 +2754,7 @@ namespace Das::Plugins::DasMaaPi
         {
             return std::nullopt;
         }
-        return std::filesystem::path(*settings.adapter.interface_path)
+        return Das::Utils::PathFromUtf8(*settings.adapter.interface_path)
             .parent_path();
     }
 

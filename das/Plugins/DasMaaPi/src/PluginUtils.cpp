@@ -2,6 +2,8 @@
 
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
+#include <das/Utils/BoostPathBridge.h>
+#include <das/Utils/PathText.h>
 
 #include <boost/dll/runtime_symbol_info.hpp>
 
@@ -20,22 +22,15 @@ namespace Plugins::DasMaaPi
             DasPtr<ExportInterface::IDasI18n> result;
 
             // <plugin_dir>/i18n 经 boost::dll::this_line_location()
-            // .parent_path() 推导（cwd != 插件安装目录）。boost path →
-            // UTF-8 std::string 经 std::filesystem::path 桥接（Windows
-            // wstring / Unix string），boost path 无 u8string()，
-            // .string() 在 Windows 是 ACP（中文乱码）。
+            // .parent_path() 推导（cwd != 插件安装目录）。boost path 无
+            // u8string()、.string() 在 Windows 是 ACP（中文乱码）——经
+            // 公共桥转 std path 后取 UTF-8 文本。
             try
             {
                 const auto plugin_module = boost::dll::this_line_location();
-#ifdef _WIN32
-                const std::filesystem::path std_path{
-                    (plugin_module.parent_path() / "i18n").wstring()};
-#else
-                const std::filesystem::path std_path{
-                    (plugin_module.parent_path() / "i18n").string()};
-#endif
-                const auto        u8dir = std_path.u8string();
-                const std::string dir_utf8(u8dir.begin(), u8dir.end());
+                const auto dir_utf8 = Das::Utils::PathToUtf8(
+                    Das::Utils::ToStdPath(plugin_module.parent_path())
+                    / DAS_PATH_LITERAL("i18n"));
 
                 DasPtr<IDasReadOnlyString> dir_str;
                 if (DAS::IsFailed(

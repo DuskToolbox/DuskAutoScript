@@ -1,6 +1,8 @@
 #include "MaaDynamicSymbols.h"
 
 #include <das/DasApi.h>
+#include <das/Utils/BoostPathBridge.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 
 #include <boost/dll/runtime_symbol_info.hpp>
@@ -94,7 +96,7 @@ namespace Das::Plugins::DasMaaPi
                 const auto plugin_module = boost::dll::this_line_location();
                 const auto plugin_dir = plugin_module.parent_path();
                 handles.framework.load(
-                    plugin_dir / "MaaFramework",
+                    plugin_dir / DAS_PATH_LITERAL("MaaFramework"),
                     boost::dll::load_mode::append_decorations
                         | boost::dll::load_mode::load_with_altered_search_path,
                     ec);
@@ -140,7 +142,7 @@ namespace Das::Plugins::DasMaaPi
                 // MaaToolkit.dll/.so/.dylib + lib 前缀），
                 // 绕过尾点，且跨平台（不硬编码 .dll）。
                 handles.toolkit.load(
-                    plugin_dir / "MaaToolkit",
+                    plugin_dir / DAS_PATH_LITERAL("MaaToolkit"),
                     boost::dll::load_mode::append_decorations
                         | boost::dll::load_mode::load_with_altered_search_path,
                     ec);
@@ -153,7 +155,8 @@ namespace Das::Plugins::DasMaaPi
                     DAS_LOG_INFO(
                         DAS_FMT_NS::format(
                             "[DasMaaPi] MaaToolkit loaded from {}",
-                            plugin_dir.string())
+                            Das::Utils::PathToUtf8(
+                                Das::Utils::ToStdPath(plugin_dir)))
                             .c_str());
                 }
                 else
@@ -162,7 +165,8 @@ namespace Das::Plugins::DasMaaPi
                         DAS_FMT_NS::format(
                             "[DasMaaPi] MaaToolkit load failed: "
                             "dir={} ec={} msg={}",
-                            plugin_dir.string(),
+                            Das::Utils::PathToUtf8(
+                                Das::Utils::ToStdPath(plugin_dir)),
                             ec.value(),
                             ec.message())
                             .c_str());
