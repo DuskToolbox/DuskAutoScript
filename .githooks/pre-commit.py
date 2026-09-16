@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-commit hook: 拒绝非 UTF-8 (含 BOM) 的代码文件提交 + 新增行审查报告编号检查 + C++ 命名风格检查"""
+"""Pre-commit hook: 拒绝非 UTF-8 (含 BOM) 的代码文件提交 + 新增行审查报告编号检查 + C++ 命名风格检查 + 路径文本编码检查"""
 
 import os
 import re
@@ -128,6 +128,20 @@ def main():
     )
     if naming.returncode != 0:
         sys.exit(naming.returncode)
+
+    # 路径文本编码检查（libclang AST 级 path 窄串审计，仅查暂存改动行；
+    # 非强制——环境由使用者保证，缺 libclang/编译库时脚本自身 warning 放行）。
+    # DAS_PYTHON 指向 DAS 工具链 python（当前需带 clang binding），设了且
+    # 存在即替换默认解释器——PATH python 无 clang binding 时靠它接通本道。
+    das_python = os.environ.get("DAS_PYTHON")
+    path_text_interpreter = (
+        das_python if das_python and os.path.isfile(das_python) else sys.executable
+    )
+    path_text = subprocess.run(
+        [path_text_interpreter, str(ROOT / "tools" / "check_path_text_encoding.py"), "--staged"]
+    )
+    if path_text.returncode != 0:
+        sys.exit(path_text.returncode)
 
     sys.exit(0)
 
