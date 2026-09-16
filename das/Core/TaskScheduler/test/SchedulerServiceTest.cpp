@@ -34,8 +34,10 @@
 #include <chrono>
 #include <cstdlib>
 #include <das/Utils/DasJsonCore.h>
+#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -2856,17 +2858,82 @@ TEST_F(SchedulerRuntimeBackedTest, OnTick_RespectsPersistedNextExecutionTime)
 
     auto first_task_json =
         settings_manager_->GetTaskInstanceJson("0", first_task_id);
-    auto second_task_json =
-        settings_manager_->GetTaskInstanceJson("0", second_task_id);
 
+    // Disable 返回只保证 persist 事件已入队，入队到 persist 线程刷盘是
+    // 异步的——立即断言超出契约边界。带界轮询重读；丢事件场景（null
+    // 永不变化）会在超时处失败，不是掩蔽。
+    bool second_next_time_persisted = false;
+    {
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            auto second_task_json =
+                settings_manager_->GetTaskInstanceJson("0", second_task_id);
+            if (!(*second_task_json
+                       .as_object())[std::string_view("nextExecutionTime")]
+                     .is_null())
+            {
+                second_next_time_persisted = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    EXPECT_TRUE(second_next_time_persisted);
+
+    // 未执行的任务不受时序影响，保持精确值断言。
     EXPECT_EQ(
         (*first_task_json.as_object())[std::string_view("nextExecutionTime")]
             .as_sint()
             .value(),
         4070908800);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    DisableThenDestruct_PersistsLastNextExecutionTime)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    int64_t first_task_id = -1;
+    int64_t second_task_id = -1;
+    ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &first_task_id), DAS_S_OK);
+    ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &second_task_id), DAS_S_OK);
+
+    yyjson::value internal_props(Das::Utils::MakeYyjsonObject());
+    // 2099-01-01T00:00:00Z = 4070908800
+    (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
+        4070908800;
+    ASSERT_EQ(
+        scheduler_->UpdateTaskInternalProperties(first_task_id, internal_props),
+        DAS_S_OK);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+    ASSERT_TRUE(WaitForExecutions(1, std::chrono::milliseconds(500)));
+
+    // Disable 后立即在测试体内析构（TearDown 对空 unique_ptr 判空安全，
+    // settings_manager_/plugin_manager_ 均存活）。断言必须放在 reset()
+    // 之后：~SchedulerService 的 persist 队列 join 保证 drain-then-exit
+    // 全部落盘，这是确定性观测点，不与 persist 线程刷盘时序竞速——
+    // 这正是停机竞态的目标场景：尾段 persist 事件若在析构关队列后才
+    // 入队即静默丢失，JSON 永远 null，重启后任务多跑一次。
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+    scheduler_.reset();
+
+    auto executed_task_json =
+        settings_manager_->GetTaskInstanceJson("0", second_task_id);
     EXPECT_FALSE(
-        (*second_task_json.as_object())[std::string_view("nextExecutionTime")]
+        (*executed_task_json.as_object())[std::string_view("nextExecutionTime")]
             .is_null());
+
+    auto skipped_task_json =
+        settings_manager_->GetTaskInstanceJson("0", first_task_id);
+    EXPECT_EQ(
+        (*skipped_task_json.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        4070908800);
 }
 
 TEST_F(SchedulerRuntimeBackedTest, AddTask_CreatesDistinctRuntimeInstances)
@@ -5114,7 +5181,7 @@ TEST_F(
         if (component_guid
             == std::string_view("95FD2FFA-88F2-4F85-A536-C708D25B641F"))
         {
-            action_node  = Das::Utils::CloneYyjsonValue(node);
+            action_node = Das::Utils::CloneYyjsonValue(node);
             action_found = true;
             break;
         }
@@ -7891,6 +7958,85 @@ namespace
         return task;
     }
 
+    yyjson::value MakeDueScheduledTask(int64_t task_id, bool enabled = true)
+    {
+        yyjson::value task = MakeFutureScheduledTask(task_id, enabled);
+        // 过去时间：驱动 Stopped 排空链在当前 tick 结束后重投下一个。
+        (*task.as_object())[std::string_view("nextExecutionTime")] = 1;
+        return task;
+    }
+
+    // 往 BusinessThread 投递的 Disable 调用载体：回调体内直接调 Disable，
+    // 复现生产 stop 路径的线程语境（Router 把 handler 派发到 BT 上执行）。
+    class BusinessThreadDisableCallback final : public IDasAsyncCallback
+    {
+    public:
+        BusinessThreadDisableCallback(
+            SchedulerService&       scheduler,
+            std::promise<DasResult> disable_result)
+            : scheduler_(scheduler), disable_result_(std::move(disable_result))
+        {
+        }
+
+        uint32_t AddRef() override { return ++ref_count_; }
+
+        uint32_t Release() override
+        {
+            auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult QueryInterface(const DasGuid& iid, void** pp) override
+        {
+            if (pp == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasAsyncCallback>())
+            {
+                *pp = this;
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult Do() noexcept override
+        {
+            try
+            {
+                disable_result_.set_value(scheduler_.Disable());
+            }
+            catch (...)
+            {
+                try
+                {
+                    disable_result_.set_exception(std::current_exception());
+                }
+                catch (...)
+                {
+                }
+            }
+            return DAS_S_OK;
+        }
+
+    private:
+        SchedulerService&       scheduler_;
+        std::promise<DasResult> disable_result_;
+        std::atomic<uint32_t>   ref_count_{1};
+    };
+
     ::testing::AssertionResult WaitForExecutedCount(
         FactoryTaskSharedState&   state,
         size_t                    expected,
@@ -8005,6 +8151,76 @@ TEST_F(
         // （SS=instance_id）：确认被插件值重算，而非残留置 due 用的远期值。
         ASSERT_GE(next_time.value(), 1893456000);
         ASSERT_LT(next_time.value(), 1893456100);
+    }
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    DisableFromBusinessThread_PumpsAndDrainsPendingTicks)
+{
+    // 镜像生产交错：stop 调用（BT 上）排在长 Do 执行中的 tick 之后、
+    // 排空重投的下一个 tick 之前——Disable 的排空等待必须泵化（BT 上
+    // sync_wait 自等死锁），泵内把排空链上的 tick 跑完才返回。
+    WriteSchedulerState(
+        *settings_manager_,
+        2,
+        {0, 1},
+        {MakeFutureScheduledTask(0), MakeDueScheduledTask(1)});
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    ASSERT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->block_do = true;
+    }
+    ASSERT_EQ(scheduler_->RunTaskNow(0), DAS_S_OK);
+    {
+        ipc_scoped_lock lock(shared_state_->mutex);
+        ASSERT_TRUE(shared_state_->cv.wait_for(
+            lock,
+            std::chrono::seconds(2),
+            [this] { return shared_state_->do_entered; }));
+    }
+
+    // Do 阻塞期间投 stop：disable 回调入 BT 队列，排在当前 tick 之后、
+    // 排空重投的 tick 之前。
+    std::promise<DasResult> disable_result_promise;
+    auto                    disable_done = disable_result_promise.get_future();
+    {
+        // 智能指针优先：构造时那份引用由 DasPtr 接管（Attach 不叠加
+        // AddRef），PostToBusinessThread 自建引用，作用域析构成对归还。
+        const DasPtr<IDasAsyncCallback> callback(
+            DasPtr<IDasAsyncCallback>::Attach(
+                static_cast<IDasAsyncCallback*>(
+                    new BusinessThreadDisableCallback(
+                        *scheduler_,
+                        std::move(disable_result_promise)))));
+        ipc_sp_->PostToBusinessThread(callback.Get());
+    }
+
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->unblock_do = true;
+    }
+    shared_state_->cv.notify_all();
+
+    // 卡死防线：泵化排空若退化为自等，5s 超时处失败而不是挂死进程。
+    ASSERT_EQ(
+        disable_done.wait_for(std::chrono::seconds(5)),
+        std::future_status::ready);
+    static_cast<void>(disable_done.get());
+
+    // 断言锚定析构之后：persist 队列 drain-then-exit 的 join 是确定性
+    // 观测点。
+    scheduler_.reset();
+
+    for (const int64_t task_id :
+         {static_cast<int64_t>(0), static_cast<int64_t>(1)})
+    {
+        auto task_json = settings_manager_->GetTaskInstanceJson("0", task_id);
+        EXPECT_FALSE(
+            (*task_json.as_object())[std::string_view("nextExecutionTime")]
+                .is_null());
     }
 }
 
