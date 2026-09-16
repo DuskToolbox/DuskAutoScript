@@ -281,8 +281,7 @@ namespace Das::Plugins::DasMaaPi
                 const auto leaf = Das::Utils::PathFromUtf8(icon);
                 const auto combined = base / leaf;
                 // icon 进 authoring 文档（UI 消费），正斜杠 + UTF-8 形态
-                const auto combined_u8 = combined.generic_u8string();
-                return std::string{combined_u8.begin(), combined_u8.end()};
+                return Das::Utils::PathToGenericUtf8(combined);
             }
             return std::string(icon);
         }

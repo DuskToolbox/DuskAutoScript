@@ -131,8 +131,7 @@ namespace
     {
         // 结构检查只关心 ASCII 骨架；generic 形态统一分隔符后按 UTF-8 面
         // 逐字符判读
-        const auto        path_u8 = path.generic_u8string();
-        const std::string path_text{path_u8.begin(), path_u8.end()};
+        const std::string path_text = Das::Utils::PathToGenericUtf8(path);
         const bool        has_windows_drive_prefix =
             path_text.size() >= 2
             && std::isalpha(static_cast<unsigned char>(path_text[0]))

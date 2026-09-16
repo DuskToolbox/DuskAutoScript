@@ -308,10 +308,8 @@ JavaVM* JvmManager::CreateJVM(
                 Das::Utils::ToStdPath(module_path).parent_path();
             // JVM 把反斜杠当转义字符解析，选项字符串是 UTF-8 面，
             // 路径须正斜杠形态
-            const auto        module_dir_u8 = module_dir.generic_u8string();
-            const std::string module_dir_text{
-                module_dir_u8.begin(),
-                module_dir_u8.end()};
+            const std::string module_dir_text =
+                Das::Utils::PathToGenericUtf8(module_dir);
             java_library_path =
                 DAS_FMT_NS::format("-Djava.library.path={}", module_dir_text);
             options.push_back(
@@ -386,8 +384,7 @@ std::string JvmManager::BuildClassPathString(
             result += ";"; // Windows 路径分隔符
         }
         // 正斜杠 + UTF-8：JVM 把反斜杠当转义字符解析
-        const auto path_u8 = path.generic_u8string();
-        result += std::string{path_u8.begin(), path_u8.end()};
+        result += Das::Utils::PathToGenericUtf8(path);
     }
     return result;
 }
@@ -532,11 +529,8 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
         for (size_t i = 0; i < jar_paths.size(); ++i)
         {
             // 转换为 file:/// URL；URL 是 UTF-8 面，正斜杠形态
-            const auto jar_absolute_u8 =
-                std::filesystem::absolute(jar_paths[i]).generic_u8string();
-            const std::string jar_absolute{
-                jar_absolute_u8.begin(),
-                jar_absolute_u8.end()};
+            const std::string jar_absolute = Das::Utils::PathToGenericUtf8(
+                std::filesystem::absolute(jar_paths[i]));
             auto url_string = DAS_FMT_NS::format("file:///{}", jar_absolute);
 
             const JStringPtr j_url_str(

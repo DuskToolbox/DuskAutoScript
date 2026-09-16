@@ -326,14 +326,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                             : launched.message,
                         agent.agent_id,
                         // 诊断文本（JSON 面），正斜杠 + UTF-8 形态
-                        [executable = launch.executable]()
-                        {
-                            const auto executable_u8 =
-                                executable.generic_u8string();
-                            return std::string{
-                                executable_u8.begin(),
-                                executable_u8.end()};
-                        }());
+                        Das::Utils::PathToGenericUtf8(launch.executable));
                     return FailStart(
                         staged_agents,
                         &agent,
