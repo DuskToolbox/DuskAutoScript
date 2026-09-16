@@ -9,6 +9,8 @@
 
 #include <das/Core/ForeignInterfaceHost/IPluginLifecycleListener.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#include <das/Core/IPC/BusinessThread.h>
+#include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
@@ -41,6 +43,11 @@
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_SML_WARNING
 #include <boost/sml.hpp>
+DAS_DISABLE_WARNING_END
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_STDEXEC_PARAMETERS
+#include <exec/async_scope.hpp>
 DAS_DISABLE_WARNING_END
 
 namespace Das::Core::TaskScheduler
@@ -291,9 +298,15 @@ namespace Das::Core::TaskScheduler
             const DasGuid& plugin_guid) override;
 
     private:
-        void      InvalidateAuthoringSessionsLocked();
-        void      StartTickTimer(std::chrono::steady_clock::duration delay);
-        void      OnTick();
+        void InvalidateAuthoringSessionsLocked();
+        void StartTickTimer(std::chrono::steady_clock::duration delay);
+        void OnTick();
+
+        /// 将一次 tick 投递到 BusinessThread，经 scope_ 跟踪生命周期。所有
+        /// tick 生产点（timer 到期回调 / Stopped 排空重投 / 立即执行）唯一
+        /// 出口：析构以 on_empty 排空全部在飞 tick 后才关 persist 队列。
+        void SpawnTick();
+
         DasResult CreateTaskInstance(
             const TaskTypeRecord&            task_type,
             Das::PluginInterface::IDasTask** pp_out_task);
@@ -302,83 +315,6 @@ namespace Das::Core::TaskScheduler
         /// resolver (entry resolution for settings-driven invocation nodes).
         RepositoryInvoke::RepositoryInvokeCompileServices
         BuildRepositoryInvokeCompileServices();
-
-        // IDasAsyncCallback implementation for PostToBusinessThread dispatch
-        class TickCallback final : public IDasAsyncCallback
-        {
-        public:
-            explicit TickCallback(SchedulerService* scheduler)
-                : scheduler_(scheduler)
-            {
-            }
-
-            uint32_t AddRef() override { return ++ref_count_; }
-
-            uint32_t Release() override
-            {
-                auto count = --ref_count_;
-                if (count == 0)
-                {
-                    delete this;
-                }
-                return count;
-            }
-
-            DasResult QueryInterface(const DasGuid& iid, void** pp) override
-            {
-                if (pp == nullptr)
-                {
-                    return DAS_E_INVALID_POINTER;
-                }
-                if (iid == DasIidOf<IDasBase>())
-                {
-                    *pp = static_cast<IDasBase*>(this);
-                    AddRef();
-                    return DAS_S_OK;
-                }
-                if (iid == DasIidOf<IDasAsyncCallback>())
-                {
-                    *pp = this;
-                    AddRef();
-                    return DAS_S_OK;
-                }
-                *pp = nullptr;
-                return DAS_E_NO_INTERFACE;
-            }
-
-            DasResult Do() noexcept override
-            {
-                if (!scheduler_)
-                {
-                    return DAS_S_OK;
-                }
-                // 调度循环兜底：单次 tick 内任何逃逸异常（如 provider
-                // 响应形状消费 throw）不得击穿 noexcept 终止进程——
-                // 记日志并返回 INTERNAL_FATAL_ERROR（下一 tick 照常调度）。
-                try
-                {
-                    scheduler_->OnTick();
-                }
-                catch (const std::exception& exception)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "SchedulerService::OnTick threw exception: {}",
-                        exception.what());
-                    return DAS_E_INTERNAL_FATAL_ERROR;
-                }
-                catch (...)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "SchedulerService::OnTick threw unknown exception");
-                    return DAS_E_INTERNAL_FATAL_ERROR;
-                }
-                return DAS_S_OK;
-            }
-
-        private:
-            SchedulerService*     scheduler_;
-            std::atomic<uint32_t> ref_count_{1};
-        };
 
         /// Find task type by GUID. Returns nullptr if not found.
         TaskTypeRecord* FindTaskType(const DasGuid& task_guid);
@@ -515,6 +451,11 @@ namespace Das::Core::TaskScheduler
 
         Das::Core::ForeignInterfaceHost::PluginManager&       plugin_manager_;
         Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
+        // BusinessThread 投递通道（tick 唯一执行线程）。声明序必须在
+        // ipc_context_ 之后：初始化列表依赖 ipc_context_.get()。
+        Das::Core::IPC::BusinessThreadScheduler<
+            DAS::Core::IPC::MainProcess::IIpcContext>
+            bt_scheduler_;
 
         mutable std::mutex          mutex_;
         std::atomic<SchedulerState> state_{SchedulerState::Stopped};
@@ -567,6 +508,17 @@ namespace Das::Core::TaskScheduler
         DasPtr<Das::PluginInterface::IDasStopToken> stop_token_;
 
         std::unique_ptr<boost::asio::steady_timer> tick_timer_;
+
+        // tick 生命周期账本：与 tick_timer_ 同组，所有在飞 tick 都在其中。
+        // 析构先排空本 scope 再关 persist 消费队列——顺序即「最后一条
+        // persist 事件不丢」的修复核心（先关消费者会丢事件）。
+        exec::async_scope scope_;
+
+        // BT 上 Disable 泵化排空的完成信号：on_empty 落地时由 detached
+        // continuation 置位，泵循环只读它（PumpUntilPredicate 的 is_done
+        // 契约：只读 atomic/已同步状态）。scope 已空时订阅即同步完成，
+        // 首轮谓词即命中。
+        std::atomic<bool> drain_complete_{false};
 
         // Config-side persistence queue for OnTick nextExecutionTime
         std::queue<ConfigPersistEvent> config_persist_queue_;

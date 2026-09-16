@@ -1988,7 +1988,9 @@ namespace Das::Core::TaskScheduler
     SchedulerService::SchedulerService(
         Das::Core::ForeignInterfaceHost::PluginManager&       plugin_manager,
         Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
-        : plugin_manager_(plugin_manager), ipc_context_{std::move(ipc_context)}
+        : plugin_manager_(plugin_manager), ipc_context_{std::move(ipc_context)},
+          bt_scheduler_(
+              Das::Core::IPC::schedule_on_business_thread(ipc_context_.get()))
     {
         fsm_ = std::make_unique<boost::sml::sm<FsmDefinition>>(*this);
         config_persist_thread_ =
@@ -2006,6 +2008,17 @@ namespace Das::Core::TaskScheduler
         // PluginManager& 引用），此调用成本为零；若实际析构顺序变化也避免
         // PluginManager 持悬空 listener 指针。
         plugin_manager_.SetPluginLifecycleListener(nullptr);
+
+        // 禁止在 BusinessThread 上析构（生产 HTTP 路径全程跑在 BT 上，本
+        // 析构只发生在主线程/测试线程）：下面是阻塞排空，BT 上自等即死锁。
+        // 先等 tick 生产者物理停产——顺序就是修复核心，先关 persist 消费者
+        // 会丢最后一条事件。
+        static_cast<void>(stdexec::sync_wait(scope_.on_empty()));
+
+        // asio timer 析构 cancel 未决 wait，handler 以 aborted 完成且其
+        // !ec 检查使其不触碰 this。
+        tick_timer_.reset();
+
         ShutdownConfigPersistQueue();
     }
 
@@ -2528,17 +2541,51 @@ namespace Das::Core::TaskScheduler
 
     DasResult SchedulerService::Disable()
     {
+        bool task_idle = false;
         {
             const std::scoped_lock lock(mutex_);
             fsm_->process_event(EvtDisable{});
             // 无 task 在跑：立即收尾 Stopped。有 task：保持 Stopping，等 OnTick
             // task 完成时 process EvtTickCompleted 收尾。
-            if (!current_task_id_.has_value())
+            task_idle = !current_task_id_.has_value();
+            if (task_idle)
             {
                 fsm_->process_event(EvtTickCompleted{});
             }
         }
         NotifyStateChange();
+
+        // 排空等待仅限无任务在执行的路径（与上面的 FSM 分支同判据）：此刻
+        // 无人再驱动 tick 收尾，不排空就把在飞 tick 留给调用方竞速（丢
+        // 最后一条 persist 事件的窗口）。任务在执行的路径不等待——当前
+        // tick 的收尾由 OnTick 的 EvtTickCompleted 链驱动，且调用方约定
+        // 在 Stopping 窗口继续与调度器交互，等待会与其形成双等（任务执行
+        // 中的 stop 请求还会被 Do 的跨进程同步调用经嵌套泵拉进 OnTick
+        // 内部，此时等待等的是自己栈下层的完成）。生产 stop 路径经
+        // Router 派发在 BusinessThread 上调用本方法：BT 上
+        // sync_wait(on_empty) 自等死锁（HostLauncher Pitfall 4），改泵化
+        // 等待——等待期间继续处理入站队列，排空链上的 tick 就在本线程泵
+        // 内执行，最后一个 op 完成即 scope 归零、continuation 就地置
+        // drain_complete_（泵嵌套是递归设计）。禁止把泵化等待换回
+        // sync_wait。非 BT 调用方（测试线程）直接阻塞等待。
+        if (task_idle)
+        {
+            if (Das::Core::IPC::IsOnBusinessThread())
+            {
+                drain_complete_.store(false);
+                stdexec::start_detached(
+                    scope_.on_empty()
+                    | stdexec::then([this] { drain_complete_.store(true); }));
+                static_cast<void>(
+                    Das::Core::IPC::PumpBusinessThreadUntilPredicate(
+                        "scheduler_disable_drain",
+                        [this] { return drain_complete_.load(); }));
+            }
+            else
+            {
+                static_cast<void>(stdexec::sync_wait(scope_.on_empty()));
+            }
+        }
         return fsm_last_result_;
     }
 
@@ -2594,11 +2641,9 @@ namespace Das::Core::TaskScheduler
                 SystemClock::to_time_t(SystemClock::now());
         }
 
-        // DasPtr RAII 管理 TickCallback 引用，投递 BusinessThread 后立即
-        // 返回；Do 在 BusinessThread 串行执行，不阻塞 HTTP 线程。
-        auto callback = Das::DasPtr<IDasAsyncCallback>::Attach(
-            static_cast<IDasAsyncCallback*>(new TickCallback(this)));
-        ipc_context_.get().PostToBusinessThread(callback.Get());
+        // 投递 BusinessThread 后立即返回；tick 在 BusinessThread 串行
+        // 执行，不阻塞调用线程。
+        SpawnTick();
         return DAS_S_OK;
     }
 
@@ -5364,6 +5409,34 @@ namespace Das::Core::TaskScheduler
         }
     }
 
+    void SchedulerService::SpawnTick()
+    {
+        // async_scope::spawn 的默认 receiver 遇 set_error 直接 rethrow
+        // terminate 进程，OnTick 的逃逸异常必须就地吞掉记日志（下一 tick
+        // 照常调度）。
+        scope_.spawn(
+            stdexec::schedule(bt_scheduler_)
+            | stdexec::then(
+                [this]
+                {
+                    try
+                    {
+                        OnTick();
+                    }
+                    catch (const std::exception& exception)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "SchedulerService::OnTick threw exception: {}",
+                            exception.what());
+                    }
+                    catch (...)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "SchedulerService::OnTick threw unknown exception");
+                    }
+                }));
+    }
+
     void SchedulerService::StartTickTimer(
         std::chrono::steady_clock::duration delay)
     {
@@ -5378,15 +5451,7 @@ namespace Das::Core::TaskScheduler
             {
                 if (!ec && state_.load() == SchedulerState::Running)
                 {
-                    // DasPtr RAII 管理 TickCallback 引用（new 后 refcount=1
-                    // 归调用方）： PostToBusinessThread 内部 AddRef
-                    // 建独立引用，本 DasPtr 析构时 Release
-                    // 调用方那份，配对无泄漏（照 HostPostToBusinessThreadTest
-                    // 范式）。
-                    auto callback = Das::DasPtr<IDasAsyncCallback>::Attach(
-                        static_cast<IDasAsyncCallback*>(
-                            new TickCallback(this)));
-                    ipc_context_.get().PostToBusinessThread(callback.Get());
+                    SpawnTick();
                 }
             });
     }
@@ -5580,7 +5645,7 @@ namespace Das::Core::TaskScheduler
         if (!compile_failed)
         {
             // Call IDasTask::Do WITHOUT holding the mutex.
-            // 窄 catch 而非依赖 TickCallback 兜底：兜底接住异常时 tick 的
+            // 窄 catch 而非依赖调度循环外层兜底：兜底接住异常时 tick 的
             // 清理段（执行槽清零、收尾状态机）已被跳过，调度器会永久停留
             // 执行中——插件边界异常必须就地转错误码让 tick 走完。
             DasResult do_result = DAS_E_FAIL;
@@ -5688,6 +5753,7 @@ namespace Das::Core::TaskScheduler
         int64_t persist_id = 0;
         int64_t persist_time = 0;
         bool    drain_pending = false;
+        bool    should_restart_timer = false;
         {
             const std::scoped_lock lock(mutex_);
 
@@ -5712,6 +5778,7 @@ namespace Das::Core::TaskScheduler
             {
                 now_unix = SystemClock::to_time_t(SystemClock::now());
                 next_delay = ComputeNextDelay(task_instances_, now_unix);
+                should_restart_timer = true;
             }
             else if (state_.load() == SchedulerState::Stopping)
             {
@@ -5732,15 +5799,19 @@ namespace Das::Core::TaskScheduler
         }
 
         DAS_CORE_LOG_DEBUG("SchedulerService::OnTick: tick complete");
-        if (state_.load() == SchedulerState::Running)
+        // 重排判定在 mutex_ 临界区内做出：锁外重读 state_ 会撞上 Disable
+        // 置 Stopped 后的陈旧 Running 窗口，把 timer 重排在停机之后。
+        if (should_restart_timer)
         {
             StartTickTimer(next_delay);
         }
         else if (drain_pending)
         {
-            auto drain_callback = Das::DasPtr<IDasAsyncCallback>::Attach(
-                static_cast<IDasAsyncCallback*>(new TickCallback(this)));
-            ipc_context_.get().PostToBusinessThread(drain_callback.Get());
+            // 当前 tick op 计数未归零，排空重投的下一个 tick 仍在 scope
+            // 内，on_empty 不会提前亮，析构排空会等到整条排空链结束
+            // （每次执行后 next_execution_time 刷新到未来，排空链必然
+            // 终止）。
+            SpawnTick();
         }
 
         // Post persistence event to config-side thread (outside mutex_).
