@@ -3,6 +3,7 @@
 #include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Utils/PathText.h>
+#include <das/Utils/ScopedEnvironmentVariable.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -16,10 +17,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#ifdef _WIN32
-#include <stdlib.h>
-#endif
 
 using namespace DAS::Core::ForeignInterfaceHost;
 
@@ -46,67 +43,7 @@ namespace
     constexpr auto DYNAMIC_LIBRARY_PATH_ENV = "LD_LIBRARY_PATH";
 #endif
 
-    class ScopedEnvVar
-    {
-    public:
-        ScopedEnvVar(const char* name, std::optional<std::string> value)
-            : name_{name}
-        {
-#ifdef _WIN32
-            const wchar_t* current = _wgetenv(WideName().c_str());
-            if (current)
-            {
-                original_ = Das::Utils::PathToUtf8(
-                    std::filesystem::path{std::wstring_view{current}});
-            }
-#else
-            const char* current = std::getenv(name_.c_str());
-            if (current)
-            {
-                original_ = std::string{current};
-            }
-#endif
-            Set(std::move(value));
-        }
-
-        ScopedEnvVar(const ScopedEnvVar&) = delete;
-        ScopedEnvVar& operator=(const ScopedEnvVar&) = delete;
-
-        ~ScopedEnvVar() { Set(std::move(original_)); }
-
-    private:
-        // 写端必须与消费方（PathFromEnvironment 的 _wgetenv 读端）同走宽
-        // 通道：窄 _putenv_s 经 ANSI 代码页写入，非 ASCII 路径值会被
-        // 损坏且与宽读端断裂。
-        void Set(std::optional<std::string> value)
-        {
-#ifdef _WIN32
-            _wputenv_s(
-                WideName().c_str(),
-                value ? Das::Utils::PathFromUtf8(*value).native().c_str()
-                      : L"");
-#else
-            if (value)
-            {
-                setenv(name_.c_str(), value->c_str(), 1);
-            }
-            else
-            {
-                unsetenv(name_.c_str());
-            }
-#endif
-        }
-
-#ifdef _WIN32
-        std::wstring WideName() const
-        {
-            return std::wstring(name_.begin(), name_.end());
-        }
-#endif
-
-        std::string                name_;
-        std::optional<std::string> original_;
-    };
+    using Das::Utils::ScopedEnvironmentVariable;
 
     class TempNodeRuntimeLayout
     {
@@ -386,7 +323,7 @@ namespace
 
 TEST(NodeRuntimeResolver, UnsetEnvironmentUsesBareNodeLookup)
 {
-    const ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, std::nullopt};
+    const ScopedEnvironmentVariable env{NODE_HOST_EXECUTABLE_ENV, std::nullopt};
 
     auto resolved = NodeRuntime::ResolveNodeExecutable();
 
@@ -399,7 +336,9 @@ TEST(NodeRuntimeResolver, UnsetEnvironmentUsesBareNodeLookup)
 
 TEST(NodeRuntimeResolver, EmptyEnvironmentUsesBareNodeLookup)
 {
-    const ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, std::string{}};
+    const ScopedEnvironmentVariable env{
+        NODE_HOST_EXECUTABLE_ENV,
+        std::string{}};
 
     auto resolved = NodeRuntime::ResolveNodeExecutable();
 
@@ -411,7 +350,7 @@ TEST(NodeRuntimeResolver, StrictEnvironmentExecutableHasNoFallback)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(
             layout.FakeNode().parent_path()
@@ -428,7 +367,7 @@ TEST(NodeRuntimeResolver, StrictEnvironmentExecutableIsUsedWhenPresent)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
 
@@ -478,7 +417,7 @@ TEST(NodeRuntimePackage, LegacyPluginRootRuntimeArtifactsAreIgnored)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateLegacyPluginRootRuntimeFiles();
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
 
@@ -494,7 +433,7 @@ TEST(NodeRuntimePackage, MissingRuntimeRootFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateFakeNode();
     layout.CreatePluginManifest();
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
 
@@ -510,7 +449,7 @@ TEST(NodeRuntimePackage, MissingPackageJsonFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile("package.json");
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
 
@@ -526,7 +465,7 @@ TEST(NodeRuntimePackage, MissingPackageEntryFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile(PACKAGE_ENTRY_RELATIVE);
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
 
@@ -542,7 +481,7 @@ TEST(NodeRuntimePackage, MissingWrapperFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile(WRAPPER_RELATIVE);
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
 
@@ -558,7 +497,7 @@ TEST(NodeRuntimePackage, MissingHostScriptFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile(HOST_SCRIPT_RELATIVE);
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
 
@@ -574,7 +513,7 @@ TEST(NodeRuntimePackage, MissingAddonFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile(ADDON_RELATIVE);
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
 
@@ -589,7 +528,7 @@ TEST(NodeRuntimePackage, BuildHostLaunchDescUsesRuntimeScriptAndExplicitRoots)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
 
@@ -657,7 +596,7 @@ TEST(NodeRuntimeRemoteHost, LoadPluginRejectsMissingNodeModulesRoot)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
     RemoteHostCapture capture;
@@ -682,7 +621,7 @@ TEST(NodeRuntimeRemoteHost, LoadDelegatesToRemoteHostWithExplicitLaunchDesc)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
     RemoteHostCapture capture;
@@ -742,7 +681,7 @@ TEST(NodeRuntimeRemoteHost, LoadForwardsIpcLifecycleCallbacks)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_EXECUTABLE_ENV,
         Das::Utils::PathToUtf8(layout.FakeNode())};
     RemoteHostCapture capture;

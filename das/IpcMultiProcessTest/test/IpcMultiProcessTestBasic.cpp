@@ -22,6 +22,7 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Utils/PathText.h>
+#include <das/Utils/ScopedEnvironmentVariable.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
 #include <fstream>
@@ -32,69 +33,7 @@
 #include <thread>
 #include <unordered_set>
 
-namespace
-{
-    class ScopedEnvVar
-    {
-    public:
-        explicit ScopedEnvVar(const char* name) : name_(name)
-        {
-#ifdef _WIN32
-            // 环境值读写都在宽通道闭环：窄 getenv/_putenv_s 经 ANSI 代码页，
-            // 非 ASCII 路径值会与 PathFromEnvironment 的 _wgetenv 读端断裂
-            if (const wchar_t* value = _wgetenv(WideName().c_str()))
-            {
-                old_value_ = Das::Utils::PathToUtf8(
-                    std::filesystem::path{std::wstring_view{value}});
-            }
-#else
-            if (const char* value = std::getenv(name_.c_str()))
-            {
-                old_value_ = value;
-            }
-#endif
-        }
-
-        ~ScopedEnvVar()
-        {
-            if (old_value_.has_value())
-            {
-                Set(old_value_.value());
-                return;
-            }
-            Clear();
-        }
-
-        void Set(std::string_view value)
-        {
-#ifdef _WIN32
-            _wputenv_s(
-                WideName().c_str(),
-                Das::Utils::PathFromUtf8(value).native().c_str());
-#else
-            setenv(name_.c_str(), std::string(value).c_str(), 1);
-#endif
-        }
-
-        void Clear()
-        {
-#ifdef _WIN32
-            _wputenv_s(WideName().c_str(), L"");
-#else
-            unsetenv(name_.c_str());
-#endif
-        }
-
-    private:
-        std::wstring WideName() const
-        {
-            return std::wstring(name_.begin(), name_.end());
-        }
-
-        std::string                name_;
-        std::optional<std::string> old_value_;
-    };
-} // namespace
+using Das::Utils::ScopedEnvironmentVariable;
 
 // ====== 基础测试 ======
 
@@ -121,7 +60,7 @@ TEST(IpcMultiProcessTestBasic, TestPluginJsonPathResolvesFlatAndFolderManifests)
                 std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(test_root);
 
-    ScopedEnvVar plugin_dir("DAS_PLUGIN_DIR");
+    ScopedEnvironmentVariable plugin_dir("DAS_PLUGIN_DIR");
     plugin_dir.Set(Das::Utils::PathToUtf8(test_root));
 
     const auto flat_manifest = test_root / DAS_PATH_LITERAL("FlatPlugin.json");

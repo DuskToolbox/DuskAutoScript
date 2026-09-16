@@ -10,6 +10,7 @@
 #include <das/DasRef.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/PathText.h>
+#include <das/Utils/ScopedEnvironmentVariable.h>
 #include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
@@ -114,67 +115,7 @@ namespace
         return std::filesystem::current_path() / Das::Utils::PathFromUtf8(name);
     }
 
-    class ScopedEnvVar
-    {
-    public:
-        ScopedEnvVar(const char* name, std::optional<std::string> value)
-            : name_{name}
-        {
-#ifdef _WIN32
-            const wchar_t* current = _wgetenv(WideName().c_str());
-            if (current)
-            {
-                original_ = Das::Utils::PathToUtf8(
-                    std::filesystem::path{std::wstring_view{current}});
-            }
-#else
-            const char* current = std::getenv(name_.c_str());
-            if (current)
-            {
-                original_ = std::string{current};
-            }
-#endif
-            Set(std::move(value));
-        }
-
-        ScopedEnvVar(const ScopedEnvVar&) = delete;
-        ScopedEnvVar& operator=(const ScopedEnvVar&) = delete;
-
-        ~ScopedEnvVar() { Set(std::move(original_)); }
-
-    private:
-        // 写端必须与消费方（PathFromEnvironment 的 _wgetenv 读端）同走宽
-        // 通道：窄 _putenv_s 经 ANSI 代码页写入，非 ASCII 路径值会被
-        // 损坏且与宽读端断裂。
-        void Set(std::optional<std::string> value)
-        {
-#ifdef _WIN32
-            _wputenv_s(
-                WideName().c_str(),
-                value ? Das::Utils::PathFromUtf8(*value).native().c_str()
-                      : L"");
-#else
-            if (value)
-            {
-                setenv(name_.c_str(), value->c_str(), 1);
-            }
-            else
-            {
-                unsetenv(name_.c_str());
-            }
-#endif
-        }
-
-#ifdef _WIN32
-        std::wstring WideName() const
-        {
-            return std::wstring(name_.begin(), name_.end());
-        }
-#endif
-
-        std::string                name_;
-        std::optional<std::string> original_;
-    };
+    using Das::Utils::ScopedEnvironmentVariable;
 
     std::string ReadUtf8String(IDasReadOnlyString* value)
     {
@@ -2085,7 +2026,7 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
         ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
     }
 
-    const ScopedEnvVar env{
+    const ScopedEnvironmentVariable env{
         NODE_HOST_ENV,
         Das::Utils::PathToUtf8(node_exe_path)};
     CapturingRemoteHostState remote_state;
