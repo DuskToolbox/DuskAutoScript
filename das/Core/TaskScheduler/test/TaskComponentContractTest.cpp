@@ -1559,8 +1559,9 @@ TEST_F(
 
 // ---- das.flow.launch：进程启动 + 可选等窗口（全注入缝驱动，业务中立）----
 
-// 等窗字段缺省合法：spawn 成功即完成，发规范信号口 signal_out。
-TEST_F(TaskComponentContractTest, LaunchDoSpawnsAndEmitsSignalWithoutWaitWindow)
+// 等窗字段缺省合法：spawn 成功即完成；规范口 signal_out 的发射归运行时
+// 兜底，组件不再自发。
+TEST_F(TaskComponentContractTest, LaunchDoSpawnsAndCompletesWithoutWaitWindow)
 {
     auto component = MakeLaunchComponent();
     ASSERT_NE(component.Get(), nullptr);
@@ -1585,7 +1586,7 @@ TEST_F(TaskComponentContractTest, LaunchDoSpawnsAndEmitsSignalWithoutWaitWindow)
 
     EXPECT_TRUE(spawn_called);
     EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "completed");
-    EXPECT_EQ(FirstEmittedSignal(result.Get()), "signal_out");
+    EXPECT_EQ(FirstEmittedSignal(result.Get()), "");
 }
 
 // 等窗正则配置后轮询窗口枚举：首枚举 0 匹配、次枚举 1 匹配 → 完成。
@@ -1629,7 +1630,7 @@ TEST_F(TaskComponentContractTest, LaunchDoWaitsForSingleWindowMatch)
 
     EXPECT_GT(enumeration_count, 1); // 轮询真实发生（0 匹配后重试）
     EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "completed");
-    EXPECT_EQ(FirstEmittedSignal(result.Get()), "signal_out");
+    EXPECT_EQ(FirstEmittedSignal(result.Get()), "");
 }
 
 // 轮询超时：枚举恒 0 匹配、waitWindowTimeoutMs 小值 → 专用执行失败错误码
@@ -1869,7 +1870,7 @@ TEST_F(TaskComponentContractTest, LaunchDoProductionSpawnSmoke)
     ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
 
     EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "completed");
-    EXPECT_EQ(FirstEmittedSignal(result.Get()), "signal_out");
+    EXPECT_EQ(FirstEmittedSignal(result.Get()), "");
 
     // 子进程落盘佐证：Do 返回（detach 已完成）后子进程仍在运行并最终写出
     // gtest XML——detach 语义失败的形态（析构杀子进程）不会出现本文件。

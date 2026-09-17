@@ -1526,7 +1526,6 @@ DasResult DasFlowControlTaskComponent::DoCompareDouble(
     SetPortString(output_map.Get(), "status", "completed");
     const DasReadOnlyString result_key{"result"};
     output_map.Get()->SetBool(result_key.Get(), result);
-    EmitSignal(output_map.Get(), "signal_out");
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();
@@ -1613,7 +1612,6 @@ DasResult DasFlowControlTaskComponent::DoCompareInt64(
     SetPortString(output_map.Get(), "status", "completed");
     const DasReadOnlyString result_key{"result"};
     output_map.Get()->SetBool(result_key.Get(), result);
-    EmitSignal(output_map.Get(), "signal_out");
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();
@@ -1686,7 +1684,6 @@ DasResult DasFlowControlTaskComponent::DoCompareString(
     SetPortString(output_map.Get(), "status", "completed");
     const DasReadOnlyString result_key{"result"};
     output_map.Get()->SetBool(result_key.Get(), result);
-    EmitSignal(output_map.Get(), "signal_out");
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();
@@ -1768,7 +1765,6 @@ DasResult DasFlowControlTaskComponent::DoArithmeticNumber(
     }
     SetPortString(output_map.Get(), "status", "completed");
     SetPortFloat(output_map.Get(), "result", result);
-    EmitSignal(output_map.Get(), "signal_out");
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();
@@ -1807,7 +1803,6 @@ DasResult DasFlowControlTaskComponent::DoConstantBool(
     SetPortString(output_map.Get(), "status", "completed");
     const DasReadOnlyString value_key{"value"};
     output_map.Get()->SetBool(value_key.Get(), value);
-    EmitSignal(output_map.Get(), "signal_out");
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();
@@ -1845,7 +1840,6 @@ DasResult DasFlowControlTaskComponent::DoConstantInt64(
     }
     SetPortString(output_map.Get(), "status", "completed");
     SetPortInt(output_map.Get(), "value", value);
-    EmitSignal(output_map.Get(), "signal_out");
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();
@@ -1883,7 +1877,6 @@ DasResult DasFlowControlTaskComponent::DoConstantDouble(
     }
     SetPortString(output_map.Get(), "status", "completed");
     SetPortFloat(output_map.Get(), "value", value);
-    EmitSignal(output_map.Get(), "signal_out");
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();
@@ -1921,7 +1914,6 @@ DasResult DasFlowControlTaskComponent::DoConstantString(
     }
     SetPortString(output_map.Get(), "status", "completed");
     SetPortString(output_map.Get(), "value", value);
-    EmitSignal(output_map.Get(), "signal_out");
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();
@@ -1972,7 +1964,6 @@ DasResult DasFlowControlTaskComponent::DoConcatString(
     }
     SetPortString(output_map.Get(), "status", "completed");
     SetPortString(output_map.Get(), "result", left + right);
-    EmitSignal(output_map.Get(), "signal_out");
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();
@@ -2300,12 +2291,14 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
         }
     }
 
-    // 启动（及可选等待）完成 → 发规范信号口 signal_out（formSequence 投影
-    // 信号边用这对端口名门控下游）。
+    // 启动（及可选等待）完成。规范信号口 signal_out 的成功发射由运行时
+    // 兜底保证（编译器对规范口 signal 边打标），组件只发具名控制口。
     auto outputs = Das::Utils::MakeYyjsonObject();
-    auto signals = Das::Utils::MakeYyjsonArray();
-    (*signals.as_array()).emplace_back("signal_out");
-    return BuildResultPortMap("completed", outputs, signals, pp_out_port_map);
+    return BuildResultPortMap(
+        "completed",
+        outputs,
+        Das::Utils::MakeYyjsonArray(),
+        pp_out_port_map);
 }
 
 DasResult DasFlowControlTaskComponent::Do(

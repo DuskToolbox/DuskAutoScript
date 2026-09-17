@@ -1201,8 +1201,9 @@ TEST_F(E2EGraphFlowTest, ConstantsAndConcatChainProducesJoinedString)
     EXPECT_EQ(counting_host->counters[1]->last_string_result, "Hello World");
 }
 
-// 标量常量组件直驱：typed 输出口 + status/signal 三件套（bool/int64/
-// double 三型；config 缺 value 键回落各类型零值=缺省即语义）。
+// 标量常量组件直驱：typed 输出口 + status 两件（bool/int64/double 三型；
+// config 缺 value 键回落各类型零值=缺省即语义）。规范口 signal_out 不再
+// 自发（发射归运行时兜底），signals 键缺省。
 TEST_F(E2EGraphFlowTest, ScalarConstantComponentsEmitTypedValue)
 {
     const auto run_constant = [this](
@@ -1231,9 +1232,7 @@ TEST_F(E2EGraphFlowTest, ScalarConstantComponentsEmitTypedValue)
         ASSERT_TRUE(PortMapGetBool(out.Get(), "value", value));
         EXPECT_TRUE(value);
         EXPECT_EQ(PortMapGetString(out.Get(), "status"), "completed");
-        EXPECT_NE(
-            PortMapGetString(out.Get(), "signals").find("signal_out"),
-            std::string::npos);
+        EXPECT_EQ(PortMapGetString(out.Get(), "signals"), "");
     }
     {
         auto out = run_constant(CONSTANT_INT64_KIND_TEXT, R"({"value": 42})");
@@ -1586,10 +1585,7 @@ namespace
             {
                 return hr;
             }
-            Das::Utils::SetPortString(
-                output_map.Get(),
-                "status",
-                "cancelled");
+            Das::Utils::SetPortString(output_map.Get(), "status", "cancelled");
             *pp_out_port_map = output_map.Get();
             output_map.Get()->AddRef();
             return DAS_S_OK;
