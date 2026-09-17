@@ -388,19 +388,26 @@ namespace
                 fs::copy_options::overwrite_existing);
         }
 
-        // 部署构建产物真实插件（dll + json 成对拷贝；force_ipc 时补写
-        // loadMode=ipc——测试 exe 静态链接 DasCore，进程内再加载插件 dll
-        // 会产生双份 DasCore 全局状态）。
+        // 部署构建产物真实插件（dll + json 成对拷贝；source_subdir 非空时
+        // 源产物取自构建树目录式插件子目录，目标仍平铺拷进 plugin_dir_；
+        // force_ipc 时补写 loadMode=ipc——测试 exe 静态链接 DasCore，进程内
+        // 再加载插件 dll 会产生双份 DasCore 全局状态）。
         void DeployPluginArtifacts(
             const std::string& dll_name,
             const std::string& manifest_name,
-            bool               force_ipc)
+            bool               force_ipc,
+            const std::string& source_subdir = "")
         {
             namespace fs = std::filesystem;
             const fs::path build_plugin_dir = IpcTestConfig::GetPluginDir();
+            const fs::path source_dir =
+                source_subdir.empty()
+                    ? build_plugin_dir
+                    : build_plugin_dir
+                          / Das::Utils::PathFromUtf8(source_subdir);
 
             const fs::path source_dll =
-                build_plugin_dir / Das::Utils::PathFromUtf8(dll_name);
+                source_dir / Das::Utils::PathFromUtf8(dll_name);
             ASSERT_TRUE(fs::exists(source_dll))
                 << "plugin dll not found at: "
                 << Das::Utils::PathToUtf8(source_dll);
@@ -410,7 +417,7 @@ namespace
                 fs::copy_options::overwrite_existing);
 
             const fs::path source_manifest =
-                build_plugin_dir / Das::Utils::PathFromUtf8(manifest_name);
+                source_dir / Das::Utils::PathFromUtf8(manifest_name);
             ASSERT_TRUE(fs::exists(source_manifest))
                 << "plugin manifest not found at: "
                 << Das::Utils::PathToUtf8(source_manifest);
@@ -512,7 +519,8 @@ namespace
         DeployPluginArtifacts(
             "libDasFlowControl.dll",
             "DasFlowControl.json",
-            /*force_ipc=*/true);
+            /*force_ipc=*/true,
+            "DasFlowControl");
 
         const std::filesystem::path stub_exe = ResolveStubWindowTargetPath();
         ASSERT_TRUE(std::filesystem::exists(stub_exe))

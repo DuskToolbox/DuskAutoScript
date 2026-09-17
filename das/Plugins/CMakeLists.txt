@@ -21,9 +21,25 @@ das_add_plugin_library(DasAdbTouch DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasFlowControl DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasWindowsCapture DAS_EX_PRIVATE_LIBS)
 
-# FlowControl i18n 翻译表随插件部署到 plugins/i18n/DasFlowControl/（每插件
-# 子目录——plugins/i18n/en.json 已被 DasMaaPi 占用，同层平铺会互相覆盖），
-# 运行期经 boost::dll::this_line_location 定位（cwd != 插件安装目录）。
+# DasFlowControl 独立子目录布局（dll+manifest+i18n 收进
+# plugins/DasFlowControl/，运行期经 this_line_location 相对定位的一切随迁
+# 自动成立）。必须用 per-config 属性覆盖：本目录设了目录级
+# CMAKE_RUNTIME_OUTPUT_DIRECTORY_<CONFIG>=plugins，它会初始化 target 的
+# per-config 属性，而 per-config 属性优先级高于不带后缀的
+# RUNTIME_OUTPUT_DIRECTORY，因此只设不带后缀的属性会被压制、产物落回根
+# 目录。
+foreach(_das_flow_control_cfg "DEBUG;Debug" "RELEASE;Release" "RELWITHDEBINFO;RelWithDebInfo" "MINSIZEREL;MinSizeRel")
+    list(GET _das_flow_control_cfg 0 _das_flow_control_suffix)
+    list(GET _das_flow_control_cfg 1 _das_flow_control_dir)
+    set_target_properties(DasFlowControl PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_${_das_flow_control_suffix} "${CMAKE_BINARY_DIR}/bin/${_das_flow_control_dir}/plugins/DasFlowControl"
+        LIBRARY_OUTPUT_DIRECTORY_${_das_flow_control_suffix} "${CMAKE_BINARY_DIR}/bin/${_das_flow_control_dir}/plugins/DasFlowControl"
+        ARCHIVE_OUTPUT_DIRECTORY_${_das_flow_control_suffix} "${CMAKE_BINARY_DIR}/lib/${_das_flow_control_dir}/plugins/DasFlowControl")
+endforeach()
+
+# FlowControl i18n 翻译表随插件部署到 plugins/DasFlowControl/i18n/DasFlowControl/
+# （dll 目录内——每插件子目录避免同名互覆），运行期经
+# boost::dll::this_line_location 定位（cwd != 插件安装目录）。
 add_custom_command(
     TARGET DasFlowControl
     POST_BUILD

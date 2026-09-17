@@ -198,19 +198,23 @@ namespace
                 Das::Utils::PathFromEnvironment("DAS_PLUGIN_DIR");
             plugin_dir && !plugin_dir->empty())
         {
-            return *plugin_dir / DAS_PATH_LITERAL("DasFlowControl.json");
+            return *plugin_dir / DAS_PATH_LITERAL("DasFlowControl")
+                   / DAS_PATH_LITERAL("DasFlowControl.json");
         }
 
         const auto cwd = std::filesystem::current_path();
         const std::array<std::filesystem::path, 3> candidates{
             cwd / DAS_PATH_LITERAL("plugins")
+                / DAS_PATH_LITERAL("DasFlowControl")
                 / DAS_PATH_LITERAL("DasFlowControl.json"),
             cwd.parent_path() / DAS_PATH_LITERAL("bin")
                 / DAS_PATH_LITERAL("Debug") / DAS_PATH_LITERAL("plugins")
+                / DAS_PATH_LITERAL("DasFlowControl")
                 / DAS_PATH_LITERAL("DasFlowControl.json"),
             cwd / DAS_PATH_LITERAL("build") / DAS_PATH_LITERAL("mingw-debug")
                 / DAS_PATH_LITERAL("bin") / DAS_PATH_LITERAL("Debug")
                 / DAS_PATH_LITERAL("plugins")
+                / DAS_PATH_LITERAL("DasFlowControl")
                 / DAS_PATH_LITERAL("DasFlowControl.json"),
         };
         const auto found = std::ranges::find_if(

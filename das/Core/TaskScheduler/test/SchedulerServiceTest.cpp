@@ -2244,18 +2244,26 @@ protected:
 
     // 部署构建产物里的真实插件（dll + json 成对拷贝，json 文件名带平台前缀
     // 差异：dll 由 manifest name 字段定位，json 文件名不必与 name 一致）。
-    // force_ipc 为 true 时把部署副本的 loadMode 补写为 ipc——测试 exe 静态
-    // 链接 DasCore，进程内再加载插件 dll 会产生双份 DasCore 全局状态。
+    // source_subdir 非空时源产物取自构建树目录式插件子目录（dll 与 json 同
+    // 子目录），目标仍平铺拷进 plugin_dir_——manifest 的 name 字段按文件名
+    // 找同目录 dll，加载不受布局影响。force_ipc 为 true 时把部署副本的
+    // loadMode 补写为 ipc——测试 exe 静态链接 DasCore，进程内再加载插件
+    // dll 会产生双份 DasCore 全局状态。
     void DeployRealPluginArtifacts(
         const std::string& dll_name,
         const std::string& manifest_name,
-        bool               force_ipc)
+        bool               force_ipc,
+        const std::string& source_subdir = "")
     {
         namespace fs = std::filesystem;
         const fs::path build_plugin_dir = IpcTestConfig::GetPluginDir();
+        const fs::path source_dir =
+            source_subdir.empty()
+                ? build_plugin_dir
+                : build_plugin_dir / Das::Utils::PathFromUtf8(source_subdir);
 
         const fs::path src_dll =
-            build_plugin_dir / Das::Utils::PathFromUtf8(dll_name);
+            source_dir / Das::Utils::PathFromUtf8(dll_name);
         ASSERT_TRUE(fs::exists(src_dll))
             << "plugin dll not found at: " << Das::Utils::PathToUtf8(src_dll);
         fs::copy_file(
@@ -2264,7 +2272,7 @@ protected:
             fs::copy_options::overwrite_existing);
 
         const fs::path src_manifest =
-            build_plugin_dir / Das::Utils::PathFromUtf8(manifest_name);
+            source_dir / Das::Utils::PathFromUtf8(manifest_name);
         ASSERT_TRUE(fs::exists(src_manifest))
             << "plugin manifest not found at: "
             << Das::Utils::PathToUtf8(src_manifest);
@@ -5023,7 +5031,8 @@ TEST_F(
     DeployRealPluginArtifacts(
         "libDasFlowControl.dll",
         "DasFlowControl.json",
-        /*force_ipc=*/false);
+        /*force_ipc=*/false,
+        "DasFlowControl");
 
     // graph 任务实例（空属性 → 空 graph 文档）。不 Enable，只走 Get 管道。
     {
@@ -5117,7 +5126,8 @@ TEST_F(
     DeployRealPluginArtifacts(
         "libDasFlowControl.dll",
         "DasFlowControl.json",
-        /*force_ipc=*/false);
+        /*force_ipc=*/false,
+        "DasFlowControl");
 
     // graph 任务实例（空属性 → 空 graph 文档）。不 Enable，只走 apply 管线。
     {
@@ -5927,7 +5937,8 @@ TEST_F(
     DeployRealPluginArtifacts(
         "libDasFlowControl.dll",
         "DasFlowControl.json",
-        /*force_ipc=*/false);
+        /*force_ipc=*/false,
+        "DasFlowControl");
 
     // 两个 graph 任务实例：componentRef 节点指向 das.flow.merge，其静态
     // 端口面（in_true/…/result）投影到节点 ports[]；entry label 从
@@ -6156,7 +6167,8 @@ TEST_F(
     DeployRealPluginArtifacts(
         "libDasFlowControl.dll",
         "DasFlowControl.json",
-        /*force_ipc=*/false);
+        /*force_ipc=*/false,
+        "DasFlowControl");
 
     // 两个 graph 任务实例：componentRef 节点指向 das.flow.launch（6 个
     // config 声明字段），其字段面投影到节点 fields[]（graph 视图只含
