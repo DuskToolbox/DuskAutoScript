@@ -851,6 +851,47 @@ DasResult GraphRuntime::RunSignalGated(
                         static_cast<int>(hr)));
                 return hr;
             }
+
+            // 规范口兜底补发：signal_out 的成功发射是运行时保证而非各组
+            // 件自觉——编译器打标的规范口路由在组件未显式发射时补一发，
+            // 下游信号门因此必然打开。组件显式发射优先（帧已有 Signal 不
+            // 重复写）；status 口 "cancelled" 是 S_OK 合作取消约定
+            // （BuildResultPortMap 组件协议），取消节点不代发、下游门保持
+            // 关闭。补发先于回边发火检查，回边（循环尾的规范口形态）与组
+            // 件自发语义一致；每圈 ClearSignalsByNode 清掉后下圈组件重跑
+            // 再补发。
+            {
+                bool node_cancelled = false;
+                if (const auto* status_value = frame.Find(PortKey{n, "status"});
+                    status_value != nullptr && status_value->IsString()
+                    && *status_value->AsString() == "cancelled")
+                {
+                    node_cancelled = true;
+                }
+                if (!node_cancelled)
+                {
+                    const auto routes_it = signal_out.find(n);
+                    if (routes_it != signal_out.end())
+                    {
+                        for (const auto& route : routes_it->second)
+                        {
+                            if (!route.source_port_canonical)
+                            {
+                                continue;
+                            }
+                            const auto* emitted =
+                                frame.Find(PortKey{n, route.source_port_id});
+                            if (emitted != nullptr && emitted->IsSignal())
+                            {
+                                continue;
+                            }
+                            frame.Set(
+                                PortKey{n, route.source_port_id},
+                                PortValue::Signal());
+                        }
+                    }
+                }
+            }
             state[n] = NState::Done;
 
             // back-edge firing? → loop iteration complete

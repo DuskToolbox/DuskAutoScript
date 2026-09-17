@@ -1410,6 +1410,344 @@ TEST_F(E2EGraphFlowTest, CompareStringChainAndOperatorDomainFailClosed)
     }
 }
 
+// ---- 规范口 signal 边兜底（成功发射是运行时保证） ----
+
+// 不自发射 signal_out 的源节点经规范 signal 边连通的后继真实执行：两种
+// 形态——源 manifest 未声明 signal_out（隐式豁免形态，镜像常量组件）与
+// 声明为 signal 类型（launch 形态）。标记经 plan JSON 序列化/反序列化往
+// 返存活（钉住 DasGraphTask 的 plan JSON 通路），用往返后的 plan 跑图。
+TEST_F(E2EGraphFlowTest, CanonicalSignalEdgeFromNonEmittingSourceRunsSuccessor)
+{
+    const std::string node_source_implicit{"n_source_implicit"};
+    const std::string node_source_declared{"n_source_declared"};
+    const std::string node_probe_implicit{"n_probe_implicit"};
+    const std::string node_probe_declared{"n_probe_declared"};
+
+    stub_mgr_->AddDefinition(
+        std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT},
+        MakeDefinition({}, {{"value", "int64"}}));
+    stub_mgr_->AddDefinition(
+        std::string{COMPARE_INT64_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"left", "int64"}, {"right", "int64"}},
+            {{"result", "bool"}, {"signal_out", "signal"}}));
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_canonical_signal";
+    doc.nodes.push_back(MakeComponentNode(
+        node_source_implicit,
+        std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT}));
+    doc.nodes.push_back(MakeComponentNode(
+        node_source_declared,
+        std::string{COMPARE_INT64_COMPONENT_GUID_TEXT}));
+    doc.nodes.push_back(MakeComponentNode(
+        node_probe_implicit,
+        std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT}));
+    doc.nodes.push_back(MakeComponentNode(
+        node_probe_declared,
+        std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT}));
+
+    auto edge_implicit = MakeEdge(
+        "e_implicit",
+        node_source_implicit,
+        "signal_out",
+        node_probe_implicit,
+        "signal_in");
+    edge_implicit.edge_type = "signal";
+    auto edge_declared = MakeEdge(
+        "e_declared",
+        node_source_declared,
+        "signal_out",
+        node_probe_declared,
+        "signal_in");
+    edge_declared.edge_type = "signal";
+    doc.edges.push_back(std::move(edge_implicit));
+    doc.edges.push_back(std::move(edge_declared));
+
+    auto plan = CompileDocument(doc);
+    EXPECT_EQ(
+        CountDiagnosticsOfKind(plan, CompileDiagnosticKind::PortNotFound),
+        0);
+    ASSERT_EQ(plan.signal_routes.size(), 2u);
+    for (const auto& route : plan.signal_routes)
+    {
+        EXPECT_TRUE(route.source_port_canonical);
+    }
+
+    const auto serialized =
+        Das::Utils::SerializeYyjsonValue(yyjson::object(plan));
+    ASSERT_TRUE(serialized.has_value());
+    const auto parsed = Das::Utils::ParseYyjsonFromString(*serialized);
+    ASSERT_TRUE(parsed.has_value());
+    const auto round_tripped = yyjson::cast<CompiledGraphPlanDto>(*parsed);
+    ASSERT_EQ(round_tripped.signal_routes.size(), 2u);
+    for (const auto& route : round_tripped.signal_routes)
+    {
+        EXPECT_TRUE(route.source_port_canonical);
+    }
+
+    auto  host = FlowControlCountingHost::Make();
+    auto* counting_host = static_cast<FlowControlCountingHost*>(host.Get());
+    GraphRuntime runtime;
+    const auto   hr = runtime.RunWithHost(
+        round_tripped,
+        "fp_canonical",
+        token_.Get(),
+        host.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    // 四节点全部执行恰一次：修复前探针=0（门没开被静默跳过），兜底后
+    // 两形态探针都真实执行。
+    ASSERT_EQ(counting_host->counters.size(), 4u);
+    for (const auto* counter : counting_host->counters)
+    {
+        EXPECT_EQ(counter->do_count.load(), 1);
+    }
+}
+
+namespace
+{
+    // 合作取消形态的最小源组件：Do 返回 S_OK，仅写 status="cancelled"、
+    // 不发射任何信号（BuildResultPortMap 组件协议取消形态的镜像）。
+    const std::string CANCELLED_SOURCE_GUID =
+        "C0000000-0000-0000-0000-000000000001";
+    const std::string COUNTING_PROBE_GUID =
+        "C0000000-0000-0000-0000-000000000002";
+
+    class CancelledSourceComponent final
+        : public Das::PluginInterface::IDasTaskComponent
+    {
+    public:
+        std::atomic<uint32_t> ref_count_{0};
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                ref_count_ = 1;
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                CANCELLED_SOURCE_GUID);
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "CancelledSourceComponent",
+                pp_out_name);
+        }
+
+        DasResult ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken*,
+            IDasReadOnlyPortMap*,
+            IDasPortMap** pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_port_map = nullptr;
+            DAS::DasPtr<IDasPortMap> output_map;
+            DasResult                hr = CreateIDasPortMap(output_map.Put());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            Das::Utils::SetPortString(
+                output_map.Get(),
+                "status",
+                "cancelled");
+            *pp_out_port_map = output_map.Get();
+            output_map.Get()->AddRef();
+            return DAS_S_OK;
+        }
+    };
+
+    // 计数探针：Do 计数即「下游是否执行」的唯一观测点。
+    class CountingProbeComponent final
+        : public Das::PluginInterface::IDasTaskComponent
+    {
+    public:
+        std::atomic<uint32_t> ref_count_{0};
+        std::atomic<int>      do_count{0};
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                ref_count_ = 1;
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                COUNTING_PROBE_GUID);
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "CountingProbeComponent",
+                pp_out_name);
+        }
+
+        DasResult ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken*,
+            IDasReadOnlyPortMap*,
+            IDasPortMap** pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_port_map = nullptr;
+            do_count.fetch_add(1);
+            return DAS_S_OK;
+        }
+    };
+
+    class CancelledProbeHost final
+        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+              CancelledProbeHost>
+    {
+    public:
+        DasResult CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_component = nullptr;
+            const std::string guid_text =
+                Das::Core::ForeignInterfaceHost::DasGuidToStdString(
+                    component_guid);
+
+            if (guid_text == CANCELLED_SOURCE_GUID)
+            {
+                auto* component = new CancelledSourceComponent();
+                component->AddRef();
+                *pp_out_component = component;
+                return DAS_S_OK;
+            }
+            if (guid_text == COUNTING_PROBE_GUID)
+            {
+                auto* component = new CountingProbeComponent();
+                component->AddRef();
+                *pp_out_component = component;
+                probe = component;
+                return DAS_S_OK;
+            }
+            return DAS_E_NOT_FOUND;
+        }
+
+        CountingProbeComponent* probe = nullptr;
+    };
+} // namespace
+
+// 合作取消（S_OK + status="cancelled"）节点的规范口不代发：兜底的
+// cancelled 守卫保持下游门关闭，探针不执行（取消语义不回归——代发会让
+// 下游尝试执行并在 stop 检查处打断整图）。
+TEST_F(E2EGraphFlowTest, CanonicalBackfillSkippedWhenNodeCancelled)
+{
+    const std::string node_cancel{"n_cancel"};
+    const std::string node_probe{"n_probe"};
+
+    stub_mgr_->AddDefinition(CANCELLED_SOURCE_GUID, MakeDefinition({}, {}));
+    stub_mgr_->AddDefinition(COUNTING_PROBE_GUID, MakeDefinition({}, {}));
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_canonical_cancelled";
+    doc.nodes.push_back(MakeComponentNode(node_cancel, CANCELLED_SOURCE_GUID));
+    doc.nodes.push_back(MakeComponentNode(node_probe, COUNTING_PROBE_GUID));
+
+    auto edge_gate =
+        MakeEdge("e_gate", node_cancel, "signal_out", node_probe, "signal_in");
+    edge_gate.edge_type = "signal";
+    doc.edges.push_back(std::move(edge_gate));
+
+    auto plan = CompileDocument(doc);
+    EXPECT_EQ(
+        CountDiagnosticsOfKind(plan, CompileDiagnosticKind::PortNotFound),
+        0);
+    ASSERT_EQ(plan.signal_routes.size(), 1u);
+    EXPECT_TRUE(plan.signal_routes[0].source_port_canonical);
+
+    auto         host = CancelledProbeHost::Make();
+    auto*        probe_host = static_cast<CancelledProbeHost*>(host.Get());
+    GraphRuntime runtime;
+    const auto   hr =
+        runtime.RunWithHost(plan, "fp_cancelled", token_.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    ASSERT_NE(probe_host->probe, nullptr);
+    EXPECT_EQ(probe_host->probe->do_count.load(), 0);
+}
+
 // ===========================================================================
 // 跨子图类型化直传 E2E（D-18/D-20/D-21）：父图数据边的 image 引用经真实
 // invokeRepository 直塞子图、子图类型化出口直读投影回父组件输出、父图下

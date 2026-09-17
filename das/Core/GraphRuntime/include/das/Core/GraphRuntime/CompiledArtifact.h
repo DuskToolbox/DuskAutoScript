@@ -60,10 +60,14 @@ namespace Dto
     // defined here; population happens in a later stage.
     struct SignalRouteDto
     {
-        std::string   source_node_id;
-        std::string   source_port_id;
-        std::string   target_node_id;
-        std::string   target_port_id;
+        std::string source_node_id;
+        std::string source_port_id;
+        std::string target_node_id;
+        std::string target_port_id;
+        // 源端是规范 signal_out 口（未声明、或声明为 signal 类型）且其成
+        // 功发射由运行时兜底保证——编译器打标，运行时在组件未自发时补发。
+        // 缺键容忍默认 false：旧计划不兜底，行为回落组件自发。
+        bool          source_port_canonical = false;
         yyjson::value activation_condition;
     };
 

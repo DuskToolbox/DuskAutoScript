@@ -349,7 +349,8 @@ bool GraphCompiler::IsTypeCompatible(
 // ---------------------------------------------------------------------------
 
 std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
-    const Dto::GraphDocumentDto& document)
+    const Dto::GraphDocumentDto&    document,
+    std::set<SignalEdgeCoordinate>* canonical_signal_edges)
 {
     std::vector<CompileEdgeDiagnostic> diagnostics;
 
@@ -518,6 +519,23 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
                 edge.source_node_id);
             diagnostics.push_back(std::move(d));
             continue;
+        }
+
+        // 规范口 signal 源边收集：signal 边从规范 signal_out 离开且该口
+        // 未声明（隐式豁免形态）或声明为 signal 类型（launch 形态）——两
+        // 种形态的成功发射都是运行时兜底的对象，具名口（continue/break/
+        // true/false/next）不在其列、永不代发。
+        if (canonical_signal_edges != nullptr && edge.edge_type == "signal"
+            && edge.source_port_id
+                   == std::string(FormSequenceProjector::SignalOutPort)
+            && (src_port == nullptr || src_port->port_type == "signal"))
+        {
+            canonical_signal_edges->insert(
+                SignalEdgeCoordinate{
+                    edge.source_node_id,
+                    edge.source_port_id,
+                    edge.target_node_id,
+                    edge.target_port_id});
         }
 
         // --- Target port existence check ---
@@ -1936,8 +1954,11 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     plan.source_revision = document.version;
     plan.source_fingerprint = document.fingerprint;
 
-    // Edge port validation
-    auto edge_diagnostics = ValidateEdgePorts(document);
+    // Edge port validation（顺带收集规范口 signal 源边坐标——manifest 知
+    // 识只在 ValidateEdgePorts 的成员路径可达，拓扑阶段无此访问面）
+    std::set<SignalEdgeCoordinate> canonical_signal_edges;
+    auto                           edge_diagnostics =
+        ValidateEdgePorts(document, &canonical_signal_edges);
     for (const auto& d : edge_diagnostics)
     {
         plan.diagnostics.push_back(DiagnosticToJson(d));
@@ -1957,6 +1978,22 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     auto topology = ComputeTopology(document);
     plan.execution_order = std::move(topology.execution_order);
     plan.signal_routes = std::move(topology.signal_routes);
+    // 规范口打标：命中 ValidateEdgePorts 收集坐标的 route 标记源端为规
+    // 范口，运行时据此在组件未自发发射时兜底补发（成功信号是运行时保证
+    // 而非各组件的自觉行为）。
+    for (auto& route : plan.signal_routes)
+    {
+        if (canonical_signal_edges.count(
+                SignalEdgeCoordinate{
+                    route.source_node_id,
+                    route.source_port_id,
+                    route.target_node_id,
+                    route.target_port_id})
+            > 0)
+        {
+            route.source_port_canonical = true;
+        }
+    }
     plan.back_edges = std::move(topology.back_edges);
     plan.loop_layers = std::move(topology.loop_layers);
     // Topology diagnostics ride along, split by severity: unbacked data

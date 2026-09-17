@@ -8,8 +8,10 @@
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
 
+#include <array>
 #include <functional>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -107,6 +109,10 @@ public:
     /// Returns {inputs, outputs} port lists. Empty vectors if not found.
     ManifestPorts ReadManifest(const std::string& component_guid) const;
 
+    /// (source_node_id, source_port_id, target_node_id, target_port_id) —
+    /// the coordinate system signal routes are matched by.
+    using SignalEdgeCoordinate = std::array<std::string, 4>;
+
     /// Validate all edges in a GraphDocumentDto against node manifests.
     /// For each edge:
     ///   1. Verify source_node_id and target_node_id exist in graph
@@ -114,8 +120,15 @@ public:
     ///   3. Resolve target node manifest -> check target_port_id in inputs
     ///   4. Check type compatibility between source output and target input
     /// Returns: vector of diagnostics (empty if all edges valid).
+    ///
+    /// When @p canonical_signal_edges is non-null it collects the coordinates
+    /// of every canonical signal source edge (edge_type "signal" leaving the
+    /// canonical signal_out port, undeclared or declared as signal type) —
+    /// the manifest knowledge only this member path holds; Compile marks the
+    /// matching signal routes so the runtime can backfill their emission.
     std::vector<CompileEdgeDiagnostic> ValidateEdgePorts(
-        const Dto::GraphDocumentDto& document);
+        const Dto::GraphDocumentDto&    document,
+        std::set<SignalEdgeCoordinate>* canonical_signal_edges = nullptr);
 
     /// Compute topological order of nodes based on edge dependencies.
     ///
