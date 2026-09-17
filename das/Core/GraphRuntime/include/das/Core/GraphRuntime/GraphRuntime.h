@@ -158,9 +158,19 @@ private:
         const std::string& compiled_source_fingerprint,
         const std::string& current_fingerprint);
 
+    // 单节点执行结果（值返回，内部 C++ 形态——出参约定只属 C ABI 边界）：
+    // hr = Do() 错误码（S_OK 成功）；failure_detail 在失败时携带组件
+    // diagnostic 端口尽力提取的人可读消息（message 缺失回退 code），组件
+    // 未产出诊断时为空。
+    struct NodeExecutionOutcome
+    {
+        DasResult   hr = DAS_S_OK;
+        std::string failure_detail;
+    };
+
     // Execute a node using its pre-configured IDasTaskComponent.
     // Converts PortMap ↔ JSON for the IDasTaskComponent::Do() ABI.
-    DasResult ExecuteNodeWithComponent(
+    NodeExecutionOutcome ExecuteNodeWithComponent(
         const std::string&                   node_id,
         Das::PluginInterface::IDasStopToken* p_stop_token,
         PortFrame&                           frame,

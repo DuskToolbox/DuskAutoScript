@@ -22,6 +22,17 @@
 
 #include <boost/dll/runtime_symbol_info.hpp>
 
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_PROCESS_WARNING
+
+#include <boost/process/v2/environment.hpp>
+
+DAS_DISABLE_WARNING_END
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "FlowControlErrorCodes.h"
 #include "FlowControlI18n.h"
 #include "FlowControlTaskComponents.h"
@@ -501,6 +512,23 @@ namespace
         }
         return escaped;
     }
+
+#ifdef _WIN32
+    // spawn 的 exe 形参需要可定位文件——bare 名不做 PATH 搜索（进程启动
+    // 走 lpApplicationName 语义），bp2 的 find_executable 走 PATH/PATHEXT
+    // 找全路径 python。找不到返回空（测试侧 ASSERT 拦截）。
+    std::string ResolvePythonExecutablePath()
+    {
+        const auto executable_path =
+            boost::process::environment::find_executable(
+                DAS_PATH_LITERAL("python"));
+        if (executable_path.empty())
+        {
+            return {};
+        }
+        return Das::Utils::PathToUtf8(Das::Utils::ToStdPath(executable_path));
+    }
+#endif
 
     class FakeStopToken final : public Das::PluginInterface::IDasStopToken
     {
@@ -1885,6 +1913,50 @@ TEST_F(TaskComponentContractTest, LaunchDoProductionSpawnSmoke)
     }
     EXPECT_TRUE(marker_seen) << "spawned child never wrote its result file";
     std::filesystem::remove(marker_path, remove_error);
+}
+
+// 无控制台宿主根修回归锚点：GUI 子系统进程（无控制台）的 stdin 句柄为
+// NULL，spawn 若继承父进程 stdin（stdio 默认构造位）会在 CreateProcessW
+// 失败。SetStdHandle(STD_INPUT_HANDLE, NULL) 模拟该宿主形态，断言生产
+// spawner（零注入缝）仍能 spawn 短命 python 子进程并完成——修复前该场
+// 景 spawn 失败返回执行失败错误码。
+TEST_F(TaskComponentContractTest, ProductionSpawnerWorksWithoutConsoleStdin)
+{
+#ifndef _WIN32
+    GTEST_SKIP() << "SetStdHandle stdin 模拟为 Windows 宿主形态专用";
+#else
+    const std::string python_path = ResolvePythonExecutablePath();
+    ASSERT_FALSE(python_path.empty())
+        << "python.exe not found on PATH (find_executable)";
+
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    const std::string settings_json = std::string{R"json({"exePath": ")json"}
+                                      + JsonEscapePath(python_path)
+                                      + R"json(", "args": ["-c", "pass"]})json";
+    ApplyLaunchConfig(component.Get(), settings_json);
+
+    const HANDLE saved_stdin = GetStdHandle(STD_INPUT_HANDLE);
+    SetStdHandle(STD_INPUT_HANDLE, NULL);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    const DasResult                                do_result = [&]()
+    {
+        try
+        {
+            return component->Do(nullptr, nullptr, result.Put());
+        }
+        catch (...)
+        {
+            return DAS_E_FAIL;
+        }
+    }();
+    SetStdHandle(STD_INPUT_HANDLE, saved_stdin);
+
+    ASSERT_EQ(do_result, DAS_S_OK);
+    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "completed");
+#endif
 }
 
 TEST_F(TaskComponentContractTest, BranchDoReturnsTrueAndFalseSignals)

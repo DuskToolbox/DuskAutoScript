@@ -14,6 +14,7 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/PathText.h>
 #include <das/Utils/TaskComponentPorts.h>
+#include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasSettingsChangeBuilder.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
@@ -26,6 +27,12 @@ DAS_IGNORE_BOOST_PROCESS_WARNING
 #include <boost/process/v2/process.hpp>
 #include <boost/process/v2/start_dir.hpp>
 #include <boost/process/v2/stdio.hpp>
+#include <boost/system/system_error.hpp>
+#ifdef _WIN32
+// creation_flags.hpp 依赖 Windows 类型（DWORD / CREATE_NEW_PROCESS_GROUP），
+// 必须整块守卫——POSIX 上不存在这些类型，不守卫 include 会编译错。
+#include <boost/process/v2/windows/creation_flags.hpp>
+#endif
 
 DAS_DISABLE_WARNING_END
 
@@ -773,10 +780,21 @@ namespace
                         Das::Utils::ToBoostPath(
                             Das::Utils::PathFromUtf8(exe_path)),
                         arguments,
+                        // bp2 语义：stdin 位 {}（默认构造）= 继承父进程
+                        // 句柄，无控制台宿主（GUI 子系统进程）的
+                        // GetStdHandle 返回 NULL → CreateProcessW 失败；
+                        // nullptr = 重定向到 NUL 设备，任意宿主形态可启动。
                         boost::process::v2::process_stdio{
-                            {},
                             nullptr,
-                            nullptr});
+                            nullptr,
+                            nullptr}
+#ifdef _WIN32
+                        // 控制台子进程不闪窗，GUI 子进程无影响。
+                        ,
+                        boost::process::v2::windows::process_creation_flags<
+                            CREATE_NO_WINDOW>{}
+#endif
+                    );
                     (void)child.detach();
                     return true;
                 }
@@ -787,12 +805,36 @@ namespace
                     boost::process::v2::process_start_dir(
                         Das::Utils::ToBoostPath(
                             Das::Utils::PathFromUtf8(working_directory))),
-                    boost::process::v2::process_stdio{{}, nullptr, nullptr});
+                    boost::process::v2::process_stdio{nullptr, nullptr, nullptr}
+#ifdef _WIN32
+                    ,
+                    boost::process::v2::windows::process_creation_flags<
+                        CREATE_NO_WINDOW>{}
+#endif
+                );
                 (void)child.detach();
                 return true;
             }
+            catch (const boost::system::system_error& error)
+            {
+                const auto reason = DAS_FMT_NS::format(
+                    "Process spawn failed: {} (code = {})",
+                    error.what(),
+                    error.code().value());
+                DAS_LOG_WARNING(reason.c_str());
+                return false;
+            }
+            catch (const std::exception& exception)
+            {
+                const auto reason = DAS_FMT_NS::format(
+                    "Process spawn failed: {}",
+                    exception.what());
+                DAS_LOG_WARNING(reason.c_str());
+                return false;
+            }
             catch (...)
             {
+                DAS_LOG_WARNING("Process spawn failed: unknown error");
                 return false;
             }
         };

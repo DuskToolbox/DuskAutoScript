@@ -400,6 +400,13 @@ class LaunchComponentHost final
           LaunchComponentHost>
 {
 public:
+    // 可选进程启动缝：创建组件后立即注入（返回组件前）——驱动 spawn 失败
+    // 形态而无需真实进程。空 std::function = 不注入（生产路径）。
+    void SetProcessSpawnerForTest(Das::FlowControlProcessSpawner spawner)
+    {
+        spawner_to_inject_ = std::move(spawner);
+    }
+
     DasResult CreateTaskComponent(
         const DasGuid&                            component_guid,
         Das::PluginInterface::IDasTaskComponent** pp_out_component) override
@@ -419,14 +426,22 @@ public:
         auto* component = new Das::DasFlowControlTaskComponent(
             LAUNCH_KIND_TEXT,
             DAS::DasPtr<Das::PluginInterface::IDasTaskComponentHost>{});
+        if (spawner_to_inject_)
+        {
+            component->SetProcessSpawnerForTest(spawner_to_inject_);
+        }
         component->AddRef();
         *pp_out_component = component;
         return DAS_S_OK;
     }
+
+private:
+    Das::FlowControlProcessSpawner spawner_to_inject_;
 };
 
 // launch 执行失败（空配置）→ 图以专用错误码终止，错误文本携带节点 id
-// 冒泡（GraphRuntime 现有失败接管路径，无 status=failed 继续跑）。
+// 冒泡（GraphRuntime 现有失败接管路径，无 status=failed 继续跑）。测试进程
+// 无 i18n 目录，诊断消息走组件硬编码英文 fallback（确定性）。
 TEST_F(E2EGraphFlowTest, LaunchFailureTerminatesGraphWithErrorCode)
 {
     CompiledGraphPlanDto plan;
@@ -450,6 +465,53 @@ TEST_F(E2EGraphFlowTest, LaunchFailureTerminatesGraphWithErrorCode)
         hr,
         Das::Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_EXE_PATH_MISSING);
     EXPECT_NE(runtime.GetLastErrorMessage().find("n_1"), std::string::npos)
+        << runtime.GetLastErrorMessage();
+    EXPECT_NE(
+        runtime.GetLastErrorMessage().find(
+            "No executable path is configured for the launch component."),
+        std::string::npos)
+        << runtime.GetLastErrorMessage();
+}
+
+// spawn 失败形态：注入返回 false 的启动缝 + 非空 exePath → 图以
+// launch-spawn-failed 专用错误码终止，GetLastErrorMessage 同时携带节点 id
+// 与组件 diagnostic 端口的 i18n fallback 文本（运行时诊断透出，非裸 hr）。
+TEST_F(E2EGraphFlowTest, LaunchSpawnFailureSurfacesDiagnosticDetail)
+{
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_launch_spawn_failure";
+
+    CompiledNodeSnapshotDto launch_node;
+    launch_node.node_id = "n_1";
+    launch_node.component_guid = std::string{LAUNCH_COMPONENT_GUID_TEXT};
+    auto settings = Das::Utils::MakeYyjsonObject();
+    (*settings.as_object())[std::string_view("exePath")] =
+        std::string("C:/nonexistent/app.exe");
+    launch_node.compiled_settings = std::move(settings);
+    plan.node_snapshots.push_back(std::move(launch_node));
+    plan.execution_order.push_back("n_1");
+
+    auto host = LaunchComponentHost::Make();
+    static_cast<LaunchComponentHost*>(host.Get())
+        ->SetProcessSpawnerForTest(
+            [](const std::string&,
+               const std::vector<std::string>&,
+               const std::string&) -> bool { return false; });
+
+    GraphRuntime runtime;
+    const auto   hr = runtime.RunWithHost(
+        plan,
+        "fp_launch_spawn_failure",
+        token_.Get(),
+        host.Get());
+
+    EXPECT_EQ(hr, Das::Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_SPAWN_FAILED);
+    EXPECT_NE(runtime.GetLastErrorMessage().find("n_1"), std::string::npos)
+        << runtime.GetLastErrorMessage();
+    EXPECT_NE(
+        runtime.GetLastErrorMessage().find(
+            "Failed to start the configured executable."),
+        std::string::npos)
         << runtime.GetLastErrorMessage();
 }
 

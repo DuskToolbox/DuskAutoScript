@@ -278,8 +278,12 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                         request.arguments,
                         boost::process::v2::process_start_dir(
                             Das::Utils::ToBoostPath(request.working_directory)),
+                        // bp2 语义：stdin 位 {}（默认构造）= 继承父进程
+                        // 句柄，无控制台宿主（GUI 子系统进程）的
+                        // GetStdHandle 返回 NULL → CreateProcessW 失败；
+                        // nullptr = 重定向到 NUL 设备。
                         boost::process::v2::process_stdio{
-                            {},
+                            nullptr,
                             stdout_pipe_,
                             stderr_pipe_},
                         std::move(child_environment)
@@ -300,7 +304,10 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                         request.arguments,
                         boost::process::v2::process_start_dir(
                             Das::Utils::ToBoostPath(request.working_directory)),
-                        boost::process::v2::process_stdio{{}, nullptr, nullptr},
+                        boost::process::v2::process_stdio{
+                            nullptr,
+                            nullptr,
+                            nullptr},
                         std::move(child_environment)
 #ifdef _WIN32
                             ,

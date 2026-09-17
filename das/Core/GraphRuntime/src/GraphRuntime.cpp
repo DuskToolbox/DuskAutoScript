@@ -421,7 +421,7 @@ DasResult GraphRuntime::Prepare() const
 // ExecuteNodeWithComponent — direct PortMap call to IDasTaskComponent::Do
 // ===========================================================================
 
-DasResult GraphRuntime::ExecuteNodeWithComponent(
+GraphRuntime::NodeExecutionOutcome GraphRuntime::ExecuteNodeWithComponent(
     const std::string&                   node_id,
     Das::PluginInterface::IDasStopToken* p_stop_token,
     PortFrame&                           frame,
@@ -432,14 +432,14 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
     if (it == node_components_.end())
     {
         DAS_CORE_LOG_ERROR("No configured component for node = {}", node_id);
-        return DAS_E_NOT_FOUND;
+        return {DAS_E_NOT_FOUND, {}};
     }
 
     auto* p_component = it->second.component.Get();
     if (!p_component)
     {
         DAS_CORE_LOG_ERROR("Null component for node = {}", node_id);
-        return DAS_E_FAIL;
+        return {DAS_E_FAIL, {}};
     }
 
     // 2. Collect input bindings for this target node
@@ -468,7 +468,7 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
                 "BuildInputPortMap failed for node = {}: hr = {}",
                 node_id,
                 static_cast<int>(hr));
-            return hr;
+            return {hr, {}};
         }
     }
     else
@@ -476,7 +476,7 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
         const DasResult hr = CreateIDasPortMap(input_portmap.Put());
         if (DAS_S_OK != hr)
         {
-            return hr;
+            return {hr, {}};
         }
     }
 
@@ -498,14 +498,14 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
             "IDasTaskComponent::Do() threw exception for node = {}: {}",
             node_id,
             exception.what());
-        return DAS_E_INTERNAL_FATAL_ERROR;
+        return {DAS_E_INTERNAL_FATAL_ERROR, {}};
     }
     catch (...)
     {
         DAS_CORE_LOG_ERROR(
             "IDasTaskComponent::Do() threw unknown exception for node = {}",
             node_id);
-        return DAS_E_INTERNAL_FATAL_ERROR;
+        return {DAS_E_INTERNAL_FATAL_ERROR, {}};
     }
 
     if (DAS_S_OK != hr)
@@ -514,7 +514,43 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
             "IDasTaskComponent::Do() failed for node = {}: hr = {}",
             node_id,
             static_cast<int>(hr));
-        return hr;
+        // 失败组件可把人可读诊断写进 diagnostic 端口（JSON {code,
+        // message}）；此处尽力提取进调用方失败消息——组件产出诊断但
+        // 运行时丢弃会让上层只看到裸 hr。任何一步失败静默跳过（诊断
+        // 是尽力而为，不影响错误码返回）。
+        std::string failure_detail;
+        if (output_portmap)
+        {
+            try
+            {
+                if (const auto diagnostic = Das::Utils::GetPortJson(
+                        output_portmap.Get(),
+                        std::string_view("diagnostic")))
+                {
+                    if (const auto diagnostic_object = diagnostic->as_object())
+                    {
+                        auto message =
+                            (*diagnostic_object)[std::string_view("message")]
+                                .as_string();
+                        if (!message)
+                        {
+                            message =
+                                (*diagnostic_object)[std::string_view("code")]
+                                    .as_string();
+                        }
+                        if (message)
+                        {
+                            failure_detail = std::string(*message);
+                        }
+                    }
+                }
+            }
+            catch (...)
+            {
+                // cpp_yyjson 缺键/类型不符会抛——诊断提取失败即无诊断。
+            }
+        }
+        return {hr, std::move(failure_detail)};
     }
 
     // 5. Extract output PortMap → PortFrame
@@ -527,11 +563,11 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
                 "ExtractOutputPortMap failed for node = {}: hr = {}",
                 node_id,
                 static_cast<int>(hr));
-            return hr;
+            return {hr, {}};
         }
     }
 
-    return DAS_S_OK;
+    return {};
 }
 
 // ===========================================================================
@@ -840,16 +876,23 @@ DasResult GraphRuntime::RunSignalGated(
                 return hr;
             }
 
-            hr = ExecuteNodeWithComponent(n, p_stop_token, frame, plan);
-            if (DAS_S_OK != hr)
+            const auto outcome =
+                ExecuteNodeWithComponent(n, p_stop_token, frame, plan);
+            if (DAS_S_OK != outcome.hr)
             {
                 SetError(
-                    hr,
-                    DAS_FMT_NS::format(
-                        "Node '{}' execution failed: hr = {}",
-                        n,
-                        static_cast<int>(hr)));
-                return hr;
+                    outcome.hr,
+                    outcome.failure_detail.empty()
+                        ? DAS_FMT_NS::format(
+                              "Node '{}' execution failed: hr = {}",
+                              n,
+                              static_cast<int>(outcome.hr))
+                        : DAS_FMT_NS::format(
+                              "Node '{}' execution failed: hr = {} — {}",
+                              n,
+                              static_cast<int>(outcome.hr),
+                              outcome.failure_detail));
+                return outcome.hr;
             }
 
             // 规范口兜底补发：signal_out 的成功发射是运行时保证而非各组
@@ -1065,16 +1108,23 @@ DasResult GraphRuntime::RunWithHost(
                 return hr;
             }
 
-            hr = ExecuteNodeWithComponent(node_id, p_stop_token, frame, plan);
-            if (DAS_S_OK != hr)
+            const auto outcome =
+                ExecuteNodeWithComponent(node_id, p_stop_token, frame, plan);
+            if (DAS_S_OK != outcome.hr)
             {
                 SetError(
-                    hr,
-                    DAS_FMT_NS::format(
-                        "Node '{}' execution failed: hr = {}",
-                        node_id,
-                        static_cast<int>(hr)));
-                return hr;
+                    outcome.hr,
+                    outcome.failure_detail.empty()
+                        ? DAS_FMT_NS::format(
+                              "Node '{}' execution failed: hr = {}",
+                              node_id,
+                              static_cast<int>(outcome.hr))
+                        : DAS_FMT_NS::format(
+                              "Node '{}' execution failed: hr = {} — {}",
+                              node_id,
+                              static_cast<int>(outcome.hr),
+                              outcome.failure_detail));
+                return outcome.hr;
             }
             last_executed_node_id_ = node_id;
 
