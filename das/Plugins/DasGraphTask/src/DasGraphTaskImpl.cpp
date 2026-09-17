@@ -31,17 +31,19 @@ namespace Das::Plugins::DasGraphTask
         // 执行成功路径的返回码决策：end 节点在场且类型化 outputs 含「值」
         // 整数 → 原样透传（含负值——用户图连负值到 end.值 是「任务失败」
         // 的表达通道，不得夹 0）；end 在场但无「值」→ 0 + WARN 记 end 节
-        // 点 id；end 缺席 → 0 + WARN 记 execution_order 末节点 id（宽容语
-        // 义）。解析全程容错——任一环节失败回落 0，不为返回码通道引入新
-        // 失败面。值源=类型化 outputs PortMap 的「值」口（D-21⑤，旧 result
-        // JSON 的 graphOutputs 段已随单一通道换轨退役）。
+        // 点 id；end 缺席 → 0 + WARN 记运行期实际最后 Done 的节点 id（经
+        // 引擎 getter 透出——计划执行序末位在尾部节点被信号门跳过时
+        // 并未真执行过，报它是误导）。解析全程容错——任一环节失败回落 0，
+        // 不为返回码通道引入新失败面。值源=类型化 outputs PortMap 的「值」
+        // 口（D-21⑤，旧 result JSON 的 graphOutputs 段已随单一通道换轨退
+        // 役）。
         DasResult ResolveTaskReturnCode(
             const std::string&                         artifact_text,
+            const std::string&                         last_executed_node_id,
             Das::ExportInterface::IDasReadOnlyPortMap* typed_outputs,
             std::int64_t*                              p_resolved_end_value)
         {
             std::optional<std::string> end_node_id;
-            std::optional<std::string> last_executed_node_id;
             std::optional<int64_t>     exported_end_value;
             try
             {
@@ -86,20 +88,6 @@ namespace Das::Plugins::DasGraphTask
                                                 .as_string();
                                     }
                                 }
-                            }
-                        }
-                        if (plan_obj.has_value()
-                            && plan_obj->contains(
-                                std::string_view("executionOrder")))
-                        {
-                            auto execution_order =
-                                (*plan_obj)[std::string_view("executionOrder")]
-                                    .as_array();
-                            if (execution_order.has_value()
-                                && !execution_order->empty())
-                            {
-                                last_executed_node_id =
-                                    execution_order->back().as_string();
                             }
                         }
                     }
@@ -147,7 +135,8 @@ namespace Das::Plugins::DasGraphTask
                 DAS_FMT_NS::format(
                     "Graph has no end node; task return code falls back to 0 "
                     "(last executed node = {})",
-                    last_executed_node_id.value_or(std::string("(none)")))
+                    last_executed_node_id.empty() ? std::string("(none)")
+                                                  : last_executed_node_id)
                     .c_str());
             if (p_resolved_end_value != nullptr)
             {
@@ -329,10 +318,28 @@ namespace Das::Plugins::DasGraphTask
         {
             output_map.Get()->AddRef();
         }
+        // 无 end 图的 WARN 口径=运行期实际最后 Done 的节点（经引擎 getter
+        // 透出）；getter 失败回落空串（WARN 显 "(none)"），不为返回码通
+        // 道引入新失败面。
+        std::string last_executed_node_id;
+        {
+            DAS::DasPtr<IDasReadOnlyString> p_last_node;
+            if (DAS::IsOk(runtime->GetLastExecutedNodeId(p_last_node.Put()))
+                && p_last_node.Get() != nullptr)
+            {
+                const char* node_utf8 = nullptr;
+                if (DAS::IsOk(p_last_node->GetUtf8(&node_utf8))
+                    && node_utf8 != nullptr)
+                {
+                    last_executed_node_id = node_utf8;
+                }
+            }
+        }
         // 返回码链：end.值 经类型化 outputs 的「值」口读取（D-21⑤）。
         std::int64_t    resolved_end_value = 0;
         const DasResult task_result = ResolveTaskReturnCode(
             artifact_text,
+            last_executed_node_id,
             typed_outputs.Get(),
             &resolved_end_value);
         // 完成事件落 focus 通道（user.jsonl → UI 事件日志）：end 值经插件

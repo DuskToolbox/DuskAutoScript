@@ -40,6 +40,8 @@ public:
         Das::ExportInterface::IDasReadOnlyPortMap* p_graph_inputs,
         Das::ExportInterface::IDasPortMap**        pp_out_outputs);
 
+    DAS_IMPL GetLastExecutedNodeId(IDasReadOnlyString** pp_out_node_id);
+
 private:
     // Shared artifact ingestion for the Execute entry points: read the
     // {fingerprint, plan} shell text, verify the plan payload against the

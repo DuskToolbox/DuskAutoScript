@@ -36,6 +36,19 @@ DasResult GraphRuntimeImpl::GetErrorMessage(
         pp_out_error_message);
 }
 
+DasResult GraphRuntimeImpl::GetLastExecutedNodeId(
+    IDasReadOnlyString** pp_out_node_id)
+{
+    if (!pp_out_node_id)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    return CreateIDasReadOnlyStringFromUtf8(
+        engine_.GetLastExecutedNodeId().c_str(),
+        pp_out_node_id);
+}
+
 DasResult GraphRuntimeImpl::ParseVerifiedPlan(
     IDasReadOnlyString*        p_compiled_artifact_json,
     Dto::CompiledGraphPlanDto& plan)

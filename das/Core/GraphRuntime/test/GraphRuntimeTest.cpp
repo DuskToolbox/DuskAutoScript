@@ -1583,6 +1583,63 @@ TEST(SignalGatedRuntimeTest, SkipPropagatesAlongDataEdges)
 }
 
 // -------------------------------------------------------------------
+// Last executed node is a runtime fact: the execution_order tail gated
+// shut by an unopened signal gate never ran, so the getter reports the
+// node that actually finished last — not the plan's tail (the misleading
+// WARN root cause this getter exists for).
+// -------------------------------------------------------------------
+TEST(SignalGatedRuntimeTest, GetLastExecutedNodeIdReportsActualLastDoneNode)
+{
+    using namespace SignalGatedTestMock;
+    const std::string first{"n_41"};
+    const std::string last{"n_42"};
+
+    auto plan = MakeBasePlan();
+    plan.node_snapshots = {
+        MakeBehaviorSnapshot(first, R"({"mode":"record"})"),
+        MakeBehaviorSnapshot(last, R"({"mode":"record"})"),
+    };
+    plan.execution_order = {first, last};
+    // 旧计划形态：未打 canonical 标记、组件不发信号——门关死，尾部跳过。
+    plan.signal_routes = {
+        MakeSignalRoute(first, "signal_out", last, "in"),
+    };
+    plan.binding_plan.bindings = {
+        MakeBinding(first, "signal_out", last, "in", "signal"),
+    };
+
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK);
+
+    auto* h = static_cast<BehaviorHost*>(host.Get());
+    ASSERT_EQ(h->components.size(), 2u);
+    EXPECT_EQ(h->components[0]->do_count.load(), 1); // first ran
+    EXPECT_EQ(h->components[1]->do_count.load(), 0); // tail skipped
+    EXPECT_EQ(rt.GetLastExecutedNodeId(), first);
+    EXPECT_NE(rt.GetLastExecutedNodeId(), plan.execution_order.back());
+}
+
+// 空图：没跑过任何节点，getter 返回空串（消费方回落 "(none)" 口径）。
+TEST(SignalGatedRuntimeTest, GetLastExecutedNodeIdEmptyGraphYieldsEmpty)
+{
+    using namespace SignalGatedTestMock;
+    GraphRuntime rt;
+    EXPECT_EQ(rt.GetLastExecutedNodeId(), "");
+
+    auto                             host = BehaviorHost::Make();
+    const Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+    auto plan = MakeBasePlan();
+    ASSERT_EQ(rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get()), DAS_S_OK);
+    EXPECT_EQ(rt.GetLastExecutedNodeId(), "");
+}
+
+// -------------------------------------------------------------------
 // Loop: for emits continue N times then break; body reruns each iteration.
 //   for --continue--> body ; body --done--> for (back-edge)
 // -------------------------------------------------------------------

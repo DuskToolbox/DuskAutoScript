@@ -57,6 +57,14 @@ public:
     // Get error message from last failed execution.
     const std::string& GetLastErrorMessage() const { return last_error_; }
 
+    // 最近一次运行实际最后 Done 的节点 id（运行期事实；空串=没跑过任何
+    // 节点）。区别于计划 execution_order 末位——尾部节点被信号门跳过时
+    // 末位节点从未执行，本值不受影响。
+    const std::string& GetLastExecutedNodeId() const
+    {
+        return last_executed_node_id_;
+    }
+
     // 最近一次成功执行的边界输出口值映射（{port_id: value}，按编译产物
     // boundary_ports.outputs 清单从帧导出；无清单/无值时为空对象）。frame
     // 只在 RunWithHost 作用域内存活，导出在引擎侧完成后经此暴露给 COM
@@ -124,6 +132,9 @@ public:
 
 private:
     std::string last_error_;
+
+    // 运行期记录：最近一次实际最后 Done 的节点（RunWithHost 开头清空）。
+    std::string last_executed_node_id_;
 
     // 最近一次成功执行的 graphOutputs 导出（成员形式暴露给包装层）。
     yyjson::value last_graph_outputs_;

@@ -893,6 +893,7 @@ DasResult GraphRuntime::RunSignalGated(
                 }
             }
             state[n] = NState::Done;
+            last_executed_node_id_ = n;
 
             // back-edge firing? → loop iteration complete
             std::string fired_head;
@@ -964,6 +965,7 @@ DasResult GraphRuntime::RunWithHost(
     Das::ExportInterface::IDasPortMap**          pp_out_typed_outputs)
 {
     last_error_.clear();
+    last_executed_node_id_.clear();
     last_graph_outputs_ = Das::Utils::MakeYyjsonObject();
 
     // Phase 1: Fingerprint validation
@@ -1074,6 +1076,7 @@ DasResult GraphRuntime::RunWithHost(
                         static_cast<int>(hr)));
                 return hr;
             }
+            last_executed_node_id_ = node_id;
 
             DAS_CORE_LOG_TRACE("Node = {} completed successfully", node_id);
         }

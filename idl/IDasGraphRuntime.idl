@@ -31,5 +31,12 @@ namespace Das::ExportInterface
             Das::PluginInterface::IDasStopToken * p_stop_token,
             Das::ExportInterface::IDasReadOnlyPortMap * p_graph_inputs,
             [out] Das::ExportInterface::IDasPortMap * *pp_out_outputs);
+
+        /// Get the node id that actually finished last in the most recent
+        /// run (runtime fact, valid for the lifetime of this object; empty
+        /// when no node ever ran). Unlike the plan's executionOrder tail
+        /// this reflects gate skips — a skipped tail node never updates it.
+        DasResult GetLastExecutedNodeId(
+            [out] IDasReadOnlyString * *pp_out_node_id);
     }
 }
