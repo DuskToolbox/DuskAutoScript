@@ -8037,6 +8037,63 @@ namespace
         std::atomic<uint32_t>   ref_count_{1};
     };
 
+    // 占位回调：把 BusinessThread 挡在 Do 内直到主线程放行（带超时防
+    // 挂死），用于把 ExecuteTaskOnce 的落地时机钉死在 Enable 之后——
+    // 状态互斥复检的确定性构造。
+    class BusinessThreadBarrierCallback final : public IDasAsyncCallback
+    {
+    public:
+        explicit BusinessThreadBarrierCallback(
+            std::shared_ptr<std::promise<void>> release)
+            : release_(std::move(release))
+        {
+        }
+
+        uint32_t AddRef() override { return ++ref_count_; }
+
+        uint32_t Release() override
+        {
+            auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult QueryInterface(const DasGuid& iid, void** pp) override
+        {
+            if (pp == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasAsyncCallback>())
+            {
+                *pp = this;
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult Do() noexcept override
+        {
+            release_->get_future().wait_for(std::chrono::seconds(2));
+            return DAS_S_OK;
+        }
+
+    private:
+        std::shared_ptr<std::promise<void>> release_;
+        std::atomic<uint32_t>               ref_count_{1};
+    };
+
     ::testing::AssertionResult WaitForExecutedCount(
         FactoryTaskSharedState&   state,
         size_t                    expected,
@@ -8253,6 +8310,122 @@ TEST_F(SchedulerRuntimeBackedTest, RunNow_RejectsUnknownAndDisabledTask)
 
     ASSERT_EQ(scheduler_->RunTaskNow(999), DAS_E_NOT_FOUND);
     ASSERT_EQ(scheduler_->RunTaskNow(1), DAS_E_FAIL);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    RunNow_RunsOnlyRequestedTask_SkipsOverdueTasks)
+{
+    // 生产复刻：任务 1 是历史残留 overdue（nextExecutionTime=1）且
+    // enabled。用户只点名运行任务 0——手动执行链不得连带清算任务 1
+    // （旧全局选任务语义下 due 更早的 overdue 任务会插到点名任务前
+    // 被执行，随后排空链拉起点名任务）。
+    WriteSchedulerState(
+        *settings_manager_,
+        2,
+        {0, 1},
+        {MakeFutureScheduledTask(0), MakeDueScheduledTask(1)});
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    ASSERT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+
+    ASSERT_EQ(scheduler_->RunTaskNow(0), DAS_S_OK);
+    ASSERT_TRUE(WaitForExecutions(1, std::chrono::milliseconds(2000)));
+
+    // 点名任务执行完成且排空判定点已过：overdue 任务未被拉起。宽限
+    // 窗远大于一次 tick 重投链；若 bug 存在，executed_count 会立刻变 2。
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->executed_count, 1u);
+    }
+
+    // 任务 1 未被消费：持久化 nextExecutionTime 保持原始 overdue 值。
+    auto overdue_json = settings_manager_->GetTaskInstanceJson("0", 1);
+    EXPECT_EQ(
+        (*overdue_json.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value_or(0),
+        1);
+
+    scheduler_.reset();
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    RunNow_SequentialRequests_EachTaskRunsOnDemand)
+{
+    // 两次点名各自生效：第二次手动执行不因首次执行链终止而丢失。
+    WriteSchedulerState(
+        *settings_manager_,
+        2,
+        {0, 1},
+        {MakeFutureScheduledTask(0), MakeFutureScheduledTask(1)});
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    ASSERT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+
+    ASSERT_EQ(scheduler_->RunTaskNow(0), DAS_S_OK);
+    ASSERT_TRUE(WaitForExecutions(1, std::chrono::milliseconds(2000)));
+
+    // 第二次点名可能撞上首次执行的收尾段（执行槽未清零被 busy 拒），
+    // 带界轮询直到接受。
+    DasResult  run_second = DAS_E_TASK_WORKING;
+    const auto second_deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+    while (std::chrono::steady_clock::now() < second_deadline)
+    {
+        run_second = scheduler_->RunTaskNow(1);
+        if (run_second == DAS_S_OK)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(run_second, DAS_S_OK);
+    ASSERT_TRUE(WaitForExecutions(2, std::chrono::milliseconds(2000)));
+
+    scheduler_.reset();
+}
+
+TEST_F(SchedulerRuntimeBackedTest, RunNow_DroppedWhenEnabledBeforeLanding)
+{
+    // 状态互斥：投递后落地前调度器被 Enable 抢先转 Running，手动执行
+    // 必须作废——调度 tick 与手动单任务两条通路绝不并发执行。
+    WriteSchedulerState(
+        *settings_manager_,
+        1,
+        {0},
+        {MakeFutureScheduledTask(0)});
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // 先占住 BusinessThread：随后投递的 ExecuteTaskOnce 排在占位之后，
+    // 落地时机由主线程的 release 控制。
+    auto release = std::make_shared<std::promise<void>>();
+    {
+        const DasPtr<IDasAsyncCallback> barrier(
+            DasPtr<IDasAsyncCallback>::Attach(
+                static_cast<IDasAsyncCallback*>(
+                    new BusinessThreadBarrierCallback(release))));
+        ipc_sp_->PostToBusinessThread(barrier.Get());
+    }
+
+    // 手动执行在队列中排队（落地被占位挡住），随即 Enable 抢先转
+    // Running（执行槽空闲，Enable 不被 busy 拒）。
+    ASSERT_EQ(scheduler_->RunTaskNow(0), DAS_S_OK);
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    release->set_value();
+
+    // 宽限窗：若落地时缺少状态复检，ExecuteTaskOnce 会在 Running 态
+    // 插队执行任务（executed_count 变 1）。
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->executed_count, 0u);
+    }
+
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
 }
 
 TEST_F(

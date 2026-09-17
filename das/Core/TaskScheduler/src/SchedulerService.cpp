@@ -2634,16 +2634,15 @@ namespace Das::Core::TaskScheduler
                 return DAS_E_FAIL;
             }
 
-            // 立即执行的调度语义：置为立即到期，复用 OnTick 既有执行
-            // 路径（选任务/envelope 编译/Do/GetNextExecutionTime/持久化/
-            // 推送全部共用）。
-            inst->next_execution_time =
-                SystemClock::to_time_t(SystemClock::now());
+            // 手动执行不进调度链：直接投递单任务执行操作，点谁跑谁、
+            // 跑完即止——不经 FindNextRunnableTask 全局选任务，也不触
+            // 发排空，其他任务的历史残留 overdue 不被连带清算。
         }
 
-        // 投递 BusinessThread 后立即返回；tick 在 BusinessThread 串行
-        // 执行，不阻塞调用线程。
-        SpawnTick();
+        // 投递 BusinessThread 后立即返回；ExecuteTaskOnce 落地时在锁内
+        // 复检 scheduler 状态与任务可用性（投递窗口内被 Enable/删除/
+        // 禁用则作废），并在 BusinessThread 串行执行，不阻塞调用线程。
+        SpawnExecuteOnce(task_id);
         return DAS_S_OK;
     }
 
@@ -5437,6 +5436,36 @@ namespace Das::Core::TaskScheduler
                 }));
     }
 
+    void SchedulerService::SpawnExecuteOnce(int64_t task_id)
+    {
+        // 与 SpawnTick 同型的异常兜底：执行段的插件边界已由窄 catch
+        // 就地转错误码，这里的逃逸异常仅剩框架自身缺陷面，吞掉记日志
+        // 防 spawn receiver rethrow terminate 进程。
+        scope_.spawn(
+            stdexec::schedule(bt_scheduler_)
+            | stdexec::then(
+                [this, task_id]
+                {
+                    try
+                    {
+                        ExecuteTaskOnce(task_id);
+                    }
+                    catch (const std::exception& exception)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "SchedulerService::ExecuteTaskOnce threw "
+                            "exception: {}",
+                            exception.what());
+                    }
+                    catch (...)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "SchedulerService::ExecuteTaskOnce threw unknown "
+                            "exception");
+                    }
+                }));
+    }
+
     void SchedulerService::StartTickTimer(
         std::chrono::steady_clock::duration delay)
     {
@@ -5458,9 +5487,10 @@ namespace Das::Core::TaskScheduler
 
     void SchedulerService::OnTick()
     {
-        // Running：常规调度循环。Stopped：一次性执行（由 RunTaskNow 投递
-        // 触发），执行完不重排 timer。Stopping：收尾中，不再起执行。
-        if (state_.load() == SchedulerState::Stopping)
+        // Running 专属的常规调度 tick（全局最早 due）。手动立即执行走
+        // ExecuteTaskOnce 单任务通路，与本通路状态互斥：非 Running 落地
+        // 一律放弃，杜绝调度与手动双通路并发执行。
+        if (state_.load() != SchedulerState::Running)
         {
             return;
         }
@@ -5470,34 +5500,28 @@ namespace Das::Core::TaskScheduler
         // 即使 task_instances_ 被变更（扩容/删除），任务对象也活到
         // GetNextExecutionTime 返回。
         Das::DasPtr<Das::PluginInterface::IDasTask> task_holder;
-        TaskInstanceRecord*                         selected_inst = nullptr;
         yyjson::value                               properties_copy;
         std::optional<TaskAuthoringCapability>      authoring_capability;
         int64_t                                     selected_id = -1;
-        std::chrono::steady_clock::duration         next_delay =
-            std::chrono::seconds(1);
 
         int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
 
         {
             const std::scoped_lock lock(mutex_);
 
-            if (state_.load() == SchedulerState::Stopping)
+            if (state_.load() != SchedulerState::Running)
             {
                 return;
             }
 
-            selected_inst = FindNextRunnableTask(task_instances_, now_unix);
+            auto* selected_inst =
+                FindNextRunnableTask(task_instances_, now_unix);
 
             if (!selected_inst)
             {
                 DAS_CORE_LOG_DEBUG(
                     "SchedulerService::OnTick: no runnable task");
-                next_delay = ComputeNextDelay(task_instances_, now_unix);
-                if (state_.load() == SchedulerState::Running)
-                {
-                    StartTickTimer(next_delay);
-                }
+                StartTickTimer(ComputeNextDelay(task_instances_, now_unix));
                 return;
             }
 
@@ -5519,6 +5543,81 @@ namespace Das::Core::TaskScheduler
             }
         }
 
+        ExecuteSelectedTask(
+            selected_id,
+            std::move(task_holder),
+            std::move(properties_copy),
+            authoring_capability);
+
+        DAS_CORE_LOG_DEBUG("SchedulerService::OnTick: tick complete");
+    }
+
+    void SchedulerService::ExecuteTaskOnce(int64_t task_id)
+    {
+        // RunTaskNow 投递的单任务执行落地体。与 OnTick 分工且状态互斥：
+        // 本通路仅在 Stopped 执行（RunTaskNow 的接受条件），OnTick 仅在
+        // Running 执行——锁内复检双向堵死「调度与手动并发执行」。
+        Das::DasPtr<Das::PluginInterface::IDasTask> task_holder;
+        yyjson::value                               properties_copy;
+        std::optional<TaskAuthoringCapability>      authoring_capability;
+
+        {
+            const std::scoped_lock lock(mutex_);
+
+            // 投递到落地之间被 Enable 抢先转 Running（或被 Disable /
+            // 析构推进 Stopping）：手动执行作废，交调度器接管。
+            if (state_.load() != SchedulerState::Stopped)
+            {
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::ExecuteTaskOnce: scheduler left "
+                    "stopped before task {} ran, manual run dropped",
+                    task_id);
+                return;
+            }
+
+            // 复检任务可用性：投递窗口内任务可能被删除或禁用。
+            auto* inst = FindTaskInstance(task_id);
+            if (!inst || !inst->enabled
+                || inst->availability != TaskAvailability::Available
+                || !inst->task_instance)
+            {
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::ExecuteTaskOnce: task {} no longer "
+                    "runnable, manual run dropped",
+                    task_id);
+                return;
+            }
+
+            task_holder = inst->task_instance;
+            properties_copy = inst->properties;
+            if (auto* authoring =
+                    capability_registry_.FindAuthoring(inst->task_guid))
+            {
+                authoring_capability = *authoring;
+            }
+
+            current_task_id_ = task_id;
+
+            // Create or reuse stop token for cooperative cancellation
+            if (!stop_token_)
+            {
+                stop_token_ = Das::Core::Utils::DasStopTokenImpl::Make();
+            }
+        }
+
+        ExecuteSelectedTask(
+            task_id,
+            std::move(task_holder),
+            std::move(properties_copy),
+            authoring_capability);
+    }
+
+    void SchedulerService::ExecuteSelectedTask(
+        int64_t                                     selected_id,
+        Das::DasPtr<Das::PluginInterface::IDasTask> task_holder,
+        yyjson::value                               properties_copy,
+        std::optional<TaskAuthoringCapability>      authoring_capability)
+    {
         // 执行开始即推送（锁外）：Get() 携带 runningTaskId，UI 立即感知
         // 「任务执行中」并禁用相关操作。Do 可能执行分钟级，若只在收尾
         // 推送，整个执行期间 UI 完全看不到占用状态。结束推送由收尾的
@@ -5555,7 +5654,7 @@ namespace Das::Core::TaskScheduler
             {
                 compile_failed = true;
                 DAS_CORE_LOG_WARN(
-                    "SchedulerService::OnTick: task {} authoring session "
+                    "SchedulerService::ExecuteSelectedTask: task {} authoring session "
                     "create failed",
                     selected_id);
             }
@@ -5573,7 +5672,7 @@ namespace Das::Core::TaskScheduler
                 {
                     compile_failed = true;
                     DAS_CORE_LOG_WARN(
-                        "SchedulerService::OnTick: task {} authoring compile "
+                        "SchedulerService::ExecuteSelectedTask: task {} authoring compile "
                         "failed, result={}",
                         selected_id,
                         compile_result);
@@ -5587,7 +5686,7 @@ namespace Das::Core::TaskScheduler
                     {
                         compile_failed = true;
                         DAS_CORE_LOG_WARN(
-                            "SchedulerService::OnTick: task {} authoring "
+                            "SchedulerService::ExecuteSelectedTask: task {} authoring "
                             "compile result rejected: {}",
                             selected_id,
                             parsed_compile.error_kind);
@@ -5597,7 +5696,7 @@ namespace Das::Core::TaskScheduler
                     {
                         compile_failed = true;
                         DAS_CORE_LOG_WARN(
-                            "SchedulerService::OnTick: task {} authoring "
+                            "SchedulerService::ExecuteSelectedTask: task {} authoring "
                             "compile returned ok=false",
                             selected_id);
                     }
@@ -5660,7 +5759,7 @@ namespace Das::Core::TaskScheduler
             {
                 do_result = DAS_E_INTERNAL_FATAL_ERROR;
                 DAS_CORE_LOG_ERROR(
-                    "SchedulerService::OnTick: task {} Do threw exception: {}",
+                    "SchedulerService::ExecuteSelectedTask: task {} Do threw exception: {}",
                     selected_id,
                     exception.what());
             }
@@ -5668,7 +5767,7 @@ namespace Das::Core::TaskScheduler
             {
                 do_result = DAS_E_INTERNAL_FATAL_ERROR;
                 DAS_CORE_LOG_ERROR(
-                    "SchedulerService::OnTick: task {} Do threw unknown "
+                    "SchedulerService::ExecuteSelectedTask: task {} Do threw unknown "
                     "exception",
                     selected_id);
             }
@@ -5676,7 +5775,7 @@ namespace Das::Core::TaskScheduler
             if (IsFailed(do_result))
             {
                 DAS_CORE_LOG_WARN(
-                    "SchedulerService::OnTick: task {} Do returned result={}",
+                    "SchedulerService::ExecuteSelectedTask: task {} Do returned result={}",
                     selected_id,
                     do_result);
                 // 失败的用户可见出口：focus toast + log 渠道（内部自带
@@ -5694,7 +5793,7 @@ namespace Das::Core::TaskScheduler
             refreshed_time = SENTINEL_FUTURE_TIMESTAMP;
             has_refreshed_time = true;
             DAS_CORE_LOG_WARN(
-                "SchedulerService::OnTick: task {} authoring compile failed, "
+                "SchedulerService::ExecuteSelectedTask: task {} authoring compile failed, "
                 "setting sentinel nextExecutionTime={}",
                 selected_id,
                 SENTINEL_FUTURE_TIMESTAMP);
@@ -5714,7 +5813,7 @@ namespace Das::Core::TaskScheduler
             {
                 net_result = DAS_E_INTERNAL_FATAL_ERROR;
                 DAS_CORE_LOG_ERROR(
-                    "SchedulerService::OnTick: task {} GetNextExecutionTime "
+                    "SchedulerService::ExecuteSelectedTask: task {} GetNextExecutionTime "
                     "threw exception: {}",
                     selected_id,
                     exception.what());
@@ -5723,7 +5822,7 @@ namespace Das::Core::TaskScheduler
             {
                 net_result = DAS_E_INTERNAL_FATAL_ERROR;
                 DAS_CORE_LOG_ERROR(
-                    "SchedulerService::OnTick: task {} GetNextExecutionTime "
+                    "SchedulerService::ExecuteSelectedTask: task {} GetNextExecutionTime "
                     "threw unknown exception",
                     selected_id);
             }
@@ -5738,7 +5837,7 @@ namespace Das::Core::TaskScheduler
                 refreshed_time = SENTINEL_FUTURE_TIMESTAMP;
                 has_refreshed_time = true;
                 DAS_CORE_LOG_WARN(
-                    "SchedulerService::OnTick: task {} GetNextExecutionTime "
+                    "SchedulerService::ExecuteSelectedTask: task {} GetNextExecutionTime "
                     "failed (result={}), setting sentinel nextExecutionTime={}",
                     selected_id,
                     net_result,
@@ -5749,11 +5848,12 @@ namespace Das::Core::TaskScheduler
         // Re-acquire lock to update in-memory state only.
         // Persistence is posted to config persist thread (no SettingsManager
         // call under mutex_).
-        bool    should_persist = false;
-        int64_t persist_id = 0;
-        int64_t persist_time = 0;
-        bool    drain_pending = false;
-        bool    should_restart_timer = false;
+        bool                                should_persist = false;
+        int64_t                             persist_id = 0;
+        int64_t                             persist_time = 0;
+        bool                                should_restart_timer = false;
+        std::chrono::steady_clock::duration next_delay =
+            std::chrono::seconds(1);
         {
             const std::scoped_lock lock(mutex_);
 
@@ -5761,9 +5861,9 @@ namespace Das::Core::TaskScheduler
             // task 变更入口都被 SchedulerBusyLocked 拒绝，正常必中；
             // 竞态漏防查不到则跳过写回（对象由 task_holder 保活，
             // 不会 UAF）。
-            if (has_refreshed_time)
+            if (auto* inst = FindTaskInstance(selected_id))
             {
-                if (auto* inst = FindTaskInstance(selected_id))
+                if (has_refreshed_time)
                 {
                     inst->next_execution_time = refreshed_time;
                     should_persist = true;
@@ -5776,42 +5876,26 @@ namespace Das::Core::TaskScheduler
 
             if (state_.load() == SchedulerState::Running)
             {
-                now_unix = SystemClock::to_time_t(SystemClock::now());
+                const int64_t now_unix =
+                    SystemClock::to_time_t(SystemClock::now());
                 next_delay = ComputeNextDelay(task_instances_, now_unix);
                 should_restart_timer = true;
             }
             else if (state_.load() == SchedulerState::Stopping)
             {
                 // task 完成立即收尾 Stopped：FsmActEnterStopped 置
-                // state/stop_token + NotifyStateChange。原后台线程删除
-                // 后，等活由 OnTick 自身完成。
+                // state/stop_token + NotifyStateChange。等活由执行通路
+                // 自身完成。
                 fsm_->process_event(EvtTickCompleted{});
             }
-            else if (state_.load() == SchedulerState::Stopped)
-            {
-                // Stopped 一次性排空：仍有 due 任务（立即执行置 due 或
-                // 历史残留）则再投一个 tick 继续处理。每次执行后
-                // next_execution_time 都被刷新到未来，循环必然终止。
-                now_unix = SystemClock::to_time_t(SystemClock::now());
-                drain_pending =
-                    FindNextRunnableTask(task_instances_, now_unix) != nullptr;
-            }
+            // Stopped（手动单任务执行完成）：无收尾动作，跑完即止。
         }
 
-        DAS_CORE_LOG_DEBUG("SchedulerService::OnTick: tick complete");
         // 重排判定在 mutex_ 临界区内做出：锁外重读 state_ 会撞上 Disable
         // 置 Stopped 后的陈旧 Running 窗口，把 timer 重排在停机之后。
         if (should_restart_timer)
         {
             StartTickTimer(next_delay);
-        }
-        else if (drain_pending)
-        {
-            // 当前 tick op 计数未归零，排空重投的下一个 tick 仍在 scope
-            // 内，on_empty 不会提前亮，析构排空会等到整条排空链结束
-            // （每次执行后 next_execution_time 刷新到未来，排空链必然
-            // 终止）。
-            SpawnTick();
         }
 
         // Post persistence event to config-side thread (outside mutex_).
@@ -5823,7 +5907,7 @@ namespace Das::Core::TaskScheduler
         }
 
         // 周期推送当前状态（UI task 列表刷新）；状态变化的即时推送由
-        // Enable/Disable/OnTick 收尾调 NotifyStateChange 负责。
+        // Enable/Disable/执行收尾调 NotifyStateChange 负责。
         NotifyStateChange();
     }
 

@@ -204,11 +204,13 @@ namespace Das::Core::TaskScheduler
         /// task without a full stop. Unknown task_id returns DAS_E_NOT_FOUND.
         DasResult SetTaskEnabled(int64_t task_id, bool enabled);
 
-        /// 立即执行一个已物化的 task 实例：置其 next_execution_time 为
-        /// 立即到期并投递一次 tick，复用 OnTick 既有执行路径（无第二条
-        /// 执行通路）。仅 Stopped 且执行槽空闲时允许；Running/Stopping
-        /// 或手动执行中返回 DAS_E_TASK_WORKING。投递后立即返回，Do 在
-        /// BusinessThread 串行执行。
+        /// 立即执行一个已物化的 task 实例：投递单任务执行操作
+        /// （ExecuteTaskOnce），点谁跑谁、跑完即止——不进调度链（不经
+        /// 全局选任务、不触发排空），其他任务的到期残留不被连带清算。
+        /// 仅 Stopped 且执行槽空闲时允许；Running/Stopping 或手动执行中
+        /// 返回 DAS_E_TASK_WORKING。投递后立即返回，Do 在 BusinessThread
+        /// 串行执行；落地时锁内复检 scheduler 状态与任务可用性，投递
+        /// 窗口内被 Enable 抢先/任务被删或禁用则作废。
         DasResult RunTaskNow(int64_t task_id);
 
         yyjson::value GetTaskAuthoringDocument(
@@ -302,10 +304,30 @@ namespace Das::Core::TaskScheduler
         void StartTickTimer(std::chrono::steady_clock::duration delay);
         void OnTick();
 
-        /// 将一次 tick 投递到 BusinessThread，经 scope_ 跟踪生命周期。所有
-        /// tick 生产点（timer 到期回调 / Stopped 排空重投 / 立即执行）唯一
-        /// 出口：析构以 on_empty 排空全部在飞 tick 后才关 persist 队列。
+        /// RunTaskNow 投递的单任务执行落地体：锁内复检 scheduler 状态
+        /// （仅 Stopped 执行，与 OnTick 的 Running 专属互斥，杜绝调度与
+        /// 手动双通路并发）与任务可用性（投递窗口内被删/禁用作废），
+        /// 再交共享执行体。BusinessThread 串行执行。
+        void ExecuteTaskOnce(int64_t task_id);
+
+        /// OnTick 与 ExecuteTaskOnce 的共享执行体：envelope 编译 / Do /
+        /// GetNextExecutionTime / 执行槽复位 / 状态机收尾（Running 重排
+        /// timer、Stopping 完成转换）/ 持久化 / 状态推送。调用前调用方
+        /// 已在锁内占好执行槽（current_task_id_）并拷出执行数据。
+        void ExecuteSelectedTask(
+            int64_t                                     selected_id,
+            Das::DasPtr<Das::PluginInterface::IDasTask> task_holder,
+            yyjson::value                               properties_copy,
+            std::optional<TaskAuthoringCapability>      authoring_capability);
+
+        /// 将一次 tick 投递到 BusinessThread，经 scope_ 跟踪生命周期。
+        /// tick 生产点唯一：timer 到期回调。析构以 on_empty 排空全部
+        /// 在飞 tick 后才关 persist 队列。
         void SpawnTick();
+
+        /// 将一次单任务执行投递到 BusinessThread（RunTaskNow 唯一
+        /// 出口），经 scope_ 跟踪生命周期，与 SpawnTick 同型异常兜底。
+        void SpawnExecuteOnce(int64_t task_id);
 
         DasResult CreateTaskInstance(
             const TaskTypeRecord&            task_type,
@@ -497,10 +519,11 @@ namespace Das::Core::TaskScheduler
 
         // 执行槽占用标记：disengaged = 空闲，engaged 值 = 正在执行的
         // task id。用 optional 而非 0 哨兵——task id 0 是合法 id（测试与
-        // 持久化数据均使用），0 会被误判为空闲。OnTick 锁内置位、收尾
-        // 重锁复位。不持有任何任务指针——执行期间的对象由 OnTick 栈上
-        // DasPtr 拷贝保活，写回经 FindTaskInstance(id) 现查。Get() 以
-        // runningTaskId 输出。
+        // 持久化数据均使用），0 会被误判为空闲。OnTick（调度 tick）与
+        // ExecuteTaskOnce（手动单任务）两条通路各自锁内置位，共享执行体
+        // ExecuteSelectedTask 收尾重锁复位。不持有任何任务指针——执行
+        // 期间的对象由通路栈上 DasPtr 拷贝保活，写回经
+        // FindTaskInstance(id) 现查。Get() 以 runningTaskId 输出。
         std::optional<int64_t>             current_task_id_;
         std::vector<std::filesystem::path> loaded_plugin_paths_;
 
