@@ -17,6 +17,7 @@
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <memory>
@@ -180,14 +181,16 @@ Win32AsyncIpcTransport::CreateAsync(
         DAS_LOG_ERROR(
             DAS_FMT_NS::format(
                 "CreateAsync failed (system_error): {}",
-                ToString(e.what()))
+                Das::Utils::AcpTextToUtf8(e.what()))
                 .c_str());
         co_return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
     }
     catch (const std::exception& e)
     {
         DAS_LOG_ERROR(
-            DAS_FMT_NS::format("CreateAsync failed: {}", ToString(e.what()))
+            DAS_FMT_NS::format(
+                "CreateAsync failed: {}",
+                Das::Utils::AcpTextToUtf8(e.what()))
                 .c_str());
         co_return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
     }
@@ -285,7 +288,7 @@ DasResult Win32AsyncIpcTransport::CreateNamedPipe(
         const auto msg = DAS_FMT_NS::format(
             "assign pipe handle failed: pipe_name = {}, error = {}",
             pipe_name,
-            ToString(ec.message()));
+            Das::Utils::AcpTextToUtf8(ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -352,7 +355,7 @@ DasResult Win32AsyncIpcTransport::ConnectToNamedPipe(
         const auto msg = DAS_FMT_NS::format(
             "assign pipe handle failed: pipe_name = {}, error = {}",
             pipe_name,
-            ToString(ec.message()));
+            Das::Utils::AcpTextToUtf8(ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -749,7 +752,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
             {
                 DAS_CORE_LOG_ERROR(
                     "SendCoroutine: SHM async_write failed: {}",
-                    ToString(e.what()));
+                    Das::Utils::AcpTextToUtf8(e.what()));
                 // guard 析构自动 Deallocate
                 state->send_mutex.Unlock();
                 co_return DAS_E_IPC_SEND_FAILED;
@@ -780,7 +783,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
     {
         DAS_CORE_LOG_ERROR(
             "SendCoroutine: async_write failed: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         result = DAS_E_IPC_SEND_FAILED;
     }
 
@@ -854,7 +857,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendScatter(
     {
         DAS_CORE_LOG_ERROR(
             "scatter async_write failed: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         result = DAS_E_IPC_SEND_FAILED;
     }
 

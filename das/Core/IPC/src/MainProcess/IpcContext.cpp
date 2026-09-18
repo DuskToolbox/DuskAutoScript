@@ -30,6 +30,7 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 
@@ -360,7 +361,7 @@ namespace Core
                         }
                         DAS_CORE_LOG_ERROR(
                             "Failed to schedule HTTP Host handshake: {}",
-                            ToString(e.what()));
+                            Das::Utils::AcpTextToUtf8(e.what()));
                         return DAS_E_IPC_NOT_INITIALIZED;
                     }
 
@@ -378,7 +379,7 @@ namespace Core
                 {
                     DAS_CORE_LOG_ERROR(
                         "Failed to create HTTP IPC server: {}",
-                        ToString(e.what()));
+                        Das::Utils::AcpTextToUtf8(e.what()));
                     throw;
                 }
             }
@@ -490,7 +491,7 @@ namespace Core
                 {
                     DAS_CORE_LOG_ERROR(
                         "CreateHostLauncher: {}",
-                        ToString(e.what()));
+                        Das::Utils::AcpTextToUtf8(e.what()));
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
             }
@@ -1073,7 +1074,7 @@ namespace Core
                 {
                     DAS_CORE_LOG_ERROR(
                         "CreateIpcContext failed: {}",
-                        ToString(e.what()));
+                        Das::Utils::AcpTextToUtf8(e.what()));
                     return nullptr;
                 }
                 catch (...)
@@ -1102,7 +1103,7 @@ namespace Core
                 {
                     DAS_CORE_LOG_ERROR(
                         "CreateIpcContext(WS) failed: {}",
-                        ToString(e.what()));
+                        Das::Utils::AcpTextToUtf8(e.what()));
                     return nullptr;
                 }
                 catch (...)

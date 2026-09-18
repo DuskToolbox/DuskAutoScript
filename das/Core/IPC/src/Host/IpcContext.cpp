@@ -26,6 +26,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 
@@ -638,14 +639,16 @@ namespace Core
                                     {
                                         DAS_CORE_LOG_ERROR(
                                             "Host: system_error: {}",
-                                            ToString(e.what()));
+                                            Das::Utils::AcpTextToUtf8(
+                                                e.what()));
                                         run_loop_.RequestStop();
                                     }
                                     catch (const std::exception& e)
                                     {
                                         DAS_CORE_LOG_ERROR(
                                             "Host: exception: {}",
-                                            ToString(e.what()));
+                                            Das::Utils::AcpTextToUtf8(
+                                                e.what()));
                                         run_loop_.RequestStop();
                                     }
                                 },
@@ -724,7 +727,7 @@ namespace Core
                         {
                             DAS_CORE_LOG_DEBUG(
                                 "Receive loop stopped: {}",
-                                ToString(e.what()));
+                                Das::Utils::AcpTextToUtf8(e.what()));
                             if (e.code() == boost::asio::error::eof)
                             {
                                 RequestShutdown(
@@ -735,7 +738,7 @@ namespace Core
                         {
                             DAS_CORE_LOG_ERROR(
                                 "Receive error: {}",
-                                ToString(e.what()));
+                                Das::Utils::AcpTextToUtf8(e.what()));
                             RequestShutdown(
                                 HOST_SHUTDOWN_REASON_TRANSPORT_DISCONNECTED);
                         }
@@ -822,14 +825,14 @@ namespace Core
                 {
                     DAS_CORE_LOG_ERROR(
                         "Host HTTP: system_error: {}",
-                        ToString(e.what()));
+                        Das::Utils::AcpTextToUtf8(e.what()));
                     run_loop_.RequestStop();
                 }
                 catch (const std::exception& e)
                 {
                     DAS_CORE_LOG_ERROR(
                         "Host HTTP: exception: {}",
-                        ToString(e.what()));
+                        Das::Utils::AcpTextToUtf8(e.what()));
                     run_loop_.RequestStop();
                 }
             }
@@ -1219,7 +1222,7 @@ namespace Core
                 {
                     DAS_CORE_LOG_ERROR(
                         "CreateIpcContext failed: {}",
-                        ToString(e.what()));
+                        Das::Utils::AcpTextToUtf8(e.what()));
                     return nullptr;
                 }
                 catch (...)

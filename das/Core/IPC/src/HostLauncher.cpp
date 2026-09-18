@@ -247,7 +247,7 @@ namespace
             // ToString 处理 Windows 异常消息的 GBK -> UTF-8 编码转换（与既有
             // catch 块的日志用法一致，boost::system::system_error /
             // std::exception 都经此转换）。
-            return std::string(ToString(ex.what()).string_view());
+            return Das::Utils::AcpTextToUtf8(ex.what());
         }
         catch (...)
         {
@@ -841,7 +841,7 @@ void HostLauncher::Stop()
         {
             const std::string msg = DAS_FMT_NS::format(
                 "HostLauncher::Stop teardown coroutine failed: {}",
-                ToString(e.what()));
+                Das::Utils::AcpTextToUtf8(e.what()));
             DAS_CORE_LOG_ERROR(msg.c_str());
         }
     }
@@ -943,7 +943,7 @@ void HostLauncher::StopAll(
                                 "pid = {}, session_id = {}, error = {}",
                                 current->impl_->pid,
                                 current->impl_->session_id,
-                                ToString(e.what()));
+                                Das::Utils::AcpTextToUtf8(e.what()));
                         }
                         return stdexec::just();
                     });
@@ -1012,14 +1012,14 @@ boost::asio::awaitable<void> HostLauncher::StopBodyRequestExit()
         {
             const std::string err_msg = DAS_FMT_NS::format(
                 "Send GOODBYE failed with system_error: {}",
-                ToString(e.what()));
+                Das::Utils::AcpTextToUtf8(e.what()));
             DAS_CORE_LOG_ERROR(err_msg.c_str());
         }
         catch (const std::exception& e)
         {
             const std::string err_msg = DAS_FMT_NS::format(
                 "Send GOODBYE failed: {}",
-                ToString(e.what()));
+                Das::Utils::AcpTextToUtf8(e.what()));
             DAS_CORE_LOG_ERROR(err_msg.c_str());
         }
 
@@ -1656,7 +1656,7 @@ void HostLauncher::TerminateIfRunning()
         {
             const std::string msg = DAS_FMT_NS::format(
                 "HostLauncher::TerminateIfRunning transport cleanup failed: {}",
-                ToString(e.what()));
+                Das::Utils::AcpTextToUtf8(e.what()));
             DAS_CORE_LOG_ERROR(msg.c_str());
         }
     }
@@ -1754,7 +1754,7 @@ DasResult HostLauncher::LaunchProcess(
     {
         const std::string msg = DAS_FMT_NS::format(
             "Exception launching Host process (system_error): {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -1762,7 +1762,7 @@ DasResult HostLauncher::LaunchProcess(
     {
         const std::string msg = DAS_FMT_NS::format(
             "Exception launching Host process: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -1927,7 +1927,7 @@ DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
     {
         const std::string err_msg = DAS_FMT_NS::format(
             "Failed to create Host IPC transport (system_error): {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -1935,7 +1935,7 @@ DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
     {
         const std::string err_msg = DAS_FMT_NS::format(
             "Failed to create Host IPC transport: exception={}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -2287,7 +2287,7 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
     {
         const std::string msg = DAS_FMT_NS::format(
             "SendHandshakeHello failed (system_error): {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_SEND_FAILED;
     }
@@ -2295,7 +2295,7 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
     {
         const std::string msg = DAS_FMT_NS::format(
             "SendHandshakeHello failed: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_SEND_FAILED;
     }
@@ -2327,7 +2327,7 @@ DasResult HostLauncher::ReceiveHandshakeWelcome(
     {
         const std::string msg = DAS_FMT_NS::format(
             "ReceiveHandshakeWelcome failed (system_error): {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_RECEIVE_FAILED;
     }
@@ -2335,7 +2335,7 @@ DasResult HostLauncher::ReceiveHandshakeWelcome(
     {
         const std::string msg = DAS_FMT_NS::format(
             "ReceiveHandshakeWelcome failed: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_RECEIVE_FAILED;
     }
@@ -2355,7 +2355,7 @@ DasResult HostLauncher::SendHandshakeReady(uint16_t session_id)
     {
         const std::string msg = DAS_FMT_NS::format(
             "SendHandshakeReady failed (system_error): {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_SEND_FAILED;
     }
@@ -2363,7 +2363,7 @@ DasResult HostLauncher::SendHandshakeReady(uint16_t session_id)
     {
         const std::string msg = DAS_FMT_NS::format(
             "SendHandshakeReady failed: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_SEND_FAILED;
     }
@@ -2393,7 +2393,7 @@ DasResult HostLauncher::ReceiveHandshakeReadyAck(uint32_t timeout_ms)
     {
         const std::string msg = DAS_FMT_NS::format(
             "ReceiveHandshakeReadyAck failed (system_error): {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_RECEIVE_FAILED;
     }
@@ -2401,7 +2401,7 @@ DasResult HostLauncher::ReceiveHandshakeReadyAck(uint32_t timeout_ms)
     {
         const std::string msg = DAS_FMT_NS::format(
             "ReceiveHandshakeReadyAck failed: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_RECEIVE_FAILED;
     }
@@ -2513,7 +2513,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
     {
         const std::string err_msg = DAS_FMT_NS::format(
             "Failed to create Host IPC transport (system_error): {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -2521,7 +2521,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
     {
         const std::string err_msg = DAS_FMT_NS::format(
             "Failed to create Host IPC transport: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }

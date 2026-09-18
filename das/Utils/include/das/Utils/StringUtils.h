@@ -126,71 +126,6 @@ inline std::string ToString(IDasReadOnlyString* p_str)
     return std::string(c_str);
 }
 
-/**
- * @brief Owning wrapper that stores a std::u8string and exposes char-based
- * accessors.
- *
- * 只服务于 native(narrow/ACP)→UTF-8 转码（ToString(std::string_view) 的
- * 持有载体）——path 出向一律走 das/Utils/PathText.h 的 helper 家族，不经
- * 本类。
- */
-class U8String
-{
-public:
-    U8String() = default;
-
-    // Accept rvalue only — zero-copy move
-    explicit U8String(std::u8string&& str) noexcept : value_(std::move(str)) {}
-
-    // Reject lvalue — forces explicit std::move() at call site
-    explicit U8String(const std::u8string&) = delete;
-
-    U8String(const U8String&) noexcept = default;
-    U8String(U8String&&) noexcept = default;
-    U8String& operator=(const U8String&) noexcept = default;
-    U8String& operator=(U8String&&) noexcept = default;
-    ~U8String() = default;
-
-    [[nodiscard]]
-    const char* c_str() const noexcept
-    {
-        return reinterpret_cast<const char*>(value_.c_str());
-    }
-
-    [[nodiscard]]
-    const char* data() const noexcept
-    {
-        return reinterpret_cast<const char*>(value_.data());
-    }
-
-    [[nodiscard]]
-    std::size_t size() const noexcept
-    {
-        return value_.size();
-    }
-
-    [[nodiscard]]
-    bool empty() const noexcept
-    {
-        return value_.empty();
-    }
-
-    [[nodiscard]]
-    std::string_view string_view() const noexcept
-    {
-        return {reinterpret_cast<const char*>(value_.data()), value_.size()};
-    }
-
-    [[nodiscard]]
-    operator std::string_view() const noexcept
-    {
-        return string_view();
-    }
-
-private:
-    std::u8string value_;
-};
-
 DAS_UTILS_NS_END
 
 constexpr char operator""_das_as_char(char8_t c) { return c; }
@@ -201,32 +136,5 @@ constexpr auto& operator""_das_as_char()
     return DAS::Utils::make_as_char_buffer<L>(
         std::make_index_sequence<decltype(L)::size>());
 }
-
-// Convert native-encoded string (e.g., Windows GBK) to UTF-8 encoded U8String.
-// path 的窄构造承担 ACP 解码半步（转码引擎语义即目的），UTF-8 编码半步
-// 走公共 PathToUtf8，char8_t 1:1 回拷经公有 u8string 构造。全局命名空间
-// 是既有非限定调用点（string_view 实参无 ADL）的解析目标，且与
-// using Das::Utils::ToString 的消费面共存不冲突，不可挪入命名空间。
-inline DAS::Utils::U8String ToString(std::string_view str)
-{
-    const std::string utf8_text =
-        DAS::Utils::PathToUtf8(std::filesystem::path{str});
-    return DAS::Utils::U8String{std::u8string{
-        reinterpret_cast<const char8_t*>(utf8_text.data()),
-        utf8_text.size()}};
-}
-
-template <>
-struct DAS_FMT_NS::formatter<DAS::Utils::U8String, char>
-    : public formatter<std::string_view, char>
-{
-    auto format(const DAS::Utils::U8String& str, format_context& ctx) const ->
-        typename std::remove_reference_t<decltype(ctx)>::iterator
-    {
-        return formatter<std::string_view, char>::format(
-            str.string_view(),
-            ctx);
-    }
-};
 
 #endif // DAS_UTILS_STRINGUTILS_HPP

@@ -15,6 +15,7 @@ DAS_DISABLE_WARNING_END
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <utility>
@@ -63,7 +64,7 @@ struct HttpIpcTransport::Impl
         {
             auto msg = DAS_FMT_NS::format(
                 "Close: WebSocket close failed: {}",
-                ToString(ec.message()));
+                Das::Utils::AcpTextToUtf8(ec.message()));
             DAS_CORE_LOG_WARN("{}", msg.c_str());
         }
 
@@ -72,7 +73,7 @@ struct HttpIpcTransport::Impl
         {
             auto msg = DAS_FMT_NS::format(
                 "Close: socket close failed: {}",
-                ToString(ec.message()));
+                Das::Utils::AcpTextToUtf8(ec.message()));
             DAS_CORE_LOG_WARN("{}", msg.c_str());
         }
 
@@ -147,7 +148,9 @@ boost::asio::awaitable<DasResult> HttpIpcTransport::SendCoroutine(
     }
     catch (const std::exception& e)
     {
-        auto msg = DAS_FMT_NS::format("SendCoroutine: {}", ToString(e.what()));
+        auto msg = DAS_FMT_NS::format(
+            "SendCoroutine: {}",
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR("{}", msg.c_str());
         impl_->is_connected = false;
         result = DAS_E_IPC_SEND_FAILED;
@@ -224,7 +227,9 @@ boost::asio::awaitable<DasResult> HttpIpcTransport::SendScatter(
     }
     catch (const std::exception& e)
     {
-        auto msg = DAS_FMT_NS::format("SendScatter: {}", ToString(e.what()));
+        auto msg = DAS_FMT_NS::format(
+            "SendScatter: {}",
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR("{}", msg.c_str());
         impl_->is_connected = false;
         result = DAS_E_IPC_SEND_FAILED;
@@ -255,8 +260,9 @@ HttpIpcTransport::ReceiveCoroutine()
     }
     catch (const std::exception& e)
     {
-        auto msg =
-            DAS_FMT_NS::format("ReceiveCoroutine: {}", ToString(e.what()));
+        auto msg = DAS_FMT_NS::format(
+            "ReceiveCoroutine: {}",
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_CORE_LOG_ERROR("{}", msg.c_str());
         impl_->is_connected = false;
         co_return DAS_E_IPC_CONNECTION_LOST;

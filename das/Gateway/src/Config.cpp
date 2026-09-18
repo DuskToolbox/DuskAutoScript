@@ -42,9 +42,11 @@ GetCreateIDasReadOnlyStringFromUtf8Function()
                     "Can not load library " DAS_CORE_DLL
                     " .Error code = {}. Message = {}",
                     code.value(),
-                    ToString(code.message()));
+                    Das::Utils::AcpTextToUtf8(code.message()));
                 SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
-                SPDLOG_LOGGER_ERROR(GetLogger(), ToString(ex.what()).c_str());
+                SPDLOG_LOGGER_ERROR(
+                    GetLogger(),
+                    Das::Utils::AcpTextToUtf8(ex.what()).c_str());
             }
             return nullptr;
         }()};
@@ -71,9 +73,11 @@ decltype(&::ParseDasJsonFromString) GetParseDasJsonFromStringFunction()
                     "Can not load library " DAS_CORE_DLL
                     " .Error code = {}. Message = {}",
                     code.value(),
-                    ToString(code.message()));
+                    Das::Utils::AcpTextToUtf8(code.message()));
                 SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
-                SPDLOG_LOGGER_ERROR(GetLogger(), ToString(ex.what()).c_str());
+                SPDLOG_LOGGER_ERROR(
+                    GetLogger(),
+                    Das::Utils::AcpTextToUtf8(ex.what()).c_str());
             }
             return nullptr;
         }()};

@@ -4,12 +4,11 @@ r"""check_acp_error_message.py - boost::system::system_error 消息 ACP 转码�
 
 Windows 上 boost::system::system_error 的 what() / code().message() 中文段
 来自 FormatMessageA（CP_ACP 字节），直接进入 UTF-8 文本通道（日志 fmt/
-DAS_LOG、失败消息、诊断字符串）即乱码。消费点必须经转码通道：
+DAS_LOG、失败消息、诊断字符串）即乱码。消费点必须经统一转码通道：
   - Das::Utils::AcpTextToUtf8(...)   das/Utils/PathText.h，POSIX 透传
-  - ToString(...)                    das/Utils/StringUtils.h 的 U8String
-    全局转码器；实现体同为 PathToUtf8(path{窄串})，两通道等价，
-    ToString 形态是既有调用面（IpcContext/HostLauncher/HttpIpcTransport
-    的异常消息通道），一并认可。
+
+（历史上的 ToString(string_view)/U8String 等价转码通道已退役，全部
+消费点迁移至 AcpTextToUtf8 后白名单收紧为单通道。）
 
 检测面（纯文本词法级，无需 libclang/编译库）：
   catch (… boost::system::system_error …) 块内——
@@ -70,7 +69,7 @@ WHAT_CALL_RE = re.compile(r"\b[A-Za-z_]\w*\s*\.\s*what\s*\(\s*\)")
 CODE_MESSAGE_RE = re.compile(
     r"\b[A-Za-z_]\w*\s*\.\s*code\s*\(\s*\)\s*\.\s*message\s*\(\s*\)"
 )
-SANITIZER_RE = re.compile(r"\b(?:AcpTextToUtf8|ToString)\s*\(")
+SANITIZER_RE = re.compile(r"\bAcpTextToUtf8\s*\(")
 
 BRACKET_PAIRS = {"(": ")", "{": "}", "[": "]"}
 RAW_STRING_OPEN_RE = re.compile(r'R"([^()\\ \t\n]*)\(')
@@ -352,7 +351,7 @@ def run_staged_mode():
             )
         print(
             f"[{TOOL_NAME}] catch (boost::system::system_error) 内的 "
-            "what()/code().message() 必须经 AcpTextToUtf8/ToString 转码后再消费"
+            "what()/code().message() 必须经 AcpTextToUtf8 转码后再消费"
         )
         return 1
     print(f"[{TOOL_NAME}] ACP error message check passed")

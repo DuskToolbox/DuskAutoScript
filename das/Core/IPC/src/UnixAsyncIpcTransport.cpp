@@ -195,7 +195,7 @@ UnixAsyncIpcTransport::CreateAsync(
         const auto msg = DAS_FMT_NS::format(
             "CreateAsync failed (system_error): path = {}, error = {}",
             read_endpoint,
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_LOG_ERROR(msg.c_str());
         co_return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
     }
@@ -204,7 +204,7 @@ UnixAsyncIpcTransport::CreateAsync(
         const auto msg = DAS_FMT_NS::format(
             "CreateAsync failed: path = {}, error = {}",
             read_endpoint,
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         DAS_LOG_ERROR(msg.c_str());
         co_return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
     }
@@ -266,7 +266,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
         const auto msg = DAS_FMT_NS::format(
             "acceptor open failed: path = {}, error = {}",
             socket_path,
-            ToString(ec.message()));
+            Das::Utils::AcpTextToUtf8(ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -277,7 +277,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
         const auto msg = DAS_FMT_NS::format(
             "socket open failed: path = {}, error = {}",
             socket_path,
-            ToString(ec.message()));
+            Das::Utils::AcpTextToUtf8(ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -294,7 +294,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
         const auto msg = DAS_FMT_NS::format(
             "bind failed: path = {}, error = {}",
             socket_path,
-            ToString(bind_ec.message()));
+            Das::Utils::AcpTextToUtf8(bind_ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         socket_.close();
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
@@ -307,7 +307,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
         const auto msg = DAS_FMT_NS::format(
             "listen failed: path = {}, error = {}",
             socket_path,
-            ToString(listen_ec.message()));
+            Das::Utils::AcpTextToUtf8(listen_ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         socket_.close();
         DAS_UNLINK(socket_path.c_str());
@@ -323,7 +323,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
         const auto msg = DAS_FMT_NS::format(
             "accept failed: path = {}, error = {}",
             socket_path,
-            ToString(accept_ec.message()));
+            Das::Utils::AcpTextToUtf8(accept_ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         socket_.close();
         acceptor_->close();
@@ -358,7 +358,7 @@ UnixAsyncIpcTransport::ConnectToUnixSocketAsync(const std::string& socket_path)
                 const auto msg = DAS_FMT_NS::format(
                     "socket open failed: path = {}, error = {}",
                     socket_path,
-                    ToString(open_ec.message()));
+                    Das::Utils::AcpTextToUtf8(open_ec.message()));
                 DAS_LOG_ERROR(msg.c_str());
                 co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
             }
@@ -398,7 +398,7 @@ UnixAsyncIpcTransport::ConnectToUnixSocketAsync(const std::string& socket_path)
         const auto msg = DAS_FMT_NS::format(
             "connect failed: path = {}, error = {}",
             socket_path,
-            ToString(connect_ec.message()));
+            Das::Utils::AcpTextToUtf8(connect_ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_CONNECTION_LOST;
     }
@@ -528,7 +528,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendCoroutine(
             {
                 DAS_CORE_LOG_ERROR(
                     "SendCoroutine: SHM async_write failed: {}",
-                    ToString(e.what()));
+                    Das::Utils::AcpTextToUtf8(e.what()));
                 // guard 析构自动 Deallocate
                 send_mutex_.Unlock();
                 co_return DAS_E_IPC_SEND_FAILED;
@@ -559,7 +559,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendCoroutine(
     {
         DAS_CORE_LOG_ERROR(
             "SendCoroutine: async_write failed: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         result = DAS_E_IPC_SEND_FAILED;
     }
 
@@ -627,7 +627,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendScatter(
     {
         DAS_CORE_LOG_ERROR(
             "scatter async_write failed: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         result = DAS_E_IPC_SEND_FAILED;
     }
 

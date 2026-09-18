@@ -35,6 +35,7 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <variant>
@@ -1271,7 +1272,7 @@ boost::asio::awaitable<void> IpcRunLoop::DrainOutboundCoroutine(
         {
             DAS_CORE_LOG_ERROR(
                 "DrainOutboundCoroutine: exception: {}",
-                ToString(e.what()));
+                Das::Utils::AcpTextToUtf8(e.what()));
         }
     }
 }
@@ -1603,7 +1604,7 @@ boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
     {
         DAS_CORE_LOG_ERROR(
             "WriteFramesCoalesced: exception: {}",
-            ToString(e.what()));
+            Das::Utils::AcpTextToUtf8(e.what()));
         for (size_t index = completed_up_to; index < owned_frames.size();
              ++index)
         {
