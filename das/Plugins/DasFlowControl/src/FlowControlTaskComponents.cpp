@@ -4,6 +4,7 @@
 
 #include "FlowControlErrorCodes.h"
 #include "FlowControlI18n.h"
+#include "LaunchOutputCapture.h"
 
 #include <das/Core/GraphRuntime/CompiledPlanFingerprint.h>
 #include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
@@ -24,6 +25,7 @@ DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_BOOST_PROCESS_WARNING
 
 #include <boost/asio/io_context.hpp>
+#include <boost/process/v2/environment.hpp>
 #include <boost/process/v2/process.hpp>
 #include <boost/process/v2/start_dir.hpp>
 #include <boost/process/v2/stdio.hpp>
@@ -44,10 +46,12 @@ DAS_DISABLE_WARNING_END
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
 #include <mutex>
 #include <new>
 #include <optional>
 #include <regex>
+#include <system_error>
 #include <utility>
 
 DAS_NS_BEGIN
@@ -653,6 +657,10 @@ namespace
             return "No executable path is configured for the launch "
                    "component.";
         }
+        if (diagnostic_code == "launch-exe-not-found")
+        {
+            return "The configured executable was not found on PATH.";
+        }
         return "";
     }
 
@@ -758,17 +766,81 @@ namespace
     }
 #endif
 
+    // 裸命令名判定：无目录段（"python"/"python.exe" 是裸名；带目录段的
+    // "C:/x/app.exe"、"./app.exe"、"x/app.exe" 是用户显式定位，不经 PATH
+    // 解析——找不到属启动失败而非解析域）。
+    bool IsBareCommandName(const std::string& exe_path_utf8)
+    {
+        try
+        {
+            return !Das::Utils::PathFromUtf8(exe_path_utf8).has_parent_path();
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
+    }
+
+    // 裸命令名 PATH 解析（bp2 find_executable：逐 PATH 目录 + PATHEXT 扩
+    // 展尝试 is_executable）；未命中返回空串（调用方显性失败）。
+    std::string ResolveBareCommandOnPath(const std::string& exe_path_utf8)
+    {
+        try
+        {
+            const auto resolved_path =
+                boost::process::v2::environment::find_executable(
+                    Das::Utils::ToBoostPath(
+                        Das::Utils::PathFromUtf8(exe_path_utf8)));
+            if (resolved_path.empty())
+            {
+                return {};
+            }
+            return Das::Utils::PathToUtf8(Das::Utils::ToStdPath(resolved_path));
+        }
+        catch (const std::exception&)
+        {
+            return {};
+        }
+    }
+
+    // 捕获日志文件名的进程名段：exe 路径去目录与扩展名的 stem 文本
+    // （清洗在捕获工厂内完成）。路径解析异常回退空段（工厂侧转占位名）。
+    std::string LaunchCaptureProcessStem(const std::string& exe_path_utf8)
+    {
+        try
+        {
+            return Das::Utils::PathToUtf8(
+                Das::Utils::PathFromUtf8(exe_path_utf8).stem());
+        }
+        catch (const std::exception&)
+        {
+            return {};
+        }
+    }
+
     // 生产进程启动缝：boost::process v2 spawn，成功后立即 detach——
     // basic_process 析构 terminate_if_running，不 detach 则组件 Do 返回即
-    // 杀子进程。stdio 全部丢弃（启动器不消费子进程输出）。
+    // 杀子进程。capture_output=false 三路 stdio 丢弃（启动器不消费子进程
+    // 输出）；true 时捕获会话接管道逐行落盘（会话生命周期自持，host 退出
+    // 绝不连带杀被启动进程）。
     FlowControlProcessSpawner DefaultProcessSpawner()
     {
         return [](const std::string&              exe_path,
                   const std::vector<std::string>& arguments,
-                  const std::string&              working_directory) -> bool
+                  const std::string&              working_directory,
+                  bool                            capture_output) -> bool
         {
             try
             {
+                std::shared_ptr<LaunchOutputCaptureSession> capture_session;
+                if (capture_output)
+                {
+                    capture_session = CreateLaunchOutputCaptureSession(
+                        ResolveLaunchCaptureLogDirectory(),
+                        LaunchCaptureProcessStem(exe_path));
+                    // nullptr = 工厂已告警；降级丢弃形态照常启动。
+                }
+
                 // bp2 的 exe 与 start_dir 形参是 boost path：窄串经 ACP
                 // 构造会双损（中文路径下启动错位），全程保 path 进出；
                 // arguments 形参是窄 UTF-8 通道，保持直传。
@@ -780,14 +852,19 @@ namespace
                         Das::Utils::ToBoostPath(
                             Das::Utils::PathFromUtf8(exe_path)),
                         arguments,
-                        // bp2 语义：stdin 位 {}（默认构造）= 继承父进程
-                        // 句柄，无控制台宿主（GUI 子系统进程）的
-                        // GetStdHandle 返回 NULL → CreateProcessW 失败；
-                        // nullptr = 重定向到 NUL 设备，任意宿主形态可启动。
-                        boost::process::v2::process_stdio{
-                            nullptr,
-                            nullptr,
-                            nullptr}
+                        capture_session
+                            ? boost::process::v2::process_stdio{
+                                  nullptr,
+                                  capture_session->StdoutPipe(),
+                                  capture_session->StderrPipe()}
+                            // bp2 语义：stdin 位 {}（默认构造）= 继承父进程
+                            // 句柄，无控制台宿主（GUI 子系统进程）的
+                            // GetStdHandle 返回 NULL → CreateProcessW 失败；
+                            // nullptr = 重定向到 NUL 设备，任意宿主形态可启动。
+                            : boost::process::v2::process_stdio{
+                                  nullptr,
+                                  nullptr,
+                                  nullptr}
 #ifdef _WIN32
                         // 控制台子进程不闪窗，GUI 子进程无影响。
                         ,
@@ -795,7 +872,13 @@ namespace
                             CREATE_NO_WINDOW>{}
 #endif
                     );
+                    const auto child_process_id =
+                        static_cast<std::uint32_t>(child.id());
                     (void)child.detach();
+                    if (capture_session)
+                    {
+                        capture_session->Start(child_process_id);
+                    }
                     return true;
                 }
                 boost::process::v2::process child(
@@ -805,14 +888,28 @@ namespace
                     boost::process::v2::process_start_dir(
                         Das::Utils::ToBoostPath(
                             Das::Utils::PathFromUtf8(working_directory))),
-                    boost::process::v2::process_stdio{nullptr, nullptr, nullptr}
+                    capture_session
+                        ? boost::process::v2::process_stdio{
+                              nullptr,
+                              capture_session->StdoutPipe(),
+                              capture_session->StderrPipe()}
+                        : boost::process::v2::process_stdio{
+                              nullptr,
+                              nullptr,
+                              nullptr}
 #ifdef _WIN32
                     ,
                     boost::process::v2::windows::process_creation_flags<
                         CREATE_NO_WINDOW>{}
 #endif
                 );
+                const auto child_process_id =
+                    static_cast<std::uint32_t>(child.id());
                 (void)child.detach();
+                if (capture_session)
+                {
+                    capture_session->Start(child_process_id);
+                }
                 return true;
             }
             catch (const boost::system::system_error& error)
@@ -2177,6 +2274,7 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
     std::string               exe_path;
     std::vector<std::string>  arguments;
     std::string               working_directory;
+    bool                      capture_output = false;
     bool                      wait_window_configured = false;
     std::string               class_regex;
     std::string               window_regex;
@@ -2204,6 +2302,11 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
                 FindObjectString(*settings_object, "workingDirectory"))
         {
             working_directory = *configured_working_directory;
+        }
+        if (const auto configured_capture_output =
+                FindObjectBool(*settings_object, "captureOutput"))
+        {
+            capture_output = *configured_capture_output;
         }
         if (const auto configured_class_regex =
                 FindObjectString(*settings_object, "waitWindowClassRegex"))
@@ -2234,11 +2337,37 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
             pp_out_port_map);
     }
 
+    // 裸命令名且非已存在文件 → PATH 解析为完整路径；解析产物是启动路径
+    // 与捕获文件名进程名的统一来源（解析后形态全链一致）。未命中 = 显性
+    // 失败（专用诊断码），不落入通用 spawn 失败。
+    if (IsBareCommandName(exe_path))
+    {
+        std::error_code file_error;
+        if (!std::filesystem::is_regular_file(
+                Das::Utils::PathFromUtf8(exe_path),
+                file_error))
+        {
+            const auto resolved_path = ResolveBareCommandOnPath(exe_path);
+            if (resolved_path.empty())
+            {
+                return BuildLaunchFailedPortMap(
+                    "launch-exe-not-found",
+                    Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND,
+                    pp_out_port_map);
+            }
+            exe_path = resolved_path;
+        }
+    }
+
     if (!process_spawner_)
     {
         process_spawner_ = DefaultProcessSpawner();
     }
-    if (!process_spawner_(exe_path, arguments, working_directory))
+    if (!process_spawner_(
+            exe_path,
+            arguments,
+            working_directory,
+            capture_output))
     {
         return BuildLaunchFailedPortMap(
             "launch-spawn-failed",

@@ -496,7 +496,8 @@ TEST_F(E2EGraphFlowTest, LaunchSpawnFailureSurfacesDiagnosticDetail)
         ->SetProcessSpawnerForTest(
             [](const std::string&,
                const std::vector<std::string>&,
-               const std::string&) -> bool { return false; });
+               const std::string&,
+               bool) -> bool { return false; });
 
     GraphRuntime runtime;
     const auto   hr = runtime.RunWithHost(

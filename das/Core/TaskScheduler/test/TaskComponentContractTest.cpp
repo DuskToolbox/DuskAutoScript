@@ -36,6 +36,7 @@ DAS_DISABLE_WARNING_END
 #include "FlowControlErrorCodes.h"
 #include "FlowControlI18n.h"
 #include "FlowControlTaskComponents.h"
+#include "LaunchOutputCapture.h"
 
 #include <algorithm>
 #include <array>
@@ -46,6 +47,7 @@ DAS_DISABLE_WARNING_END
 #include <fstream>
 #include <memory>
 #include <random>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -515,6 +517,54 @@ namespace
             escaped.push_back(character);
         }
         return escaped;
+    }
+
+    // 捕获日志目录缝作用域守卫：断言早退也恢复生产默认，避免跨用例污染。
+    struct ScopedLaunchCaptureDirectoryOverride
+    {
+        explicit ScopedLaunchCaptureDirectoryOverride(
+            const std::filesystem::path& directory)
+        {
+            Das::SetLaunchCaptureLogDirectoryForTest(
+                Das::Utils::PathToUtf8(directory).c_str());
+        }
+
+        ~ScopedLaunchCaptureDirectoryOverride()
+        {
+            Das::SetLaunchCaptureLogDirectoryForTest(nullptr);
+        }
+    };
+
+    // 整文件读回（二进制零转换）——捕获落盘断言用。
+    std::string ReadFileTextBinary(const std::filesystem::path& file_path)
+    {
+        std::ifstream      input(file_path, std::ios::binary);
+        std::ostringstream content;
+        content << input.rdbuf();
+        return content.str();
+    }
+
+    // 文本中存在与 line 完全相等的原始行（按 '\n' 拆行比对）——比 contains
+    // 更强：带任何前缀（时间戳/流标签）的行不会命中。
+    bool HasExactRawLine(const std::string& text, std::string_view line)
+    {
+        std::size_t start = 0;
+        while (start <= text.size())
+        {
+            const auto newline = text.find('\n', start);
+            const auto end =
+                newline == std::string::npos ? text.size() : newline;
+            if (std::string_view(text.data() + start, end - start) == line)
+            {
+                return true;
+            }
+            if (newline == std::string::npos)
+            {
+                break;
+            }
+            start = newline + 1;
+        }
+        return false;
     }
 
 #ifdef _WIN32
@@ -1271,7 +1321,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     // signals 键，DasMaaPi 的 signals 条目形状为 {id,label}）；
     // config_field_count = config 对象的声明字段数（空 config 计 0）。
     const std::array<ManifestSpec, 3> manifests{
-        ManifestSpec{"DasFlowControl", 16, 45, 26},
+        ManifestSpec{"DasFlowControl", 16, 45, 27},
         ManifestSpec{"DasMaaPi", 1, 8, 2},
         ManifestSpec{"DasGraphTask", 3, 4, 0},
     };
@@ -1382,7 +1432,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     }
     EXPECT_EQ(total_definitions, 20u);
     EXPECT_EQ(total_ports, 57u);
-    EXPECT_EQ(total_config_fields, 28u);
+    EXPECT_EQ(total_config_fields, 29u);
 }
 
 TEST_F(
@@ -1603,7 +1653,8 @@ TEST_F(TaskComponentContractTest, LaunchDoSpawnsAndCompletesWithoutWaitWindow)
         [&spawn_called](
             const std::string&,
             const std::vector<std::string>&,
-            const std::string&) -> bool
+            const std::string&,
+            bool) -> bool
         {
             spawn_called = true;
             return true;
@@ -1630,7 +1681,8 @@ TEST_F(TaskComponentContractTest, LaunchDoWaitsForSingleWindowMatch)
     component->SetProcessSpawnerForTest(
         [](const std::string&,
            const std::vector<std::string>&,
-           const std::string&) -> bool { return true; });
+           const std::string&,
+           bool) -> bool { return true; });
 
     int enumeration_count = 0;
     component->SetWindowEnumeratorForTest(
@@ -1684,7 +1736,8 @@ TEST_F(TaskComponentContractTest, LaunchDoTimesOutWaitingForWindow)
     component->SetProcessSpawnerForTest(
         [](const std::string&,
            const std::vector<std::string>&,
-           const std::string&) -> bool { return true; });
+           const std::string&,
+           bool) -> bool { return true; });
     component->SetWindowEnumeratorForTest(
         []() -> std::vector<Das::FlowControlWindowInfo> { return {}; });
 
@@ -1716,7 +1769,8 @@ TEST_F(TaskComponentContractTest, LaunchDoFailsOnAmbiguousWindowMatch)
     component->SetProcessSpawnerForTest(
         [](const std::string&,
            const std::vector<std::string>&,
-           const std::string&) -> bool { return true; });
+           const std::string&,
+           bool) -> bool { return true; });
     component->SetWindowEnumeratorForTest(
         []() -> std::vector<Das::FlowControlWindowInfo>
         {
@@ -1751,7 +1805,8 @@ TEST_F(TaskComponentContractTest, LaunchDoFailsWhenSpawnFails)
     component->SetProcessSpawnerForTest(
         [](const std::string&,
            const std::vector<std::string>&,
-           const std::string&) -> bool { return false; });
+           const std::string&,
+           bool) -> bool { return false; });
 
     ApplyLaunchConfig(
         component.Get(),
@@ -1777,7 +1832,8 @@ TEST_F(TaskComponentContractTest, LaunchDoFailsWhenExePathMissing)
         [&spawn_called](
             const std::string&,
             const std::vector<std::string>&,
-            const std::string&) -> bool
+            const std::string&,
+            bool) -> bool
         {
             spawn_called = true;
             return true;
@@ -1803,7 +1859,8 @@ TEST_F(TaskComponentContractTest, LaunchDoCancelsDuringWindowPoll)
     component->SetProcessSpawnerForTest(
         [](const std::string&,
            const std::vector<std::string>&,
-           const std::string&) -> bool { return true; });
+           const std::string&,
+           bool) -> bool { return true; });
 
     FakeStopToken stop_token;
     component->SetWindowEnumeratorForTest(
@@ -1836,15 +1893,21 @@ TEST_F(TaskComponentContractTest, LaunchDoPassesConfigToSpawner)
     std::string              spawned_exe_path;
     std::vector<std::string> spawned_arguments;
     std::string              spawned_working_directory;
+    bool                     spawned_capture_output = true;
     component->SetProcessSpawnerForTest(
-        [&spawned_exe_path, &spawned_arguments, &spawned_working_directory](
+        [&spawned_exe_path,
+         &spawned_arguments,
+         &spawned_working_directory,
+         &spawned_capture_output](
             const std::string&              exe_path,
             const std::vector<std::string>& arguments,
-            const std::string&              working_directory) -> bool
+            const std::string&              working_directory,
+            bool                            capture_output) -> bool
         {
             spawned_exe_path = exe_path;
             spawned_arguments = arguments;
             spawned_working_directory = working_directory;
+            spawned_capture_output = capture_output;
             return true;
         });
 
@@ -1864,6 +1927,7 @@ TEST_F(TaskComponentContractTest, LaunchDoPassesConfigToSpawner)
     EXPECT_EQ(spawned_arguments[0], "--flag");
     EXPECT_EQ(spawned_arguments[1], "value");
     EXPECT_EQ(spawned_working_directory, "C:/test/work");
+    EXPECT_FALSE(spawned_capture_output); // 缺省 captureOutput = 关
 }
 
 // 生产 spawn 冒烟（无注入缝，走真实 boost::process 路径）：以「自 spawn
@@ -1961,6 +2025,172 @@ TEST_F(TaskComponentContractTest, ProductionSpawnerWorksWithoutConsoleStdin)
     ASSERT_EQ(do_result, DAS_S_OK);
     EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "completed");
 #endif
+}
+
+// captureOutput 开（生产 spawn 路径，零注入缝）：子进程 stdout/stderr 原始
+// 行落盘到注入目录的两个日志文件；文件名 {yyyyMMdd-HHmmss}-{进程名}-
+// {pid}-{out|err}.log（进程名=exe 文件名去扩展名）；行内容零加工（无时
+// 间戳/流标签前缀）；会话 io 线程异步写，轮询等待内容齐（行级 flush 保证
+// 已写行可见即已落盘）。
+TEST_F(TaskComponentContractTest, LaunchCaptureWritesRawLinesToPerProcessLogs)
+{
+#ifndef _WIN32
+    GTEST_SKIP() << "捕获落盘用例经 ResolvePythonExecutablePath 定位解释器";
+#else
+    const std::string python_path = ResolvePythonExecutablePath();
+    ASSERT_FALSE(python_path.empty())
+        << "python.exe not found on PATH (find_executable)";
+
+    const auto log_directory =
+        std::filesystem::current_path()
+        / Das::Utils::PathFromUtf8(
+            "launch_capture_logs_" + std::to_string(std::random_device{}()));
+    std::error_code remove_error;
+    std::filesystem::remove_all(log_directory, remove_error);
+    const ScopedLaunchCaptureDirectoryOverride capture_directory_override{
+        log_directory};
+
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    // exePath 用裸命令名（PATH 解析链一并验证：解析后形态驱动启动与捕获
+    // 文件名进程名）；-u 关 stdout 缓冲；stderr 经显式 \n 换行——两行都走
+    // 真实管道。
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({"exePath": "python", "args": ["-u", "-c", "print('cap-out-line'); import sys; sys.stderr.write('cap-err-line\\n')"], "captureOutput": true})json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "completed");
+
+    const std::regex file_name_pattern{
+        R"(^\d{8}-\d{6}-python-\d+-(out|err)\.log$)"};
+    std::string out_text;
+    std::string err_text;
+    for (int attempt = 0; attempt < 200
+                          && (!HasExactRawLine(out_text, "cap-out-line")
+                              || !HasExactRawLine(err_text, "cap-err-line"));
+         ++attempt)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::error_code list_error;
+        for (const auto& entry :
+             std::filesystem::directory_iterator(log_directory, list_error))
+        {
+            const auto file_name =
+                Das::Utils::PathToUtf8(entry.path().filename());
+            if (!std::regex_match(file_name, file_name_pattern))
+            {
+                continue;
+            }
+            if (file_name.ends_with("-out.log"))
+            {
+                out_text = ReadFileTextBinary(entry.path());
+            }
+            else if (file_name.ends_with("-err.log"))
+            {
+                err_text = ReadFileTextBinary(entry.path());
+            }
+        }
+    }
+
+    ASSERT_TRUE(HasExactRawLine(out_text, "cap-out-line"))
+        << "stdout capture content: '" << out_text << "'";
+    ASSERT_TRUE(HasExactRawLine(err_text, "cap-err-line"))
+        << "stderr capture content: '" << err_text << "'";
+
+    std::filesystem::remove_all(log_directory, remove_error);
+#endif
+}
+
+// 裸命令名 PATH 解析未命中：exePath 为裸名且 PATH 无此命令 → 专用错误码
+// + launch-exe-not-found 诊断（显性失败，不触碰 spawn 缝）。测试进程无
+// i18n 目录，诊断消息走组件硬编码英文 fallback（确定性）。
+TEST_F(
+    TaskComponentContractTest,
+    LaunchBareExeNameNotFoundOnPathFailsExplicitly)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    bool spawn_called = false;
+    component->SetProcessSpawnerForTest(
+        [&spawn_called](
+            const std::string&,
+            const std::vector<std::string>&,
+            const std::string&,
+            bool) -> bool
+        {
+            spawn_called = true;
+            return true;
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({"exePath": "definitely-not-exist-xyz"})json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(
+        component->Do(nullptr, nullptr, result.Put()),
+        DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND);
+
+    EXPECT_FALSE(spawn_called);
+    EXPECT_EQ(DiagnosticField(result.Get(), "code"), "launch-exe-not-found");
+    EXPECT_EQ(
+        DiagnosticField(result.Get(), "message"),
+        "The configured executable was not found on PATH.");
+}
+
+// captureOutput 默认关（缺省与显式 false 两形态）：spawner 缝收到的第 4 参
+// 均 false，且缝指向的目录零创建——关闭形态不产生任何捕获副作用。
+TEST_F(TaskComponentContractTest, LaunchCaptureDefaultsToDisabled)
+{
+    const auto log_directory = std::filesystem::current_path()
+                               / Das::Utils::PathFromUtf8(
+                                   "launch_capture_disabled_"
+                                   + std::to_string(std::random_device{}()));
+    std::error_code remove_error;
+    std::filesystem::remove_all(log_directory, remove_error);
+    const ScopedLaunchCaptureDirectoryOverride capture_directory_override{
+        log_directory};
+
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    bool spawned_capture_output = true;
+    component->SetProcessSpawnerForTest(
+        [&spawned_capture_output](
+            const std::string&,
+            const std::vector<std::string>&,
+            const std::string&,
+            bool capture_output) -> bool
+        {
+            spawned_capture_output = capture_output;
+            return true;
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({"exePath": "C:/test/app.exe"})json");
+    {
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+        ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+        EXPECT_FALSE(spawned_capture_output);
+    }
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({"exePath": "C:/test/app.exe", "captureOutput": false})json");
+    {
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+        ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+        EXPECT_FALSE(spawned_capture_output);
+    }
+
+    std::error_code probe_error;
+    EXPECT_FALSE(std::filesystem::exists(log_directory, probe_error))
+        << "capture 默认关不应创建任何日志目录或文件";
 }
 
 TEST_F(TaskComponentContractTest, BranchDoReturnsTrueAndFalseSignals)

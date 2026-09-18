@@ -70,6 +70,10 @@ namespace Das::Plugins::DasFlowControl
     inline constexpr DasResult DAS_E_FLOW_DIVIDE_BY_ZERO =
         static_cast<DasResult>(-10113);
 
+    /// 裸命令名经 PATH 解析未命中（launch-exe-not-found）。
+    inline constexpr DasResult DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND =
+        static_cast<DasResult>(-10114);
+
     // 段位与唯一性在编译期锁定：任一码漂出 -101xx 段或互相撞值即编译错。
     constexpr DasResult ALL_FLOW_ERROR_CODES[] = {
         DAS_E_FLOW_LAUNCH_EXE_PATH_MISSING,
@@ -84,7 +88,8 @@ namespace Das::Plugins::DasFlowControl
         DAS_E_FLOW_INVOKE_CHILD_CREATE_FAILED,
         DAS_E_FLOW_INVOKE_RESOLVE_FAILED,
         DAS_E_FLOW_OPERATOR_INVALID,
-        DAS_E_FLOW_DIVIDE_BY_ZERO};
+        DAS_E_FLOW_DIVIDE_BY_ZERO,
+        DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND};
 
     constexpr bool FlowErrorCodeWithinBand(DasResult error_code)
     {

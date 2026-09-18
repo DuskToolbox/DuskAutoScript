@@ -58,11 +58,13 @@ struct FlowControlWindowInfo
 };
 
 // 进程启动缝：生产实现走 boost::process v2 spawn 并立即 detach（组件 Do
-// 返回后子进程存活）；测试注入 lambda 驱动成功/失败与参数捕获，无需真进程。
+// 返回后子进程存活）；capture_output=true 时接捕获管道逐行落盘。测试注入
+// lambda 驱动成功/失败与参数捕获，无需真进程。
 using FlowControlProcessSpawner = std::function<bool(
     const std::string&              exe_path,
     const std::vector<std::string>& arguments,
-    const std::string&              working_directory)>;
+    const std::string&              working_directory,
+    bool                            capture_output)>;
 
 // 窗口枚举缝：生产实现 EnumWindows + GetClassNameW/GetWindowTextW；测试
 // 注入 lambda 驱动 0/1/N 匹配序列，无需真窗口。

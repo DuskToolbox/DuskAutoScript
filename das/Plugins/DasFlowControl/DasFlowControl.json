@@ -611,6 +611,11 @@
             "waitWindowTimeoutMs": {
               "type": "int",
               "label": { "en": "Wait Timeout (ms)", "zh-cn": "等待超时（毫秒）" }
+            },
+            "captureOutput": {
+              "type": "bool",
+              "label": { "en": "Capture Process Output", "zh-cn": "捕获进程输出" },
+              "default": false
             }
           },
           "diagnostics": []

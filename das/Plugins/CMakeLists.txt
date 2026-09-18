@@ -58,6 +58,7 @@ if(TARGET TaskSchedulerTest)
     target_sources(TaskSchedulerTest PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlTaskComponents.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlI18n.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/LaunchOutputCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlErrorLensRegistration.cpp)
     target_include_directories(TaskSchedulerTest PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src)
@@ -68,7 +69,8 @@ endif()
 if(TARGET GraphRuntimeTest)
     target_sources(GraphRuntimeTest PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlTaskComponents.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlI18n.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlI18n.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/LaunchOutputCapture.cpp)
     target_include_directories(GraphRuntimeTest PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src)
 endif()

@@ -54,7 +54,7 @@ namespace Plugins::DasFlowControl
             return nullptr;
         }
 
-        // launch 四码文案与 i18n 表 flow.diagnostic.*（en.json/zh-cn.json）
+        // launch 诊断文案与 i18n 表 flow.diagnostic.*（en.json/zh-cn.json）
         // 逐字一致：lens 说明文本与端口 diagnostic 载荷是同一文本的两个出口。
 
         RegisterOneMessage(
@@ -101,6 +101,17 @@ namespace Plugins::DasFlowControl
             "zh-cn",
             DAS_E_FLOW_LAUNCH_WINDOW_AMBIGUOUS,
             "多个窗口匹配等待配置，请收窄匹配条件。");
+
+        RegisterOneMessage(
+            lens.Get(),
+            "en",
+            DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND,
+            "The configured executable was not found on PATH.");
+        RegisterOneMessage(
+            lens.Get(),
+            "zh-cn",
+            DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND,
+            "配置的可执行文件未在 PATH 中找到。");
 
         RegisterOneMessage(
             lens.Get(),

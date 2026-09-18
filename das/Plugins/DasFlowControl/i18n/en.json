@@ -4,6 +4,7 @@
     "flow.diagnostic.launch-window-ambiguous": "Multiple windows matched the wait configuration; refine the match pattern.",
     "flow.diagnostic.launch-spawn-failed": "Failed to start the configured executable.",
     "flow.diagnostic.launch-exe-path-missing": "No executable path is configured for the launch component.",
+    "flow.diagnostic.launch-exe-not-found": "The configured executable was not found on PATH.",
     "flow.diagnostic.operator-invalid": "The configured operator is not supported by the component.",
     "flow.diagnostic.divide-by-zero": "Arithmetic component division by zero."
 }
