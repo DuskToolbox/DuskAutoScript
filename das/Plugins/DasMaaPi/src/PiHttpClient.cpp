@@ -1145,7 +1145,8 @@ namespace Das::Plugins::DasMaaPi
                 outcome.result = MapSystemError(e.code());
                 LogDiagnosticError(
                     "BeastHttpClient request failed: url="
-                    + RedactUrlForLog(url) + " error=" + e.code().message());
+                    + RedactUrlForLog(url) + " error="
+                    + Das::Utils::AcpTextToUtf8(e.code().message()));
             }
             catch (const std::exception& e)
             {
@@ -1259,7 +1260,8 @@ namespace Das::Plugins::DasMaaPi
                 outcome.result = MapSystemError(e.code());
                 LogDiagnosticError(
                     "BeastHttpClient stream request failed: url="
-                    + RedactUrlForLog(url) + " error=" + e.code().message());
+                    + RedactUrlForLog(url) + " error="
+                    + Das::Utils::AcpTextToUtf8(e.code().message()));
             }
             catch (const std::exception& e)
             {
@@ -1491,7 +1493,8 @@ namespace Das::Plugins::DasMaaPi
                 outcome.result = MapSystemError(e.code());
                 LogDiagnosticError(
                     "BeastHttpClient stream request aborted: url="
-                    + RedactUrlForLog(url) + " error=" + e.code().message());
+                    + RedactUrlForLog(url) + " error="
+                    + Das::Utils::AcpTextToUtf8(e.code().message()));
             }
             catch (...)
             {
@@ -1557,7 +1560,8 @@ namespace Das::Plugins::DasMaaPi
                 outcome.result = MapSystemError(e.code());
                 LogDiagnosticError(
                     "BeastHttpClient request aborted: url="
-                    + RedactUrlForLog(url) + " error=" + e.code().message());
+                    + RedactUrlForLog(url) + " error="
+                    + Das::Utils::AcpTextToUtf8(e.code().message()));
             }
             catch (...)
             {

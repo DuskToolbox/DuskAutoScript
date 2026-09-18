@@ -2,6 +2,7 @@
 
 #include <das/DasApi.h>
 #include <das/Utils/BoostPathBridge.h>
+#include <das/Utils/PathText.h>
 
 #include <algorithm>
 #include <array>
@@ -501,7 +502,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         }
         catch (const boost::system::system_error& error)
         {
-            return AgentProcessLaunchResult::Failure(error.what());
+            return AgentProcessLaunchResult::Failure(
+                Das::Utils::AcpTextToUtf8(error.what()));
         }
         catch (const std::exception& error)
         {

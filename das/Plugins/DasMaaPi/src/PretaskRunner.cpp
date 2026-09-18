@@ -54,7 +54,7 @@ namespace Das::Plugins::DasMaaPi
         }
         catch (const boost::system::system_error& error)
         {
-            result.failure_message = error.what();
+            result.failure_message = Das::Utils::AcpTextToUtf8(error.what());
             return result;
         }
         catch (const std::exception& error)

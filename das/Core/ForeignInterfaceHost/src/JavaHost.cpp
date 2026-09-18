@@ -259,7 +259,7 @@ JavaVM* JvmManager::CreateJVM(
         DAS_CORE_LOG_ERROR(
             "Failed to load JVM DLL: {} - {}",
             Das::Utils::PathToUtf8(jvm_dll_path),
-            e.what());
+            Das::Utils::AcpTextToUtf8(e.what()));
         return nullptr;
     }
 

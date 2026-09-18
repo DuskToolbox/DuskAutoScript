@@ -2086,7 +2086,7 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
             DAS_CORE_LOG_ERROR(
                 "InternalHost receive error: session_id={}, {}",
                 session_id,
-                e.what());
+                Das::Utils::AcpTextToUtf8(e.what()));
             co_return;
         }
         catch (const std::exception& e)
