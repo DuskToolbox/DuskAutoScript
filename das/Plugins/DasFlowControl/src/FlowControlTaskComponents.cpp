@@ -1163,15 +1163,18 @@ FlowControlSpawnResult SpawnProcessWithElevationFallback(
 #endif
         const auto reason = DAS_FMT_NS::format(
             "Process spawn failed: {} (code = {})",
-            error.what(),
+            Das::Utils::AcpTextToUtf8(error.what()),
             error.code().value());
         DAS_LOG_WARNING(reason.c_str());
         return FlowControlSpawnResult{false};
     }
     catch (const std::exception& exception)
     {
-        const auto reason =
-            DAS_FMT_NS::format("Process spawn failed: {}", exception.what());
+        // what() 可能携带 ACP 字节（FormatMessageA 的本地化消息），日志
+        // 管道按 UTF-8 消费——转码后中文段可读，ASCII 尾巴无损。
+        const auto reason = DAS_FMT_NS::format(
+            "Process spawn failed: {}",
+            Das::Utils::AcpTextToUtf8(exception.what()));
         DAS_LOG_WARNING(reason.c_str());
         return FlowControlSpawnResult{false};
     }

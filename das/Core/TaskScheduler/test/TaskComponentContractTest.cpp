@@ -1998,6 +1998,53 @@ TEST(SpawnWithElevationFallback, FailsWhenElevatedLauncherFails)
 }
 #endif // _WIN32（740 是 Win32 错误码，回退分支仅 Win32 编译）
 
+// ---- ACP→UTF-8 转码通道（spawn 失败日志中文段乱码修复）----
+
+#ifdef _WIN32
+// 机器 ACP 编不了 CJK 时往返必假阴性（936/950 是 CJK 代码页）。
+bool MachineAcpCanEncodeChinese()
+{
+    const unsigned int active_code_page = GetACP();
+    return active_code_page == 936 || active_code_page == 950;
+}
+
+// UTF-8 中文串经 path.string() 制出 CP_ACP 字节（模拟 FormatMessageA 的
+// 本地化消息源）→ AcpTextToUtf8 后应还原为原 UTF-8 串。
+TEST(AcpTextToUtf8, RoundTripsChineseTextFromAcpBytes)
+{
+    if (!MachineAcpCanEncodeChinese())
+    {
+        GTEST_SKIP() << "machine ACP cannot encode CJK; round trip is vacuous";
+    }
+    const std::string utf8_text = "启动失败：无法定位程序输入点";
+    const std::string acp_bytes = Das::Utils::PathFromUtf8(utf8_text).string();
+    EXPECT_EQ(Das::Utils::AcpTextToUtf8(acp_bytes), utf8_text);
+}
+
+// 混合串的 ASCII 尾巴（boost what() 的 [system:...] 段）转码无损。
+TEST(AcpTextToUtf8, PreservesAsciiTailInMixedText)
+{
+    if (!MachineAcpCanEncodeChinese())
+    {
+        GTEST_SKIP() << "machine ACP cannot encode CJK; round trip is vacuous";
+    }
+    const std::string utf8_text =
+        "中文段 [system:740 at D:\\source\\spawn.cpp:123]";
+    const std::string acp_bytes = Das::Utils::PathFromUtf8(utf8_text).string();
+    EXPECT_EQ(Das::Utils::AcpTextToUtf8(acp_bytes), utf8_text);
+}
+#endif // _WIN32
+
+#ifndef _WIN32
+// POSIX 窄文本本就是 UTF-8，任意字节串原样透传（Windows 构建上该用例
+// 编译为空，保双平台可编译）。
+TEST(AcpTextToUtf8, PassesThroughBytesOnPosix)
+{
+    const std::string arbitrary_bytes = "caf\xC3\xA9 \xE4\xB8\xAD";
+    EXPECT_EQ(Das::Utils::AcpTextToUtf8(arbitrary_bytes), arbitrary_bytes);
+}
+#endif
+
 // exePath 缺省/空 → 专用错误码 + launch-exe-path-missing 载荷，不触碰
 // spawn 缝。
 TEST_F(TaskComponentContractTest, LaunchDoFailsWhenExePathMissing)

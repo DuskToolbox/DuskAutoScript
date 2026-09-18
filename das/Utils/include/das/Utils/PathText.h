@@ -106,6 +106,21 @@ inline std::filesystem::path PathFromCommandLineArg(std::string_view arg_text)
     }
 }
 
+/// ACP 文本转 UTF-8 的显式通道。输入是已知的 CP_ACP 字节（如 Windows
+/// FormatMessageA 产出的本地化错误消息、异常 what() 携带的中文段）——
+/// 此处的窄构造是与 ACP 源配对的正确转换，区别于顶部声明要消灭的隐式
+/// ACP 介入；借 path 窄构造按 ACP 解入、u8string() 按 UTF-8 吐出完成转
+/// 码，ASCII 段无损。POSIX 窄文本本就是 UTF-8 的 locale 无关约定，原样
+/// 透传。
+inline std::string AcpTextToUtf8(std::string_view acp_text)
+{
+#ifdef DAS_WINDOWS
+    return PathToUtf8(std::filesystem::path{std::string{acp_text}});
+#else
+    return std::string{acp_text};
+#endif
+}
+
 DAS_UTILS_NS_END
 
 #endif // DAS_UTILS_PATHTEXT_H
