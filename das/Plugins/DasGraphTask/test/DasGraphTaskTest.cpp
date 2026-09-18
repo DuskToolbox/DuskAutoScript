@@ -20,12 +20,14 @@
 
 #include "../src/DasGraphTaskAuthoringSession.h"
 #include "../src/GraphTaskFocusLog.h"
+#include "../src/GraphTaskFocusLogComponent.h"
 
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -2853,6 +2855,335 @@ namespace
         // 崩，resolve 失败只落调试日志——Do 失败返回码不受 focus 发布影响。
         PublishGraphTaskFailedFocusEntry("test failure");
         SUCCEED();
+    }
+
+    // ---- focus-log 节点组件：级别矩阵 / 替换语义 / fail-soft / 空口跳过 ----
+
+    // jsonl 末行按 JSON 解析读 type/text 字段（type 经 LogTypeToString 序
+    // 列化为小写词；勿用裸子串断言——消息文本可能含级别词）。
+    struct FocusLogJsonlEntry
+    {
+        std::string type;
+        std::string text;
+    };
+
+    std::optional<FocusLogJsonlEntry> LastFocusLogJsonlEntry(
+        const std::string& jsonl_text)
+    {
+        std::string_view last_line;
+        std::string_view remainder = jsonl_text;
+        while (!remainder.empty())
+        {
+            const auto line_end = remainder.find('\n');
+            const auto line = line_end == std::string_view::npos
+                                  ? remainder
+                                  : remainder.substr(0, line_end);
+            if (!line.empty())
+            {
+                last_line = line;
+            }
+            remainder = line_end == std::string_view::npos
+                            ? std::string_view{}
+                            : remainder.substr(line_end + 1);
+        }
+        if (last_line.empty())
+        {
+            return std::nullopt;
+        }
+        auto       root = yyjson::read(std::string(last_line));
+        const auto root_object = root.as_object();
+        if (!root_object.has_value())
+        {
+            return std::nullopt;
+        }
+        FocusLogJsonlEntry entry;
+        if (const auto type_value =
+                (*root_object)[std::string_view("type")].as_string())
+        {
+            entry.type = std::string(*type_value);
+        }
+        if (const auto text_value =
+                (*root_object)[std::string_view("text")].as_string())
+        {
+            entry.text = std::string(*text_value);
+        }
+        return entry;
+    }
+
+    // GraphRuntime 投递同款的 {"settings": S} 包装。
+    void ApplyFocusLogSettings(
+        GraphTaskFocusLogComponent& component,
+        std::string_view            settings_json)
+    {
+        const std::string wrapper =
+            std::string(R"({"settings":)") + std::string(settings_json) + "}";
+        DasPtr<Das::ExportInterface::IDasJson> request;
+        EXPECT_EQ(
+            ParseDasJsonFromString(wrapper.c_str(), request.Put()),
+            DAS_S_OK);
+        ASSERT_NE(request.Get(), nullptr);
+        DasPtr<Das::ExportInterface::IDasJson> result;
+        EXPECT_EQ(
+            component.ApplySettingsChange(request.Get(), result.Put()),
+            DAS_S_OK);
+    }
+
+    DasPtr<Das::ExportInterface::IDasPortMap> MakeFocusLogInputMap(
+        std::string_view message_text)
+    {
+        DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+        EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+        const std::string       message_owned{message_text};
+        const DasReadOnlyString message_key{"message"};
+        const DasReadOnlyString message_value{message_owned.c_str()};
+        EXPECT_EQ(
+            input_map->SetString(message_key.Get(), message_value.Get()),
+            DAS_S_OK);
+        return input_map;
+    }
+
+    // 节点无输出端口：产出 map 必须有效且零键。
+    void ExpectEmptyPortMap(Das::ExportInterface::IDasPortMap* output_map)
+    {
+        ASSERT_NE(output_map, nullptr);
+        DasPtr<Das::ExportInterface::IDasStringVector> output_keys;
+        ASSERT_EQ(output_map->GetKeys(output_keys.Put()), DAS_S_OK);
+        uint64_t key_count = 1;
+        ASSERT_EQ(output_keys->Size(&key_count), DAS_S_OK);
+        EXPECT_EQ(key_count, 0u);
+    }
+
+    // 级别矩阵：默认（两 checkbox 均不勾）→ info。
+    TEST_F(GraphTaskFocusLogFixture, FocusLogDoRecordsInfoByDefault)
+    {
+        const auto component =
+            GraphTaskFocusLogComponent::MakeImpl(recorder_.Get());
+        ApplyFocusLogSettings(*component, R"({})");
+
+        DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+        EXPECT_EQ(
+            component->Do(
+                nullptr,
+                MakeFocusLogInputMap("plain focus message").Get(),
+                output_map.Put()),
+            DAS_S_OK);
+        ExpectEmptyPortMap(output_map.Get());
+
+        const auto entry = LastFocusLogJsonlEntry(ReadUserJsonlText());
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->type, "info");
+        EXPECT_NE(entry->text.find("plain focus message"), std::string::npos);
+    }
+
+    TEST_F(GraphTaskFocusLogFixture, FocusLogDoRecordsErrorWhenErrorChecked)
+    {
+        const auto component =
+            GraphTaskFocusLogComponent::MakeImpl(recorder_.Get());
+        ApplyFocusLogSettings(*component, R"({"error":true})");
+
+        DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+        EXPECT_EQ(
+            component->Do(
+                nullptr,
+                MakeFocusLogInputMap("error flagged entry").Get(),
+                output_map.Put()),
+            DAS_S_OK);
+
+        const auto entry = LastFocusLogJsonlEntry(ReadUserJsonlText());
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->type, "error");
+        EXPECT_NE(entry->text.find("error flagged entry"), std::string::npos);
+    }
+
+    TEST_F(GraphTaskFocusLogFixture, FocusLogDoRecordsWarningWhenWarningOnly)
+    {
+        const auto component =
+            GraphTaskFocusLogComponent::MakeImpl(recorder_.Get());
+        ApplyFocusLogSettings(*component, R"({"warning":true})");
+
+        DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+        EXPECT_EQ(
+            component->Do(
+                nullptr,
+                MakeFocusLogInputMap("warning only entry").Get(),
+                output_map.Put()),
+            DAS_S_OK);
+
+        const auto entry = LastFocusLogJsonlEntry(ReadUserJsonlText());
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->type, "warning");
+    }
+
+    // 级别矩阵：error 优先于 warning（两勾 → error）。
+    TEST_F(GraphTaskFocusLogFixture, FocusLogDoErrorTakesPrecedence)
+    {
+        const auto component =
+            GraphTaskFocusLogComponent::MakeImpl(recorder_.Get());
+        ApplyFocusLogSettings(*component, R"({"error":true,"warning":true})");
+
+        DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+        EXPECT_EQ(
+            component->Do(
+                nullptr,
+                MakeFocusLogInputMap("both flags entry").Get(),
+                output_map.Put()),
+            DAS_S_OK);
+
+        const auto entry = LastFocusLogJsonlEntry(ReadUserJsonlText());
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->type, "error");
+    }
+
+    // message 口无值流入（缺键）：跳过记录，节点仍成功。
+    TEST_F(GraphTaskFocusLogFixture, FocusLogDoSkipsRecordWhenNoValueFlowed)
+    {
+        const auto component =
+            GraphTaskFocusLogComponent::MakeImpl(recorder_.Get());
+        ApplyFocusLogSettings(*component, R"({"error":true})");
+
+        DasPtr<Das::ExportInterface::IDasPortMap> empty_input;
+        EXPECT_EQ(CreateIDasPortMap(empty_input.Put()), DAS_S_OK);
+        DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+        EXPECT_EQ(
+            component->Do(nullptr, empty_input.Get(), output_map.Put()),
+            DAS_S_OK);
+        ExpectEmptyPortMap(output_map.Get());
+
+        EXPECT_FALSE(LastFocusLogJsonlEntry(ReadUserJsonlText()).has_value());
+    }
+
+    // recorder 不可解析（单测进程无主进程具名服务）：降级路径不抛不崩，
+    // 节点仍成功。
+    TEST_F(
+        GraphTaskFocusLogFixture,
+        FocusLogDoFailsSoftWhenRecorderUnresolvable)
+    {
+        const auto component = GraphTaskFocusLogComponent::MakeImpl(nullptr);
+        ApplyFocusLogSettings(*component, R"({"error":true})");
+
+        DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+        EXPECT_EQ(
+            component->Do(
+                nullptr,
+                MakeFocusLogInputMap("degraded entry body").Get(),
+                output_map.Put()),
+            DAS_S_OK);
+        ExpectEmptyPortMap(output_map.Get());
+    }
+
+    // {"settings": S} 是节点配置全量投影：替换而非逐键合并——error 标志
+    // 随第二次整包投递消失。
+    TEST_F(GraphTaskFocusLogFixture, FocusLogApplySettingsReplaceSemantics)
+    {
+        const auto component =
+            GraphTaskFocusLogComponent::MakeImpl(recorder_.Get());
+        ApplyFocusLogSettings(*component, R"({"error":true})");
+        ApplyFocusLogSettings(*component, R"({"warning":true})");
+
+        DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+        EXPECT_EQ(
+            component->Do(
+                nullptr,
+                MakeFocusLogInputMap("replaced settings entry").Get(),
+                output_map.Put()),
+            DAS_S_OK);
+
+        const auto entry = LastFocusLogJsonlEntry(ReadUserJsonlText());
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->type, "warning");
+    }
+
+    // 真工厂按组件 GUID 分派；未知 GUID 走兜底 NOT_FOUND。
+    TEST(DasGraphTaskTest, FactoryDispatchesFocusLogComponentByGuid)
+    {
+        const auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+            new MockTaskComponentHost());
+        DasGraphTaskComponentFactory factory{host.Get()};
+
+        DasPtr<Das::PluginInterface::IDasTaskComponent> component;
+        ASSERT_EQ(
+            factory.CreateComponent(
+                GuidOfText(FOCUS_LOG_COMPONENT_GUID_TEXT),
+                component.Put()),
+            DAS_S_OK);
+        ASSERT_NE(component.Get(), nullptr);
+
+        DasGuid component_guid{};
+        ASSERT_EQ(component->GetGuid(&component_guid), DAS_S_OK);
+        EXPECT_TRUE(
+            component_guid == GuidOfText(FOCUS_LOG_COMPONENT_GUID_TEXT));
+
+        DasPtr<Das::PluginInterface::IDasTaskComponent> missing_component;
+        EXPECT_EQ(
+            factory.CreateComponent(
+                GuidOfText("00000000-0000-0000-0000-000000000000"),
+                missing_component.Put()),
+            DAS_E_NOT_FOUND);
+    }
+
+    // manifest 钉值：组件键/componentGuid == 组件头常量（三处一致），kind
+    // 与两 bool config 键（默认 false）在场。
+    TEST(DasGraphTaskTest, FocusLogManifestEntryMatchesComponentConstants)
+    {
+        const auto manifest_path =
+            std::filesystem::path(DAS_PATH_LITERAL(__FILE__))
+                .parent_path()
+                .parent_path()
+            / DAS_PATH_LITERAL("DasGraphTask.json");
+        std::ifstream manifest_file(manifest_path);
+        ASSERT_TRUE(manifest_file.is_open())
+            << Das::Utils::PathToUtf8(manifest_path);
+
+        std::ostringstream manifest_buffer;
+        manifest_buffer << manifest_file.rdbuf();
+        // 根值必须具名持有：as_object() 视图绑在文档上，read 返回的临时
+        // 值语句结尾销毁会让全部嵌套视图悬垂。
+        yyjson::value manifest_root = yyjson::read(manifest_buffer.str());
+        auto          manifest_object = manifest_root.as_object();
+        ASSERT_TRUE(manifest_object.has_value());
+
+        const auto task_components =
+            (*manifest_object)[std::string_view("taskComponents")].as_object();
+        ASSERT_TRUE(task_components.has_value());
+        const auto components =
+            (*task_components)[std::string_view("components")].as_object();
+        ASSERT_TRUE(components.has_value());
+
+        ASSERT_TRUE(components->contains(FOCUS_LOG_COMPONENT_GUID_TEXT));
+        const auto component_entry =
+            (*components)[FOCUS_LOG_COMPONENT_GUID_TEXT].as_object();
+        ASSERT_TRUE(component_entry.has_value());
+        const auto definition =
+            (*component_entry)[std::string_view("definition")].as_object();
+        ASSERT_TRUE(definition.has_value());
+
+        const auto kind = (*definition)[std::string_view("kind")].as_string();
+        ASSERT_TRUE(kind.has_value());
+        EXPECT_EQ(*kind, FOCUS_LOG_KIND);
+
+        const auto component_guid =
+            (*definition)[std::string_view("componentGuid")].as_string();
+        ASSERT_TRUE(component_guid.has_value());
+        EXPECT_EQ(*component_guid, FOCUS_LOG_COMPONENT_GUID_TEXT);
+
+        const auto config =
+            (*definition)[std::string_view("config")].as_object();
+        ASSERT_TRUE(config.has_value());
+        for (const std::string_view config_key :
+             {std::string_view("error"), std::string_view("warning")})
+        {
+            ASSERT_TRUE(config->contains(config_key));
+            const auto config_entry = (*config)[config_key].as_object();
+            ASSERT_TRUE(config_entry.has_value());
+            const auto config_type =
+                (*config_entry)[std::string_view("type")].as_string();
+            ASSERT_TRUE(config_type.has_value());
+            EXPECT_EQ(*config_type, "bool");
+            const auto config_default =
+                (*config_entry)[std::string_view("default")].as_bool();
+            ASSERT_TRUE(config_default.has_value());
+            EXPECT_FALSE(*config_default);
+        }
     }
 
 } // namespace
