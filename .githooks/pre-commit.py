@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-commit hook: 拒绝非 UTF-8 (含 BOM) 的代码文件提交 + 新增行审查报告编号检查 + C++ 命名风格检查 + 路径文本编码检查"""
+"""Pre-commit hook: 拒绝非 UTF-8 (含 BOM) 的代码文件提交 + 新增行审查报告编号检查 + C++ 命名风格检查 + 路径文本编码检查 + boost system_error 消息 ACP 转码检查"""
 
 import os
 import re
@@ -142,6 +142,16 @@ def main():
     )
     if path_text.returncode != 0:
         sys.exit(path_text.returncode)
+
+    # boost system_error 消息 ACP 转码检查（纯文本词法级，仅查暂存改动行；
+    # catch (boost::system::system_error) 块内 what()/code().message() 必须
+    # 经 AcpTextToUtf8/ToString 转码。零外部依赖，任何解释器可跑；检查器
+    # 自身异常在脚本内 fail-open 放行）。
+    acp_error = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_acp_error_message.py"), "--staged"]
+    )
+    if acp_error.returncode != 0:
+        sys.exit(acp_error.returncode)
 
     sys.exit(0)
 
