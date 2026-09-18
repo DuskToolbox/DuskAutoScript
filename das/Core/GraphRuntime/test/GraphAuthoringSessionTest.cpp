@@ -2058,6 +2058,72 @@ namespace
                 false));
     }
 
+    // The optional description declaration on a config element rides the
+    // catalog channel onto the projected field (engaged-only wire key —
+    // absent declaration never emits an empty string); a non-string
+    // description is a shape violation rejecting the whole catalog.
+    TEST(GraphAuthoringSessionTest, SetActionCatalogConfigCarriesDescription)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","label":"das.flow.launch","config":[)"
+                R"({"name":"exePath","type":"string","description":)"
+                R"("Bare command names resolve via PATH."},)"
+                R"({"name":"args","type":"array<string>"}]}])"),
+            DAS_S_OK);
+
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+
+        const auto document = DocumentOf(s.p);
+        const auto exe_field = FirstGraphNodeFieldDescriptorOf(
+            document,
+            std::string_view("exePath"),
+            std::string_view("{g1}"));
+        ASSERT_TRUE(exe_field.has_value());
+        auto exe_obj = exe_field->as_object();
+        ASSERT_TRUE(exe_obj.has_value());
+        ASSERT_TRUE(exe_obj->contains(std::string_view("description")));
+        EXPECT_EQ(
+            (*exe_obj)[std::string_view("description")].as_string().value_or(
+                ""),
+            "Bare command names resolve via PATH.");
+
+        // Undeclared description never emits the key (engaged-only).
+        const auto args_field = FirstGraphNodeFieldDescriptorOf(
+            document,
+            std::string_view("args"),
+            std::string_view("{g1}"));
+        ASSERT_TRUE(args_field.has_value());
+        auto args_obj = args_field->as_object();
+        ASSERT_TRUE(args_obj.has_value());
+        EXPECT_FALSE(args_obj->contains(std::string_view("description")));
+
+        // Non-string description rejects the whole catalog; the accepted
+        // catalog stays in place (same lockstep as taskGuid/label/required).
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
+                R"("description":7}]}])"),
+            DAS_E_INVALID_ARGUMENT);
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        const auto after_reject = DocumentOf(s.p);
+        const auto survived = FirstGraphNodeFieldDescriptorOf(
+            after_reject,
+            std::string_view("exePath"),
+            std::string_view("{g1}"));
+        ASSERT_TRUE(survived.has_value());
+        auto survived_obj = survived->as_object();
+        ASSERT_TRUE(survived_obj.has_value());
+        EXPECT_TRUE(survived_obj->contains(std::string_view("description")));
+    }
+
     // -----------------------------------------------------------------------
     // begin/end 编译约束（session graph 视图契约）：begin 恰一 / end 至多
     // 一；formSequence 视图与 Core 编译器本体不受影响（无 begin 的图文档

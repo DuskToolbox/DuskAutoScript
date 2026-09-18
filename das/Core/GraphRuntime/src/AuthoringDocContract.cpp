@@ -227,6 +227,13 @@ namespace Contract
                 // 未声明（空）回退字段名——与端口 displayLabel 的回退链同构。
                 field.label = config_field.label.empty() ? config_field.name
                                                          : config_field.label;
+                // 声明的帮助文案（同一路径的 locale 解析产物）：未声明不落
+                // 键（wire 序列化 engaged-only），已声明则作为字段下方的
+                // 帮助文本呈现。
+                if (!config_field.description.empty())
+                {
+                    field.description = config_field.description;
+                }
                 const auto [value_type, input_type] =
                     ConfigFieldInputTypes(config_field.type);
                 field.value_type = value_type;

@@ -1019,6 +1019,62 @@ namespace
         EXPECT_FALSE(inputs_field->contains(std::string_view("taskGuid")));
     }
 
+    // The declared help text (description) rides the declaration→projection→
+    // wire channel engaged-only: a config declaration carrying a description
+    // surfaces it on the projected field and the wire descriptor (the panel
+    // renders it as the field's help text); declarations without one carry
+    // no key (never an explicit null).
+    TEST(AuthoringDocContractTest, ConfigProjection_DescriptionChannel)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "launch";
+        ConfigFieldDescriptor wait_field =
+            MakeConfigField("waitWindowWindowRegex", "string");
+        wait_field.description = "Node blocks until one window matches.";
+        entry.config_fields.push_back(std::move(wait_field));
+        entry.config_fields.push_back(MakeConfigField("exePath", "string"));
+        catalog.entries.push_back(entry);
+
+        const auto  out = ToAuthoringDocument(doc, catalog);
+        const auto& fields = out.graph->nodes[0].fields;
+        ASSERT_EQ(fields.size(), 2u);
+
+        ASSERT_TRUE(fields[0].description.has_value());
+        EXPECT_EQ(
+            *fields[0].description,
+            "Node blocks until one window matches.");
+        EXPECT_FALSE(fields[1].description.has_value());
+
+        const auto wire = SerializeDocument(doc, catalog);
+        auto       wire_obj = wire.as_object();
+        ASSERT_TRUE(wire_obj.has_value());
+        auto graph = (*wire_obj)[std::string_view("graph")].as_object();
+        ASSERT_TRUE(graph.has_value());
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        ASSERT_TRUE(nodes.has_value());
+        auto node_obj = (*nodes)[0].as_object();
+        ASSERT_TRUE(node_obj.has_value());
+        auto wire_fields = (*node_obj)[std::string_view("fields")].as_array();
+        ASSERT_TRUE(wire_fields.has_value());
+        ASSERT_EQ(wire_fields->size(), 2u);
+
+        auto wait_obj = (*wire_fields)[0].as_object();
+        ASSERT_TRUE(wait_obj.has_value());
+        ASSERT_TRUE(wait_obj->contains(std::string_view("description")));
+        EXPECT_EQ(
+            (*wait_obj)[std::string_view("description")].as_string().value_or(
+                ""),
+            "Node blocks until one window matches.");
+        auto exe_obj = (*wire_fields)[1].as_object();
+        ASSERT_TRUE(exe_obj.has_value());
+        EXPECT_FALSE(exe_obj->contains(std::string_view("description")));
+    }
+
     // The closed candidate-list declaration (options) rides the declaration→
     // projection→wire channel: a config field carrying an options array
     // projects as a select field (inputType=1) whose candidates are strict

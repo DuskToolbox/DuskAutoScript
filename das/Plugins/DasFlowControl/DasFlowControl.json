@@ -602,19 +602,35 @@
             },
             "waitWindowClassRegex": {
               "type": "string",
-              "label": { "en": "Window Class Regex", "zh-cn": "窗口类名正则" }
+              "label": { "en": "Wait Window: Class Regex", "zh-cn": "等待窗口：类名正则" },
+              "description": {
+                "en": "When set, the node blocks after spawning: it keeps polling until exactly one window whose class name matches this regex appears, and only then finishes. Combine with the title regex to require both; leave both regexes empty to skip waiting (spawn success finishes the node). More than one matching window fails the node.",
+                "zh-cn": "填写后，节点在启动进程后会阻塞等待：持续轮询系统窗口，直到恰好出现一个类名匹配此正则的窗口才继续执行。可与标题正则同时填写，两者须同时满足；两个正则都留空则不等待，启动成功即完成。匹配到多个窗口会判定节点失败。"
+              }
             },
             "waitWindowWindowRegex": {
               "type": "string",
-              "label": { "en": "Window Title Regex", "zh-cn": "窗口标题正则" }
+              "label": { "en": "Wait Window: Title Regex", "zh-cn": "等待窗口：标题正则" },
+              "description": {
+                "en": "When set, the node blocks after spawning: it keeps polling until exactly one window whose title matches this regex appears, and only then finishes. Combine with the class regex to require both; leave both regexes empty to skip waiting. More than one matching window fails the node.",
+                "zh-cn": "填写后，节点在启动进程后会阻塞等待：持续轮询系统窗口，直到恰好出现一个标题匹配此正则的窗口才继续执行。可与类名正则同时填写，两者须同时满足；两个正则都留空则不等待，启动成功即完成。匹配到多个窗口会判定节点失败。"
+              }
             },
             "waitWindowTimeoutMs": {
               "type": "int",
-              "label": { "en": "Wait Timeout (ms)", "zh-cn": "等待超时（毫秒）" }
+              "label": { "en": "Wait Window Timeout (ms)", "zh-cn": "等待窗口超时（毫秒）" },
+              "description": {
+                "en": "Maximum time to wait for the target window before the node fails. Only effective when either wait regex is set; default 30000 ms when omitted, capped at 120000 ms.",
+                "zh-cn": "等待目标窗口出现的最长时长，超时则节点判定失败。仅在填写了任一等待正则时生效；留空默认 30000 毫秒，上限 120000 毫秒。"
+              }
             },
             "captureOutput": {
               "type": "bool",
               "label": { "en": "Capture Process Output", "zh-cn": "捕获进程输出" },
+              "description": {
+                "en": "Capture the child process stdout/stderr for failure diagnostics. Does not affect waiting.",
+                "zh-cn": "捕获子进程的标准输出/标准错误，供失败诊断使用。不影响节点是否等待。"
+              },
               "default": false
             }
           },

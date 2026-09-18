@@ -595,8 +595,8 @@ namespace Das::Core::TaskScheduler
 
     // Config field declarations of one component, read from the manifest
     // definition's `config` object
-    // ({field_name: {type, label?, default?, taskGuid?, required?,
-    // options?}}). Emitted
+    // ({field_name: {type, label?, description?, default?, taskGuid?,
+    // required?, options?}}). Emitted
     // in lexical key order for determinism; entries without a usable non-empty
     // type string are skipped (the same skip-not-poison rule as the port
     // lists — the Core consumer rejects the whole catalog on a malformed
@@ -608,7 +608,10 @@ namespace Das::Core::TaskScheduler
     // key absent so the element stays four-key) into the resolved display
     // string the Core projection uses as the field label (falling back to
     // the field name there) — label is pure display data, so a malformed
-    // map never skips the field.
+    // map never skips the field. The optional multi-locale `description`
+    // map resolves the same way into the field help text (engaged-only;
+    // where the label says what the field is, the description is where the
+    // manifest documents what configuring it does).
     static void AppendConfigFromDefinition(
         const yyjson::value&       definition,
         std::string_view           locale,
@@ -657,6 +660,18 @@ namespace Das::Core::TaskScheduler
                     resolved_label = *resolved;
                 }
             }
+            std::string_view resolved_description;
+            if (field_obj->contains(std::string_view("description")))
+            {
+                // description 与 label 同一多语言解析/miss 容忍语义。
+                auto resolved = ResolveLocalizedLabel(
+                    (*field_obj)[std::string_view("description")],
+                    locale);
+                if (resolved.has_value())
+                {
+                    resolved_description = *resolved;
+                }
+            }
             auto config_field = Das::Utils::MakeYyjsonObject();
             auto obj = config_field.as_object();
             (*obj)[std::string_view("name")] =
@@ -667,6 +682,11 @@ namespace Das::Core::TaskScheduler
             {
                 (*obj)[std::string_view("label")] =
                     std::make_pair(resolved_label, yyjson::copy_string);
+            }
+            if (!resolved_description.empty())
+            {
+                (*obj)[std::string_view("description")] =
+                    std::make_pair(resolved_description, yyjson::copy_string);
             }
             if (field_obj->contains(std::string_view("default"))
                 && !(*field_obj)[std::string_view("default")].is_null())
@@ -843,10 +863,10 @@ namespace Das::Core::TaskScheduler
                 (*obj)[std::string_view("ports")] = std::move(ports);
             }
             // Config field declarations:
-            // {name,type,default?,taskGuid?,label?,required?,options?}
-            // in lexical key order — the Core consumer locks the element shape
-            // to exactly these keys; label is the locale-resolved display
-            // string (engaged-only).
+            // {name,type,default?,taskGuid?,label?,description?,required?,
+            // options?} in lexical key order — the Core consumer locks the
+            // element shape to exactly these keys; label/description are the
+            // locale-resolved display string and help text (engaged-only).
             auto config = Das::Utils::MakeYyjsonArray();
             auto config_arr = config.as_array();
             AppendConfigFromDefinition(

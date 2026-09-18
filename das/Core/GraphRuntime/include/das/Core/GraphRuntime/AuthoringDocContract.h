@@ -200,6 +200,9 @@ namespace Contract
     /// object/array<...>/taskRepositoryRef); `label` is the producer-resolved
     /// display label (locale-resolved from the manifest's multi-locale label
     /// map; empty = none declared, the projection then uses the field name);
+    /// `description` is the producer-resolved help text (locale-resolved from
+    /// the manifest's multi-locale description map the same way; empty = none
+    /// declared, the projection then omits the wire key);
     /// `default_value` is the declared default (null = none declared);
     /// `task_guid` is the optional declared target task type for
     /// component-domain fields (e.g. a taskRepositoryRef pointing at one task
@@ -222,6 +225,7 @@ namespace Contract
         std::string                name;
         std::string                type;
         std::string                label;
+        std::string                description;
         yyjson::value              default_value;
         std::optional<std::string> task_guid;
         bool                       required = false;

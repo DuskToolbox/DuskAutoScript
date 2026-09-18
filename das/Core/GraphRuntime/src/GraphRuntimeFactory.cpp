@@ -2078,6 +2078,7 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                             && key != std::string_view("default")
                             && key != std::string_view("taskGuid")
                             && key != std::string_view("label")
+                            && key != std::string_view("description")
                             && key != std::string_view("required")
                             && key != std::string_view("options"))
                         {
@@ -2144,6 +2145,24 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                         if (!label->empty())
                         {
                             field.label = *label;
+                        }
+                    }
+                    // Optional producer-resolved help text of the field:
+                    // same shape rules as label (a non-string value is a
+                    // shape violation; empty or absent reads as "none
+                    // declared" — the projection then omits the wire key).
+                    if (config_obj->contains(std::string_view("description")))
+                    {
+                        auto description =
+                            (*config_obj)[std::string_view("description")]
+                                .as_string();
+                        if (!description)
+                        {
+                            return DAS_E_INVALID_ARGUMENT;
+                        }
+                        if (!description->empty())
+                        {
+                            field.description = *description;
                         }
                     }
                     // Optional required declaration: a non-bool value is a

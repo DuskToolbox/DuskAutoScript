@@ -6295,6 +6295,66 @@ TEST_F(
         return {};
     };
 
+    // 节点 fields[] 中按 name 取字段的 description（engaged-only：未声明
+    // 的字段无该键，返回空串）。
+    const auto field_description_of =
+        [](const yyjson::value& document_value,
+           std::string_view     field_name) -> std::string
+    {
+        auto document = document_value.as_object();
+        if (!document.has_value()
+            || !document->contains(std::string_view("graph")))
+        {
+            return {};
+        }
+        auto graph = (*document)[std::string_view("graph")].as_object();
+        if (!graph.has_value() || !graph->contains(std::string_view("nodes")))
+        {
+            return {};
+        }
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        if (!nodes.has_value())
+        {
+            return {};
+        }
+        for (const auto& node : *nodes)
+        {
+            auto node_obj = node.as_object();
+            if (!node_obj || !node_obj->contains(std::string_view("fields")))
+            {
+                continue;
+            }
+            auto fields = (*node_obj)[std::string_view("fields")].as_array();
+            if (!fields.has_value())
+            {
+                continue;
+            }
+            for (const auto& field : *fields)
+            {
+                auto field_object = field.as_object();
+                if (!field_object)
+                {
+                    continue;
+                }
+                auto name =
+                    (*field_object)[std::string_view("name")].as_string();
+                if (name && *name == field_name)
+                {
+                    if (!field_object->contains(
+                            std::string_view("description")))
+                    {
+                        return {};
+                    }
+                    return std::string(
+                        (*field_object)[std::string_view("description")]
+                            .as_string()
+                            .value_or(""));
+                }
+            }
+        }
+        return {};
+    };
+
     // 默认 locale=en：真实 manifest 的 en 值经调度器→context→插件会话→
     // Core 字段投影全链可见。
     {
@@ -6306,13 +6366,21 @@ TEST_F(
             "Working Directory");
         EXPECT_EQ(
             field_label_of(document, "waitWindowClassRegex"),
-            "Window Class Regex");
+            "Wait Window: Class Regex");
         EXPECT_EQ(
             field_label_of(document, "waitWindowWindowRegex"),
-            "Window Title Regex");
+            "Wait Window: Title Regex");
         EXPECT_EQ(
             field_label_of(document, "waitWindowTimeoutMs"),
-            "Wait Timeout (ms)");
+            "Wait Window Timeout (ms)");
+        // description 同链可见（engaged-only；未声明 exePath 无该键）。
+        EXPECT_EQ(field_description_of(document, "exePath"), "");
+        EXPECT_TRUE(field_description_of(document, "waitWindowClassRegex")
+                        .starts_with("When set, the node blocks"));
+        EXPECT_TRUE(field_description_of(document, "waitWindowWindowRegex")
+                        .starts_with("When set, the node blocks"));
+        EXPECT_TRUE(field_description_of(document, "waitWindowTimeoutMs")
+                        .starts_with("Maximum time to wait"));
     }
 
     // zh-cn：真实 manifest 的中文值（模拟重启后 locale 的 catalog 重建）。
@@ -6324,13 +6392,20 @@ TEST_F(
         EXPECT_EQ(field_label_of(document, "workingDirectory"), "工作目录");
         EXPECT_EQ(
             field_label_of(document, "waitWindowClassRegex"),
-            "窗口类名正则");
+            "等待窗口：类名正则");
         EXPECT_EQ(
             field_label_of(document, "waitWindowWindowRegex"),
-            "窗口标题正则");
+            "等待窗口：标题正则");
         EXPECT_EQ(
             field_label_of(document, "waitWindowTimeoutMs"),
-            "等待超时（毫秒）");
+            "等待窗口超时（毫秒）");
+        EXPECT_EQ(field_description_of(document, "exePath"), "");
+        EXPECT_TRUE(field_description_of(document, "waitWindowClassRegex")
+                        .starts_with("填写后，节点在启动进程后会阻塞等待"));
+        EXPECT_TRUE(field_description_of(document, "waitWindowWindowRegex")
+                        .starts_with("填写后，节点在启动进程后会阻塞等待"));
+        EXPECT_TRUE(field_description_of(document, "waitWindowTimeoutMs")
+                        .starts_with("等待目标窗口出现的最长时长"));
     }
 }
 
