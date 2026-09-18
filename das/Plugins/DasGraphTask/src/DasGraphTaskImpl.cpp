@@ -266,6 +266,10 @@ namespace Das::Plugins::DasGraphTask
                 last_error_ = "Graph execution failed";
             }
             DAS_LOG_ERROR(last_error_.c_str());
+            // 失败事件此前只进 spdlog 调试文件、focus 面板空白——补发一条
+            // 可读失败条目到 user.jsonl（发布失败只落调试日志，绝不影响
+            // 任务返回码）。
+            PublishGraphTaskFailedFocusEntry(last_error_);
             return hr;
         }
 

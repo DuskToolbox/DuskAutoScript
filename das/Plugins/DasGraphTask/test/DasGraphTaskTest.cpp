@@ -2681,14 +2681,15 @@ namespace
                     directory / DAS_PATH_LITERAL("en.json"),
                     std::ios::binary);
                 file << "{\"graphTask.finished\": \"Graph task finished: "
-                        "end value = {0}\"}";
+                        "end value = {0}\", \"graphTask.failed\": \"Graph "
+                        "task failed: {0}\"}";
             }
             {
                 std::ofstream file(
                     directory / DAS_PATH_LITERAL("zh-CN.json"),
                     std::ios::binary);
                 file << "{\"graphTask.finished\": \"图任务完成：结束值 = "
-                        "{0}\"}";
+                        "{0}\", \"graphTask.failed\": \"图任务失败：{0}\"}";
             }
             return directory;
         }
@@ -2779,6 +2780,78 @@ namespace
         // 生产入口在无 recorder 服务/无 i18n 表的环境（单测进程）不抛不
         // 崩，resolve 失败只落调试日志——Do 返回码不受 focus 发布影响。
         PublishGraphTaskFinishedFocusEntry(0);
+        SUCCEED();
+    }
+
+    // ---- 失败事件 focus 记录（镜像 Finished 形态，ERROR 条目）----
+
+    TEST_F(GraphTaskFocusLogFixture, RecordsFailedEntryWithEnglishTemplate)
+    {
+        SetDefaultLocale("en");
+        const std::filesystem::path i18n_directory = WriteI18nFixture();
+
+        EXPECT_EQ(
+            RecordGraphTaskFailedFocusEntry(
+                recorder_.Get(),
+                i18n_directory,
+                "spawn failed hr=-10115"),
+            DAS_S_OK);
+
+        const std::string jsonl_text = ReadUserJsonlText();
+        EXPECT_NE(
+            jsonl_text.find("Graph task failed: spawn failed hr=-10115"),
+            std::string::npos);
+        // jsonl type 字段经 LogTypeToString 序列化为小写字符串（yyjson
+        // 紧凑序列化）。
+        EXPECT_NE(jsonl_text.find("\"type\":\"error\""), std::string::npos)
+            << jsonl_text;
+    }
+
+    TEST_F(GraphTaskFocusLogFixture, RecordsFailedEntryWithZhCnTemplate)
+    {
+        SetDefaultLocale("zh-CN");
+        const std::filesystem::path i18n_directory = WriteI18nFixture();
+
+        EXPECT_EQ(
+            RecordGraphTaskFailedFocusEntry(
+                recorder_.Get(),
+                i18n_directory,
+                "图执行失败（节点 n_1）"),
+            DAS_S_OK);
+
+        const std::string jsonl_text = ReadUserJsonlText();
+        EXPECT_NE(jsonl_text.find("图任务失败："), std::string::npos);
+        EXPECT_NE(jsonl_text.find("图执行失败（节点 n_1）"), std::string::npos);
+    }
+
+    TEST_F(
+        GraphTaskFocusLogFixture,
+        RecordsFailedEntryFallsBackToLiteralTemplate)
+    {
+        SetDefaultLocale("en");
+        const std::filesystem::path missing_directory =
+            std::filesystem::current_path()
+            / DAS_PATH_LITERAL("graphtask-focus-i18n-absent");
+
+        EXPECT_EQ(
+            RecordGraphTaskFailedFocusEntry(
+                recorder_.Get(),
+                missing_directory,
+                "boom"),
+            DAS_S_OK);
+
+        // 表缺失回落 en 字面模板（base locale 语义），失败消息原样渲染。
+        const std::string jsonl_text = ReadUserJsonlText();
+        EXPECT_NE(
+            jsonl_text.find("Graph task failed: boom"),
+            std::string::npos);
+    }
+
+    TEST(GraphTaskFocusLogPublish, PublishFailedNeverFailsTheTaskPath)
+    {
+        // 与 Finished 版同范式：单测进程无 recorder 服务环境，调用不抛不
+        // 崩，resolve 失败只落调试日志——Do 失败返回码不受 focus 发布影响。
+        PublishGraphTaskFailedFocusEntry("test failure");
         SUCCEED();
     }
 

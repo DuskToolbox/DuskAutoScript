@@ -22,6 +22,11 @@ namespace Das::Plugins::DasGraphTask
         constexpr std::string_view FINISHED_TEXT_FALLBACK =
             "Graph task finished: end value = {0}";
 
+        constexpr std::string_view FAILED_I18N_KEY = "graphTask.failed";
+
+        constexpr std::string_view FAILED_TEXT_FALLBACK =
+            "Graph task failed: {0}";
+
         // DLL 自定位（DasMaaPi PluginUtils 同款）：this_line_location 返回
         // 本代码所在模块路径，i18n 表随插件部署在 DLL 目录 i18n/ 下。
         std::optional<std::filesystem::path> PluginModuleI18nDirectory()
@@ -39,10 +44,12 @@ namespace Das::Plugins::DasGraphTask
             }
         }
 
-        // i18n 目录 → 完成文案模板（Translate 读 GlobalLocale）；目录缺失/
+        // i18n 目录 → 文案模板（Translate 读 GlobalLocale）；目录缺失/
         // 工厂失败/key miss 全部回落 en 字面模板。
-        std::string ResolveFinishedTextTemplate(
-            const std::filesystem::path& i18n_directory)
+        std::string ResolveTextTemplate(
+            const std::filesystem::path& i18n_directory,
+            std::string_view             i18n_key,
+            std::string_view             fallback_template)
         {
             const std::string directory_utf8 =
                 Das::Utils::PathToUtf8(i18n_directory);
@@ -60,10 +67,11 @@ namespace Das::Plugins::DasGraphTask
                             i18n.Put()))
                         && i18n)
                     {
+                        const std::string          key_text{i18n_key};
                         DasPtr<IDasReadOnlyString> key_string;
                         DasPtr<IDasReadOnlyString> translated;
                         if (DAS::IsOk(CreateIDasReadOnlyStringFromUtf8(
-                                FINISHED_I18N_KEY.data(),
+                                key_text.c_str(),
                                 key_string.Put()))
                             && DAS::IsOk(i18n->Translate(
                                 key_string.Get(),
@@ -80,7 +88,45 @@ namespace Das::Plugins::DasGraphTask
                     }
                 }
             }
-            return std::string(FINISHED_TEXT_FALLBACK);
+            return std::string(fallback_template);
+        }
+
+        // 共用核心：渲染完成的文本 → log entry 构造（SetType + AddText）→
+        // Record。完成/失败两个公开 Record 入口仅差模板键与条目类型。
+        DasResult RecordRenderedFocusEntry(
+            Das::ExportInterface::IDasProcessLogRecorder* recorder,
+            Das::ExportInterface::DasLogType              entry_type,
+            const std::string&                            entry_text)
+        {
+            if (recorder == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            DasPtr<Das::ExportInterface::IDasLogEntry> entry;
+            DasResult hr = CreateIDasLogEntry(entry.Put());
+            if (DAS::IsFailed(hr) || !entry)
+            {
+                return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
+            }
+            hr = entry->SetType(entry_type);
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            DasPtr<IDasReadOnlyString> entry_text_string;
+            hr = CreateIDasReadOnlyStringFromUtf8(
+                entry_text.c_str(),
+                entry_text_string.Put());
+            if (DAS::IsFailed(hr) || !entry_text_string)
+            {
+                return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
+            }
+            hr = entry->AddText(entry_text_string.Get());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            return recorder->Record(entry.Get());
         }
     } // namespace
 
@@ -93,8 +139,10 @@ namespace Das::Plugins::DasGraphTask
         {
             return DAS_E_INVALID_POINTER;
         }
-        const std::string template_text =
-            ResolveFinishedTextTemplate(i18n_directory);
+        const std::string template_text = ResolveTextTemplate(
+            i18n_directory,
+            FINISHED_I18N_KEY,
+            FINISHED_TEXT_FALLBACK);
         std::string entry_text = template_text;
         try
         {
@@ -108,31 +156,43 @@ namespace Das::Plugins::DasGraphTask
         {
             // 模板占位符异常（缺参/错序）按字面输出，不阻断记录。
         }
-        DasPtr<Das::ExportInterface::IDasLogEntry> entry;
-        DasResult hr = CreateIDasLogEntry(entry.Put());
-        if (DAS::IsFailed(hr) || !entry)
+        return RecordRenderedFocusEntry(
+            recorder,
+            ExportInterface::DAS_LOG_TYPE_SUCCESS,
+            entry_text);
+    }
+
+    DasResult RecordGraphTaskFailedFocusEntry(
+        Das::ExportInterface::IDasProcessLogRecorder* recorder,
+        const std::filesystem::path&                  i18n_directory,
+        std::string_view                              failure_message)
+    {
+        if (recorder == nullptr)
         {
-            return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
+            return DAS_E_INVALID_POINTER;
         }
-        hr = entry->SetType(ExportInterface::DAS_LOG_TYPE_SUCCESS);
-        if (DAS::IsFailed(hr))
+        const std::string template_text = ResolveTextTemplate(
+            i18n_directory,
+            FAILED_I18N_KEY,
+            FAILED_TEXT_FALLBACK);
+        std::string entry_text = template_text;
+        try
         {
-            return hr;
+            // string_view 无生命周期保证，先物化具名局部再入
+            // make_format_args（具名形参防悬垂纪律）。
+            const std::string message_text{failure_message};
+            entry_text = DAS_FMT_NS::vformat(
+                template_text,
+                DAS_FMT_NS::make_format_args(message_text));
         }
-        DasPtr<IDasReadOnlyString> entry_text_string;
-        hr = CreateIDasReadOnlyStringFromUtf8(
-            entry_text.c_str(),
-            entry_text_string.Put());
-        if (DAS::IsFailed(hr) || !entry_text_string)
+        catch (...)
         {
-            return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
+            // 模板占位符异常（缺参/错序）按字面输出，不阻断记录。
         }
-        hr = entry->AddText(entry_text_string.Get());
-        if (DAS::IsFailed(hr))
-        {
-            return hr;
-        }
-        return recorder->Record(entry.Get());
+        return RecordRenderedFocusEntry(
+            recorder,
+            ExportInterface::DAS_LOG_TYPE_ERROR,
+            entry_text);
     }
 
     void PublishGraphTaskFinishedFocusEntry(std::int64_t end_value)
@@ -177,6 +237,51 @@ namespace Das::Plugins::DasGraphTask
                     "(record_rc={}, end value={})",
                     static_cast<std::int64_t>(record_rc),
                     end_value)
+                    .c_str());
+        }
+    }
+
+    void PublishGraphTaskFailedFocusEntry(std::string_view failure_message)
+    {
+        // 主进程具名服务（IPC 模式经 proxy 回主进程写 user.jsonl）；resolve
+        // 失败即落调试日志（含失败消息），不降级、无本地工厂——focus 面板
+        // 看不到失败事件时按此定位，任务返回码不受影响。
+        DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
+        {
+            DasPtr<IDasBase> resolved_base;
+            const DasResult  resolve_rc = DasQueryMainProcessInterfaceByName(
+                "das.focus-log-recorder",
+                resolved_base.Put());
+            if (DAS::IsOk(resolve_rc) && resolved_base)
+            {
+                (void)resolved_base.As(recorder.Put());
+            }
+            else
+            {
+                DAS_LOG_ERROR(
+                    DAS_FMT_NS::format(
+                        "GraphTask focus recorder resolve failed "
+                        "(resolve_rc={}); "
+                        "failed entry not published (failure message={})",
+                        static_cast<std::int64_t>(resolve_rc),
+                        failure_message)
+                        .c_str());
+                return;
+            }
+        }
+        const std::optional<std::filesystem::path> i18n_directory =
+            PluginModuleI18nDirectory();
+        const DasResult record_rc = RecordGraphTaskFailedFocusEntry(
+            recorder.Get(),
+            i18n_directory.value_or(std::filesystem::path{}),
+            failure_message);
+        if (DAS::IsFailed(record_rc))
+        {
+            DAS_LOG_ERROR(
+                DAS_FMT_NS::format(
+                    "GraphTask failed focus entry not recorded "
+                    "(record_rc={})",
+                    static_cast<std::int64_t>(record_rc))
                     .c_str());
         }
     }

@@ -1,3 +1,4 @@
 {
-    "graphTask.finished": "图任务完成：结束值 = {0}"
+    "graphTask.finished": "图任务完成：结束值 = {0}",
+    "graphTask.failed": "图任务失败：{0}"
 }

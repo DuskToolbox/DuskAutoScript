@@ -1,3 +1,4 @@
 {
-    "graphTask.finished": "Graph task finished: end value = {0}"
+    "graphTask.finished": "Graph task finished: end value = {0}",
+    "graphTask.failed": "Graph task failed: {0}"
 }
