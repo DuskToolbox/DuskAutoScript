@@ -74,6 +74,10 @@ namespace Das::Plugins::DasFlowControl
     inline constexpr DasResult DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND =
         static_cast<DasResult>(-10114);
 
+    /// 启动提权请求被用户拒绝（launch-elevation-declined）。
+    inline constexpr DasResult DAS_E_FLOW_LAUNCH_ELEVATION_DECLINED =
+        static_cast<DasResult>(-10115);
+
     // 段位与唯一性在编译期锁定：任一码漂出 -101xx 段或互相撞值即编译错。
     constexpr DasResult ALL_FLOW_ERROR_CODES[] = {
         DAS_E_FLOW_LAUNCH_EXE_PATH_MISSING,
@@ -89,7 +93,8 @@ namespace Das::Plugins::DasFlowControl
         DAS_E_FLOW_INVOKE_RESOLVE_FAILED,
         DAS_E_FLOW_OPERATOR_INVALID,
         DAS_E_FLOW_DIVIDE_BY_ZERO,
-        DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND};
+        DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND,
+        DAS_E_FLOW_LAUNCH_ELEVATION_DECLINED};
 
     constexpr bool FlowErrorCodeWithinBand(DasResult error_code)
     {

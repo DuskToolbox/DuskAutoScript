@@ -146,8 +146,16 @@ if(WIN32)
     target_link_libraries(DasAdbCapture PRIVATE Ws2_32 bcrypt)
     target_link_libraries(DasAdbTouch PRIVATE Ws2_32)
     target_link_libraries(DasWindowsCapture PRIVATE Ws2_32)
-    # launch 组件的 boost::process v2 spawn 经 asio io_context 拉 WSAStartup
-    target_link_libraries(DasFlowControl PRIVATE Ws2_32)
+    # launch 组件的 boost::process v2 spawn 经 asio io_context 拉 WSAStartup；
+    # 提权回退走 ShellExecuteExW（shell32）。静态编入该 cpp 的测试 exe 同样
+    # 需要显式链接（不赌 MinGW 默认 spec）。
+    target_link_libraries(DasFlowControl PRIVATE Ws2_32 shell32)
+    if(TARGET TaskSchedulerTest)
+        target_link_libraries(TaskSchedulerTest PRIVATE shell32)
+    endif()
+    if(TARGET GraphRuntimeTest)
+        target_link_libraries(GraphRuntimeTest PRIVATE shell32)
+    endif()
     
     # WinRT / C++/WinRT headers for DasWindowsCapture (MinGW only, MSVC has built-in SDK support)
     if(MINGW)

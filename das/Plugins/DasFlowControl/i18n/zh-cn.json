@@ -5,6 +5,7 @@
     "flow.diagnostic.launch-spawn-failed": "启动配置的可执行文件失败。",
     "flow.diagnostic.launch-exe-path-missing": "启动组件未配置可执行文件路径。",
     "flow.diagnostic.launch-exe-not-found": "配置的可执行文件未在 PATH 中找到。",
+    "flow.diagnostic.launch-elevation-declined": "启动可执行文件的提权请求被拒绝。",
     "flow.diagnostic.operator-invalid": "组件配置的运算符不受支持。",
     "flow.diagnostic.divide-by-zero": "算术组件除数为零。"
 }

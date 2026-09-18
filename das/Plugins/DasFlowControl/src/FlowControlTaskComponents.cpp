@@ -40,6 +40,8 @@ DAS_DISABLE_WARNING_END
 
 #ifdef _WIN32
 #include <windows.h>
+// shellapi.h 依赖 windows.h 的基础类型（HWND/DWORD），顺序不可颠倒。
+#include <shellapi.h>
 #endif
 
 #include <algorithm>
@@ -83,6 +85,20 @@ namespace
     {
         static RepositoryEntryResolver resolver;
         return resolver;
+    }
+
+    // 提权回退启动缝槽（测试可注入；空 = 生产实现）。互斥保护：注入与 Do
+    // 可能来自不同线程（照 RepositoryResolver 槽范式）。
+    std::mutex& ElevatedLauncherMutex()
+    {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    FlowControlElevatedLauncher& ElevatedLauncherSlot()
+    {
+        static FlowControlElevatedLauncher launcher;
+        return launcher;
     }
 
     // 主进程调度服务的具名注册名（DasHttp 按 das.focus / das.locale 同
@@ -652,6 +668,11 @@ namespace
         {
             return "Failed to start the configured executable.";
         }
+        if (diagnostic_code == "launch-elevation-declined")
+        {
+            return "The elevation request to start the executable was "
+                   "declined.";
+        }
         if (diagnostic_code == "launch-exe-path-missing")
         {
             return "No executable path is configured for the launch "
@@ -818,122 +839,245 @@ namespace
         }
     }
 
-    // 生产进程启动缝：boost::process v2 spawn，成功后立即 detach——
+    // 主启动尝试体：boost::process v2 spawn，成功后立即 detach——
     // basic_process 析构 terminate_if_running，不 detach 则组件 Do 返回即
     // 杀子进程。capture_output=false 三路 stdio 丢弃（启动器不消费子进程
     // 输出）；true 时捕获会话接管道逐行落盘（会话生命周期自持，host 退出
-    // 绝不连带杀被启动进程）。
+    // 绝不连带杀被启动进程）。失败抛异常，异常分类（是否 740 提权域）由
+    // 编排函数 SpawnProcessWithElevationFallback 决定。
+    std::uint32_t PrimarySpawnAttempt(
+        const std::string&              exe_path,
+        const std::vector<std::string>& arguments,
+        const std::string&              working_directory,
+        bool                            capture_output)
+    {
+        std::shared_ptr<LaunchOutputCaptureSession> capture_session;
+        if (capture_output)
+        {
+            capture_session = CreateLaunchOutputCaptureSession(
+                ResolveLaunchCaptureLogDirectory(),
+                LaunchCaptureProcessStem(exe_path));
+            // nullptr = 工厂已告警；降级丢弃形态照常启动。
+        }
+
+        // bp2 的 exe 与 start_dir 形参是 boost path：窄串经 ACP 构造会双损
+        // （中文路径下启动错位），全程保 path 进出；arguments 形参是窄
+        // UTF-8 通道，保持直传。
+        boost::asio::io_context io_context;
+        if (working_directory.empty())
+        {
+            boost::process::v2::process child(
+                io_context,
+                Das::Utils::ToBoostPath(Das::Utils::PathFromUtf8(exe_path)),
+                arguments,
+                capture_session
+                    ? boost::process::v2::process_stdio{
+                          nullptr,
+                          capture_session->StdoutPipe(),
+                          capture_session->StderrPipe()}
+                    // bp2 语义：stdin 位 {}（默认构造）= 继承父进程句柄，
+                    // 无控制台宿主（GUI 子系统进程）的 GetStdHandle 返回
+                    // NULL → CreateProcessW 失败；nullptr = 重定向到 NUL
+                    // 设备，任意宿主形态可启动。
+                    : boost::process::v2::process_stdio{
+                          nullptr,
+                          nullptr,
+                          nullptr}
+#ifdef _WIN32
+                // 控制台子进程不闪窗，GUI 子进程无影响。
+                ,
+                boost::process::v2::windows::process_creation_flags<
+                    CREATE_NO_WINDOW>{}
+#endif
+            );
+            const auto child_process_id =
+                static_cast<std::uint32_t>(child.id());
+            (void)child.detach();
+            if (capture_session)
+            {
+                capture_session->Start(child_process_id);
+            }
+            return child_process_id;
+        }
+        boost::process::v2::process child(
+            io_context,
+            Das::Utils::ToBoostPath(Das::Utils::PathFromUtf8(exe_path)),
+            arguments,
+            boost::process::v2::process_start_dir(
+                Das::Utils::ToBoostPath(
+                    Das::Utils::PathFromUtf8(working_directory))),
+            capture_session
+                ? boost::process::v2::process_stdio{
+                      nullptr,
+                      capture_session->StdoutPipe(),
+                      capture_session->StderrPipe()}
+                : boost::process::v2::process_stdio{
+                      nullptr,
+                      nullptr,
+                      nullptr}
+#ifdef _WIN32
+            ,
+            boost::process::v2::windows::process_creation_flags<
+                CREATE_NO_WINDOW>{}
+#endif
+        );
+        const auto child_process_id = static_cast<std::uint32_t>(child.id());
+        (void)child.detach();
+        if (capture_session)
+        {
+            capture_session->Start(child_process_id);
+        }
+        return child_process_id;
+    }
+
+#ifdef _WIN32
+    // lpParameters 拼接的引号规则：含空白或空串的参数双引号包裹（与
+    // CreateProcess 命令行约定一致），内嵌引号加反斜杠转义——参数注入面
+    // 不劣于既有 bp2 spawn 路径。
+    std::wstring QuoteElevatedLaunchArgument(const std::wstring& argument)
+    {
+        const bool needs_quotes =
+            argument.empty()
+            || argument.find_first_of(L" \t") != std::wstring::npos;
+        if (!needs_quotes)
+        {
+            return argument;
+        }
+        std::wstring quoted;
+        quoted.push_back(L'"');
+        for (const wchar_t character : argument)
+        {
+            if (character == L'"')
+            {
+                quoted.push_back(L'\\');
+            }
+            quoted.push_back(character);
+        }
+        quoted.push_back(L'"');
+        return quoted;
+    }
+#endif
+
+    // 生产提权回退启动缝：ShellExecuteExW。成功后取 pid 立即关句柄——
+    // 不 WAIT 不持有（launch 语义 spawn 即完成）；失败路径无句柄产生。
+    FlowControlElevatedLauncher DefaultElevatedLauncher()
+    {
+        return [](const std::string&              exe_path,
+                  const std::vector<std::string>& arguments,
+                  const std::string&              working_directory)
+                   -> FlowControlElevatedLaunchOutcome
+        {
+#ifdef _WIN32
+            try
+            {
+                // 局部 path 变量保生命周期：W API 直喂 native 宽串。
+                const std::filesystem::path exe_native =
+                    Das::Utils::PathFromUtf8(exe_path);
+                const std::filesystem::path working_directory_native =
+                    Das::Utils::PathFromUtf8(working_directory);
+
+                std::wstring parameters;
+                for (const std::string& argument : arguments)
+                {
+                    if (!parameters.empty())
+                    {
+                        parameters.push_back(L' ');
+                    }
+                    parameters += QuoteElevatedLaunchArgument(
+                        Das::Utils::PathFromUtf8(argument).wstring());
+                }
+
+                SHELLEXECUTEINFOW execute_info{};
+                execute_info.cbSize = sizeof(execute_info);
+                // SEE_MASK_NOCLOSEPROCESS 拿 hProcess 取 pid 后立即关闭。
+                execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
+                // 普通 open verb：requireAdministrator manifest 的 exe 由 OS
+                // 协商 UAC 弹窗，host 自身不提权、不注入 runas。
+                execute_info.lpVerb = L"open";
+                execute_info.lpFile = exe_native.c_str();
+                execute_info.lpParameters =
+                    parameters.empty() ? nullptr : parameters.c_str();
+                execute_info.lpDirectory =
+                    working_directory.empty()
+                        ? nullptr
+                        : working_directory_native.c_str();
+                execute_info.nShow = SW_SHOWNORMAL;
+
+                FlowControlElevatedLaunchOutcome outcome;
+                if (!ShellExecuteExW(&execute_info))
+                {
+                    const auto shell_error = static_cast<int>(GetLastError());
+                    if (shell_error == ERROR_CANCELLED)
+                    {
+                        outcome.status =
+                            FlowControlElevatedLaunchStatus::Declined;
+                        return outcome;
+                    }
+                    DAS_LOG_WARNING(
+                        DAS_FMT_NS::format(
+                            "Elevated shell launch failed: GetLastError={}",
+                            shell_error)
+                            .c_str());
+                    return outcome;
+                }
+                outcome.status = FlowControlElevatedLaunchStatus::Spawned;
+                if (execute_info.hProcess != nullptr)
+                {
+                    outcome.process_id = static_cast<std::uint32_t>(
+                        GetProcessId(execute_info.hProcess));
+                    CloseHandle(execute_info.hProcess);
+                }
+                else
+                {
+                    DAS_LOG_WARNING(
+                        "Elevated shell launch started the process but no "
+                        "process handle was returned; pid unknown");
+                }
+                return outcome;
+            }
+            catch (...)
+            {
+                DAS_LOG_WARNING("Elevated shell launch failed: unknown error");
+                return {};
+            }
+#else
+            // 740 是 Win32 错误码，生产主启动体在 POSIX 永不产出该分类，
+            // 提权回退启动器在 POSIX 无实现（保可编译）。
+            (void)exe_path;
+            (void)arguments;
+            (void)working_directory;
+            return {};
+#endif
+        };
+    }
+
+    // 提权启动缝解析：测试槽非空取槽值，否则生产实现。锁内只拷贝——
+    // ShellExecuteExW 可能因 UAC 弹窗长时间阻塞，不能持锁等待用户输入。
+    FlowControlElevatedLauncher ResolveElevatedLauncher()
+    {
+        const std::scoped_lock lock(ElevatedLauncherMutex());
+        if (ElevatedLauncherSlot())
+        {
+            return ElevatedLauncherSlot();
+        }
+        return DefaultElevatedLauncher();
+    }
+
+    // 生产进程启动缝：主启动体 + 提权回退编排的薄包装。
     FlowControlProcessSpawner DefaultProcessSpawner()
     {
         return [](const std::string&              exe_path,
                   const std::vector<std::string>& arguments,
                   const std::string&              working_directory,
-                  bool                            capture_output) -> bool
+                  bool capture_output) -> FlowControlSpawnResult
         {
-            try
-            {
-                std::shared_ptr<LaunchOutputCaptureSession> capture_session;
-                if (capture_output)
-                {
-                    capture_session = CreateLaunchOutputCaptureSession(
-                        ResolveLaunchCaptureLogDirectory(),
-                        LaunchCaptureProcessStem(exe_path));
-                    // nullptr = 工厂已告警；降级丢弃形态照常启动。
-                }
-
-                // bp2 的 exe 与 start_dir 形参是 boost path：窄串经 ACP
-                // 构造会双损（中文路径下启动错位），全程保 path 进出；
-                // arguments 形参是窄 UTF-8 通道，保持直传。
-                boost::asio::io_context io_context;
-                if (working_directory.empty())
-                {
-                    boost::process::v2::process child(
-                        io_context,
-                        Das::Utils::ToBoostPath(
-                            Das::Utils::PathFromUtf8(exe_path)),
-                        arguments,
-                        capture_session
-                            ? boost::process::v2::process_stdio{
-                                  nullptr,
-                                  capture_session->StdoutPipe(),
-                                  capture_session->StderrPipe()}
-                            // bp2 语义：stdin 位 {}（默认构造）= 继承父进程
-                            // 句柄，无控制台宿主（GUI 子系统进程）的
-                            // GetStdHandle 返回 NULL → CreateProcessW 失败；
-                            // nullptr = 重定向到 NUL 设备，任意宿主形态可启动。
-                            : boost::process::v2::process_stdio{
-                                  nullptr,
-                                  nullptr,
-                                  nullptr}
-#ifdef _WIN32
-                        // 控制台子进程不闪窗，GUI 子进程无影响。
-                        ,
-                        boost::process::v2::windows::process_creation_flags<
-                            CREATE_NO_WINDOW>{}
-#endif
-                    );
-                    const auto child_process_id =
-                        static_cast<std::uint32_t>(child.id());
-                    (void)child.detach();
-                    if (capture_session)
-                    {
-                        capture_session->Start(child_process_id);
-                    }
-                    return true;
-                }
-                boost::process::v2::process child(
-                    io_context,
-                    Das::Utils::ToBoostPath(Das::Utils::PathFromUtf8(exe_path)),
-                    arguments,
-                    boost::process::v2::process_start_dir(
-                        Das::Utils::ToBoostPath(
-                            Das::Utils::PathFromUtf8(working_directory))),
-                    capture_session
-                        ? boost::process::v2::process_stdio{
-                              nullptr,
-                              capture_session->StdoutPipe(),
-                              capture_session->StderrPipe()}
-                        : boost::process::v2::process_stdio{
-                              nullptr,
-                              nullptr,
-                              nullptr}
-#ifdef _WIN32
-                    ,
-                    boost::process::v2::windows::process_creation_flags<
-                        CREATE_NO_WINDOW>{}
-#endif
-                );
-                const auto child_process_id =
-                    static_cast<std::uint32_t>(child.id());
-                (void)child.detach();
-                if (capture_session)
-                {
-                    capture_session->Start(child_process_id);
-                }
-                return true;
-            }
-            catch (const boost::system::system_error& error)
-            {
-                const auto reason = DAS_FMT_NS::format(
-                    "Process spawn failed: {} (code = {})",
-                    error.what(),
-                    error.code().value());
-                DAS_LOG_WARNING(reason.c_str());
-                return false;
-            }
-            catch (const std::exception& exception)
-            {
-                const auto reason = DAS_FMT_NS::format(
-                    "Process spawn failed: {}",
-                    exception.what());
-                DAS_LOG_WARNING(reason.c_str());
-                return false;
-            }
-            catch (...)
-            {
-                DAS_LOG_WARNING("Process spawn failed: unknown error");
-                return false;
-            }
+            return SpawnProcessWithElevationFallback(
+                &PrimarySpawnAttempt,
+                ResolveElevatedLauncher(),
+                exe_path,
+                arguments,
+                working_directory,
+                capture_output);
         };
     }
 
@@ -957,6 +1101,86 @@ namespace
     }
 
 } // namespace
+
+void SetElevatedLauncherForTest(FlowControlElevatedLauncher launcher)
+{
+    const std::scoped_lock lock(ElevatedLauncherMutex());
+    ElevatedLauncherSlot() = std::move(launcher);
+}
+
+FlowControlSpawnResult SpawnProcessWithElevationFallback(
+    const FlowControlPrimarySpawnBody& primary_spawn_body,
+    const FlowControlElevatedLauncher& elevated_launcher,
+    const std::string&                 exe_path,
+    const std::vector<std::string>&    arguments,
+    const std::string&                 working_directory,
+    bool                               capture_output)
+{
+    try
+    {
+        (void)primary_spawn_body(
+            exe_path,
+            arguments,
+            working_directory,
+            capture_output);
+        return FlowControlSpawnResult{true};
+    }
+    catch (const boost::system::system_error& error)
+    {
+#ifdef _WIN32
+        if (error.code().value() == ERROR_ELEVATION_REQUIRED)
+        {
+            // 740 分支不打通用失败日志——回退路径自行叙述（降级/结果 WARN）。
+            if (capture_output)
+            {
+                DAS_LOG_WARNING(
+                    "Process spawn hit ERROR_ELEVATION_REQUIRED; falling "
+                    "back to shell elevation launch - output capture is "
+                    "not available on the elevated path");
+            }
+            const FlowControlElevatedLaunchOutcome elevated_outcome =
+                elevated_launcher(exe_path, arguments, working_directory);
+            switch (elevated_outcome.status)
+            {
+            case FlowControlElevatedLaunchStatus::Spawned:
+                DAS_LOG_WARNING(
+                    DAS_FMT_NS::format(
+                        "Process started via shell elevation fallback "
+                        "(pid={})",
+                        elevated_outcome.process_id)
+                        .c_str());
+                return FlowControlSpawnResult{true};
+            case FlowControlElevatedLaunchStatus::Declined:
+                DAS_LOG_WARNING("Shell elevation launch declined by the user");
+                return FlowControlSpawnResult{
+                    FlowControlSpawnStatus::ElevationDeclined};
+            case FlowControlElevatedLaunchStatus::Failed:
+                DAS_LOG_WARNING("Shell elevation fallback launch failed");
+                return FlowControlSpawnResult{FlowControlSpawnStatus::Failed};
+            }
+            return FlowControlSpawnResult{FlowControlSpawnStatus::Failed};
+        }
+#endif
+        const auto reason = DAS_FMT_NS::format(
+            "Process spawn failed: {} (code = {})",
+            error.what(),
+            error.code().value());
+        DAS_LOG_WARNING(reason.c_str());
+        return FlowControlSpawnResult{false};
+    }
+    catch (const std::exception& exception)
+    {
+        const auto reason =
+            DAS_FMT_NS::format("Process spawn failed: {}", exception.what());
+        DAS_LOG_WARNING(reason.c_str());
+        return FlowControlSpawnResult{false};
+    }
+    catch (...)
+    {
+        DAS_LOG_WARNING("Process spawn failed: unknown error");
+        return FlowControlSpawnResult{false};
+    }
+}
 
 void SetRepositoryEntryResolverForTest(RepositoryEntryResolver resolver)
 {
@@ -2363,11 +2587,19 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
     {
         process_spawner_ = DefaultProcessSpawner();
     }
-    if (!process_spawner_(
-            exe_path,
-            arguments,
-            working_directory,
-            capture_output))
+    const FlowControlSpawnResult spawn_result = process_spawner_(
+        exe_path,
+        arguments,
+        working_directory,
+        capture_output);
+    if (spawn_result.status == FlowControlSpawnStatus::ElevationDeclined)
+    {
+        return BuildLaunchFailedPortMap(
+            "launch-elevation-declined",
+            Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_ELEVATION_DECLINED,
+            pp_out_port_map);
+    }
+    if (spawn_result.status != FlowControlSpawnStatus::Spawned)
     {
         return BuildLaunchFailedPortMap(
             "launch-spawn-failed",

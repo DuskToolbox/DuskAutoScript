@@ -132,7 +132,7 @@ if(DAS_BUILD_TEST)
         GTest::gtest
         DasCoreObjects)
     if(WIN32)
-        target_link_libraries(DasMaaPiTest PRIVATE bcrypt)
+        target_link_libraries(DasMaaPiTest PRIVATE bcrypt shell32)
     endif()
     target_link_libraries(DasMaaPiTest PRIVATE ssl crypto)
     target_compile_definitions(DasMaaPiTest PRIVATE

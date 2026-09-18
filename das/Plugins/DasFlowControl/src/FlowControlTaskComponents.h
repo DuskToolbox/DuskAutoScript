@@ -2,6 +2,7 @@
 #define DAS_PLUGINS_DASFLOWCONTROL_FLOWCONTROLTASKCOMPONENTS_H
 
 #include <cassert>
+#include <cstdint>
 
 #include <cpp_yyjson.hpp>
 #include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
@@ -57,14 +58,95 @@ struct FlowControlWindowInfo
     std::string window_name;
 };
 
-// 进程启动缝：生产实现走 boost::process v2 spawn 并立即 detach（组件 Do
-// 返回后子进程存活）；capture_output=true 时接捕获管道逐行落盘。测试注入
-// lambda 驱动成功/失败与参数捕获，无需真进程。
-using FlowControlProcessSpawner = std::function<bool(
+// 单次启动尝试的三态结果：Spawned=已启动；Failed=启动失败；ElevationDeclined
+// =目标 manifest 要求提权且回退启动的 UAC 请求被用户拒绝（专用失败码出口）。
+enum class FlowControlSpawnStatus
+{
+    Spawned,
+    Failed,
+    ElevationDeclined
+};
+
+// 进程启动结果。bool 转换构造保留存量注入缝的返回语义（true=Spawned /
+// false=Failed），既有测试 lambda 源码零改动继续编译。
+struct FlowControlSpawnResult
+{
+    FlowControlSpawnStatus status = FlowControlSpawnStatus::Failed;
+
+    FlowControlSpawnResult() = default;
+
+    FlowControlSpawnResult(bool spawned)
+        : status(
+              spawned ? FlowControlSpawnStatus::Spawned
+                      : FlowControlSpawnStatus::Failed)
+    {
+    }
+
+    FlowControlSpawnResult(FlowControlSpawnStatus spawn_status)
+        : status(spawn_status)
+    {
+    }
+};
+
+// 进程启动缝：生产实现在主启动（boost::process v2 spawn + 立即 detach，
+// 组件 Do 返回后子进程存活）遇目标要求提权（Win32 740）时回退
+// ShellExecuteExW 提权启动（UAC 由 OS 协商弹窗，host 自身不提权）；
+// ElevationDeclined 对应 UAC 被拒。capture_output=true 时主启动接捕获管道
+// 逐行落盘（提权回退路径无捕获）。测试注入 lambda 驱动三态与参数捕获，
+// 无需真进程。
+using FlowControlProcessSpawner = std::function<FlowControlSpawnResult(
     const std::string&              exe_path,
     const std::vector<std::string>& arguments,
     const std::string&              working_directory,
     bool                            capture_output)>;
+
+// 提权回退启动尝试的三态结果。
+enum class FlowControlElevatedLaunchStatus
+{
+    Spawned,
+    Declined,
+    Failed
+};
+
+// 提权回退启动结果：Spawned 携带子进程 pid（OS 未给进程句柄时 pid=0）。
+struct FlowControlElevatedLaunchOutcome
+{
+    FlowControlElevatedLaunchStatus status =
+        FlowControlElevatedLaunchStatus::Failed;
+    std::uint32_t process_id = 0;
+};
+
+// 提权回退启动缝：生产实现 ShellExecuteExW（普通 open verb，目标 manifest
+// requireAdministrator 的 exe 由 OS 协商 UAC 弹窗）。测试注入桩驱动三态，
+// 无需真机 UAC。
+using FlowControlElevatedLauncher =
+    std::function<FlowControlElevatedLaunchOutcome(
+        const std::string&              exe_path,
+        const std::vector<std::string>& arguments,
+        const std::string&              working_directory)>;
+
+// 测试注入 hook：传空 std::function 恢复生产实现。
+void SetElevatedLauncherForTest(FlowControlElevatedLauncher launcher);
+
+// 主启动尝试体：成功返回子进程 pid，失败抛异常（boost::process v2 构造
+// 语义原样）；是否回退提权由编排函数按异常分类决定。
+using FlowControlPrimarySpawnBody = std::function<std::uint32_t(
+    const std::string&              exe_path,
+    const std::vector<std::string>& arguments,
+    const std::string&              working_directory,
+    bool                            capture_output)>;
+
+// 启动编排：主启动体成功即 Spawned；主启动抛 Win32 740
+// （ERROR_ELEVATION_REQUIRED）时经提权启动缝回退（三态映射 Spawned/
+// ElevationDeclined/Failed）；其余异常一律 Failed。双注入缝使 740 分类/
+// 拒绝/成功/非 740 跳过全链路可直测。
+FlowControlSpawnResult SpawnProcessWithElevationFallback(
+    const FlowControlPrimarySpawnBody& primary_spawn_body,
+    const FlowControlElevatedLauncher& elevated_launcher,
+    const std::string&                 exe_path,
+    const std::vector<std::string>&    arguments,
+    const std::string&                 working_directory,
+    bool                               capture_output);
 
 // 窗口枚举缝：生产实现 EnumWindows + GetClassNameW/GetWindowTextW；测试
 // 注入 lambda 驱动 0/1/N 匹配序列，无需真窗口。

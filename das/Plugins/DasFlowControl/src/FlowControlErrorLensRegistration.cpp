@@ -116,6 +116,17 @@ namespace Plugins::DasFlowControl
         RegisterOneMessage(
             lens.Get(),
             "en",
+            DAS_E_FLOW_LAUNCH_ELEVATION_DECLINED,
+            "The elevation request to start the executable was declined.");
+        RegisterOneMessage(
+            lens.Get(),
+            "zh-cn",
+            DAS_E_FLOW_LAUNCH_ELEVATION_DECLINED,
+            "启动可执行文件的提权请求被拒绝。");
+
+        RegisterOneMessage(
+            lens.Get(),
+            "en",
             DAS_E_FLOW_INVOKE_SNAPSHOT_MISSING,
             "Repository invoke requires a compiled child snapshot.");
         RegisterOneMessage(

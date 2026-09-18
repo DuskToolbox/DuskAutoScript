@@ -26,6 +26,8 @@ DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_BOOST_PROCESS_WARNING
 
 #include <boost/process/v2/environment.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/system/system_error.hpp>
 
 DAS_DISABLE_WARNING_END
 
@@ -42,6 +44,7 @@ DAS_DISABLE_WARNING_END
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1819,6 +1822,181 @@ TEST_F(TaskComponentContractTest, LaunchDoFailsWhenSpawnFails)
 
     EXPECT_EQ(DiagnosticField(result.Get(), "code"), "launch-spawn-failed");
 }
+
+// UAC 被拒（spawner 返回 ElevationDeclined）→ 专用错误码 +
+// launch-elevation-declined 载荷；消息经 i18n 表解析（替身表注入验证
+// key 链路）。
+TEST_F(TaskComponentContractTest, LaunchDoFailsWhenElevationDeclined)
+{
+    constexpr std::string_view translated_declined_text =
+        "ZZ-launch-elevation-declined-translated-ZZ";
+    auto injected_i18n = MakeI18nWithTranslation(
+        "flow.diagnostic.launch-elevation-declined",
+        translated_declined_text);
+    ASSERT_NE(injected_i18n.Get(), nullptr);
+    const ScopedFlowControlI18nOverride i18n_override{injected_i18n.Get()};
+
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    component->SetProcessSpawnerForTest(
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const std::string&,
+           bool) -> Das::FlowControlSpawnResult
+        {
+            return Das::FlowControlSpawnResult{
+                Das::FlowControlSpawnStatus::ElevationDeclined};
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({"exePath": "C:/test/app.exe"})json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(
+        component->Do(nullptr, nullptr, result.Put()),
+        DAS_E_FLOW_LAUNCH_ELEVATION_DECLINED);
+
+    EXPECT_EQ(
+        DiagnosticField(result.Get(), "code"),
+        "launch-elevation-declined");
+    EXPECT_EQ(
+        DiagnosticField(result.Get(), "message"),
+        std::string{translated_declined_text});
+}
+
+// ---- 提权回退编排（740 分类/拒绝/成功/非 740 跳过，双注入缝直测）----
+
+namespace
+{
+
+    // 主启动体替身：抛指定错误值的 boost system_error（生产 bp2 构造失败
+    // 语义）。
+    Das::FlowControlPrimarySpawnBody BodyThrowingBoostSystemError(
+        int error_value)
+    {
+        return [error_value](
+                   const std::string&,
+                   const std::vector<std::string>&,
+                   const std::string&,
+                   bool) -> std::uint32_t
+        {
+            throw boost::system::system_error{boost::system::error_code{
+                error_value,
+                boost::system::system_category()}};
+        };
+    }
+
+    // 提权启动缝替身：固定三态 + 可选调用旗标（验证非 740 不触发回退）。
+    Das::FlowControlElevatedLauncher LauncherReturning(
+        Das::FlowControlElevatedLaunchStatus status,
+        std::uint32_t                        process_id,
+        bool*                                call_flag)
+    {
+        return [status, process_id, call_flag](
+                   const std::string&,
+                   const std::vector<std::string>&,
+                   const std::string&) -> Das::FlowControlElevatedLaunchOutcome
+        {
+            if (call_flag != nullptr)
+            {
+                *call_flag = true;
+            }
+            Das::FlowControlElevatedLaunchOutcome outcome;
+            outcome.status = status;
+            outcome.process_id = process_id;
+            return outcome;
+        };
+    }
+
+} // namespace
+
+TEST(SpawnWithElevationFallback, ReturnsSpawnedWhenPrimaryBodySucceeds)
+{
+    const auto result = Das::SpawnProcessWithElevationFallback(
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const std::string&,
+           bool) -> std::uint32_t { return 100; },
+        LauncherReturning(
+            Das::FlowControlElevatedLaunchStatus::Failed,
+            0,
+            nullptr),
+        "C:/test/app.exe",
+        {},
+        "",
+        false);
+    EXPECT_EQ(result.status, Das::FlowControlSpawnStatus::Spawned);
+}
+
+// 非 740 失败不触发回退（保持通用 spawn 失败语义）。
+TEST(SpawnWithElevationFallback, SkipsFallbackForNonElevationError)
+{
+    bool       launcher_called = false;
+    const auto result = Das::SpawnProcessWithElevationFallback(
+        BodyThrowingBoostSystemError(2),
+        LauncherReturning(
+            Das::FlowControlElevatedLaunchStatus::Spawned,
+            4242,
+            &launcher_called),
+        "C:/test/app.exe",
+        {},
+        "",
+        false);
+    EXPECT_EQ(result.status, Das::FlowControlSpawnStatus::Failed);
+    EXPECT_FALSE(launcher_called);
+}
+
+#ifdef _WIN32
+// 740（ERROR_ELEVATION_REQUIRED）→ 回退提权启动成功 → 结果 Spawned。
+TEST(SpawnWithElevationFallback, ElevatesOnElevationRequiredAndSucceeds)
+{
+    const auto result = Das::SpawnProcessWithElevationFallback(
+        BodyThrowingBoostSystemError(ERROR_ELEVATION_REQUIRED),
+        LauncherReturning(
+            Das::FlowControlElevatedLaunchStatus::Spawned,
+            4242,
+            nullptr),
+        "C:/test/app.exe",
+        {},
+        "",
+        false);
+    EXPECT_EQ(result.status, Das::FlowControlSpawnStatus::Spawned);
+}
+
+// 740 → 回退启动的 UAC 请求被用户拒绝 → 结果 ElevationDeclined。
+TEST(SpawnWithElevationFallback, DeclinesWhenUserRejectsElevation)
+{
+    const auto result = Das::SpawnProcessWithElevationFallback(
+        BodyThrowingBoostSystemError(ERROR_ELEVATION_REQUIRED),
+        LauncherReturning(
+            Das::FlowControlElevatedLaunchStatus::Declined,
+            0,
+            nullptr),
+        "C:/test/app.exe",
+        {},
+        "",
+        false);
+    EXPECT_EQ(result.status, Das::FlowControlSpawnStatus::ElevationDeclined);
+}
+
+// 740 → 回退启动自身失败 → 结果 Failed。
+TEST(SpawnWithElevationFallback, FailsWhenElevatedLauncherFails)
+{
+    const auto result = Das::SpawnProcessWithElevationFallback(
+        BodyThrowingBoostSystemError(ERROR_ELEVATION_REQUIRED),
+        LauncherReturning(
+            Das::FlowControlElevatedLaunchStatus::Failed,
+            0,
+            nullptr),
+        "C:/test/app.exe",
+        {},
+        "",
+        false);
+    EXPECT_EQ(result.status, Das::FlowControlSpawnStatus::Failed);
+}
+#endif // _WIN32（740 是 Win32 错误码，回退分支仅 Win32 编译）
 
 // exePath 缺省/空 → 专用错误码 + launch-exe-path-missing 载荷，不触碰
 // spawn 缝。
