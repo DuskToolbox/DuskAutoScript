@@ -2,6 +2,7 @@
 
 #include "DasGraphTaskAuthoringSessionFactory.h"
 #include "GraphTaskBoundaryComponents.h"
+#include "GraphTaskFocusLogComponent.h"
 
 #include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/DasApi.h>
@@ -71,8 +72,8 @@ namespace Das::Plugins::DasGraphTask
 
         try
         {
-            // begin/end 与子图执行共用本工厂（manifest 三组件）；GUID 单
-            // 一事实源在 Core 的 GraphBoundaryComponents.h 常量。
+            // boundary GUID 单一事实源在 Core 的 GraphBoundaryComponents.h
+            // 常量。
             DasGuid boundary_guid{};
             if (DAS::IsOk(DasMakeDasGuid(
                     std::string(
@@ -99,6 +100,22 @@ namespace Das::Plugins::DasGraphTask
             {
                 auto* component =
                     new GraphTaskBoundaryComponent(GRAPH_END_KIND, host_.Get());
+                component->AddRef();
+                *pp_out_component =
+                    static_cast<Das::PluginInterface::IDasTaskComponent*>(
+                        component);
+                return DAS_S_OK;
+            }
+
+            // focus-log：GUID 单一事实源在组件头常量；生产不注入
+            // recorder（Do 内经 C ABI 具名服务 resolve）。
+            DasGuid focus_log_guid{};
+            if (DAS::IsOk(DasMakeDasGuid(
+                    std::string(FOCUS_LOG_COMPONENT_GUID_TEXT).c_str(),
+                    &focus_log_guid))
+                && component_guid == focus_log_guid)
+            {
+                auto* component = new GraphTaskFocusLogComponent();
                 component->AddRef();
                 *pp_out_component =
                     static_cast<Das::PluginInterface::IDasTaskComponent*>(

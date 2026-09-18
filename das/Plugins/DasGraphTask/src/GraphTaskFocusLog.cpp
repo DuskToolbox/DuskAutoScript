@@ -90,45 +90,46 @@ namespace Das::Plugins::DasGraphTask
             }
             return std::string(fallback_template);
         }
-
-        // 共用核心：渲染完成的文本 → log entry 构造（SetType + AddText）→
-        // Record。完成/失败两个公开 Record 入口仅差模板键与条目类型。
-        DasResult RecordRenderedFocusEntry(
-            Das::ExportInterface::IDasProcessLogRecorder* recorder,
-            Das::ExportInterface::DasLogType              entry_type,
-            const std::string&                            entry_text)
-        {
-            if (recorder == nullptr)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            DasPtr<Das::ExportInterface::IDasLogEntry> entry;
-            DasResult hr = CreateIDasLogEntry(entry.Put());
-            if (DAS::IsFailed(hr) || !entry)
-            {
-                return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
-            }
-            hr = entry->SetType(entry_type);
-            if (DAS::IsFailed(hr))
-            {
-                return hr;
-            }
-            DasPtr<IDasReadOnlyString> entry_text_string;
-            hr = CreateIDasReadOnlyStringFromUtf8(
-                entry_text.c_str(),
-                entry_text_string.Put());
-            if (DAS::IsFailed(hr) || !entry_text_string)
-            {
-                return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
-            }
-            hr = entry->AddText(entry_text_string.Get());
-            if (DAS::IsFailed(hr))
-            {
-                return hr;
-            }
-            return recorder->Record(entry.Get());
-        }
     } // namespace
+
+    DasResult RecordFocusLogEntry(
+        Das::ExportInterface::IDasProcessLogRecorder* recorder,
+        Das::ExportInterface::DasLogType              entry_type,
+        std::string_view                              entry_text)
+    {
+        if (recorder == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        // string_view 无生命周期与终止符保证：先物化具名局部（裸 c_str()
+        // 只对 std::string 合法）。
+        const std::string                          owned_text{entry_text};
+        DasPtr<Das::ExportInterface::IDasLogEntry> entry;
+        DasResult hr = CreateIDasLogEntry(entry.Put());
+        if (DAS::IsFailed(hr) || !entry)
+        {
+            return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
+        }
+        hr = entry->SetType(entry_type);
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        DasPtr<IDasReadOnlyString> entry_text_string;
+        hr = CreateIDasReadOnlyStringFromUtf8(
+            owned_text.c_str(),
+            entry_text_string.Put());
+        if (DAS::IsFailed(hr) || !entry_text_string)
+        {
+            return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
+        }
+        hr = entry->AddText(entry_text_string.Get());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        return recorder->Record(entry.Get());
+    }
 
     DasResult RecordGraphTaskFinishedFocusEntry(
         Das::ExportInterface::IDasProcessLogRecorder* recorder,
@@ -156,7 +157,7 @@ namespace Das::Plugins::DasGraphTask
         {
             // 模板占位符异常（缺参/错序）按字面输出，不阻断记录。
         }
-        return RecordRenderedFocusEntry(
+        return RecordFocusLogEntry(
             recorder,
             ExportInterface::DAS_LOG_TYPE_SUCCESS,
             entry_text);
@@ -189,7 +190,7 @@ namespace Das::Plugins::DasGraphTask
         {
             // 模板占位符异常（缺参/错序）按字面输出，不阻断记录。
         }
-        return RecordRenderedFocusEntry(
+        return RecordFocusLogEntry(
             recorder,
             ExportInterface::DAS_LOG_TYPE_ERROR,
             entry_text);

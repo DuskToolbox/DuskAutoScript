@@ -12,6 +12,14 @@
 namespace Das::Plugins::DasGraphTask
 {
 
+    // 已渲染文本 → log entry 构造（SetType + AddText）→ Record 的公共缝：
+    // focus 记录的完整链路与全部失败码透传；调用方负责文本来源（i18n 渲染、
+    // 上游端口直传等）。跨 DLL 消费 CreateIDasLogEntry（Impl 未导出）。
+    DasResult RecordFocusLogEntry(
+        Das::ExportInterface::IDasProcessLogRecorder* recorder,
+        Das::ExportInterface::DasLogType              entry_type,
+        std::string_view                              entry_text);
+
     // GraphTask 完成事件 focus 记录（user.jsonl → UI 事件日志面板）：end.值
     // 经插件 i18n 模板渲染（{N} 位置占位符，Translate 按 GlobalLocale
     // 解析），表缺失/解析失败回落 en 字面模板——记录失败只落调试日志，绝不

@@ -93,6 +93,44 @@
           "config": {},
           "diagnostics": []
         }
+      },
+      "CFAF95AF-5ABC-422C-8CDB-0346F0526236": {
+        "factoryGuid": "E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.graph.focus-log",
+          "label": { "en": "Focus Log", "zh-cn": "焦点日志" },
+          "componentGuid": "CFAF95AF-5ABC-422C-8CDB-0346F0526236",
+          "inputs": [
+            {
+              "id": "message",
+              "type": "string",
+              "label": { "en": "Message", "zh-cn": "消息文本" }
+            }
+          ],
+          "outputs": [],
+          "config": {
+            "error": {
+              "type": "bool",
+              "label": { "en": "Error Level", "zh-cn": "错误级别" },
+              "description": {
+                "en": "Record the entry at error level. Takes precedence over the warning checkbox.",
+                "zh-cn": "将条目记为错误级别。勾选时优先于警告级别。"
+              },
+              "default": false
+            },
+            "warning": {
+              "type": "bool",
+              "label": { "en": "Warning Level", "zh-cn": "警告级别" },
+              "description": {
+                "en": "Record the entry at warning level. Ignored when the error checkbox is set; with neither checked the entry is info level.",
+                "zh-cn": "将条目记为警告级别。勾选错误级别时被忽略；两个都不勾时条目记为信息级别。"
+              },
+              "default": false
+            }
+          },
+          "diagnostics": []
+        }
       }
     }
   }
