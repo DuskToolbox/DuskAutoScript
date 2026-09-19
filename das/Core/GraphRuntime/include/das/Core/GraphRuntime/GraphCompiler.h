@@ -194,6 +194,30 @@ public:
     using NodeFacesMap =
         std::unordered_map<std::string, std::vector<DocumentFacePort>>;
 
+    /// One registered custom type entry of the faces channel's optional
+    /// types[] array ({name[, compatibleWith]} shape). Parsed and stored
+    /// alongside the faces as pass-through data; consumption (the
+    /// projection-side type registry) lands with the partition retirement
+    /// plan.
+    struct DocumentFaceType
+    {
+        std::string              name;
+        std::vector<std::string> compatible_with;
+    };
+
+    /// entry_id (decimal string of the positive integer the node settings
+    /// carry) → injected document port faces of that repository entry (the
+    /// invoked document's dynamic port snapshot).
+    using EntryFacesMap =
+        std::unordered_map<std::string, std::vector<DocumentFacePort>>;
+
+    /// component_guid → names of its taskRepositoryRef-typed config fields
+    /// (catalog-derived data snapshot injected by the session compile path —
+    /// the same injected-knowledge pattern as required_fields; the compiler
+    /// never queries the catalog).
+    using RepositoryFieldMap =
+        std::unordered_map<std::string, std::unordered_set<std::string>>;
+
     /// Bind the injected per-node document port faces. Extends (does not
     /// replace) the declared-surface resolution: ResolveNodePorts merges the
     /// node's faces on top of the manifest/catalog-declared surface, dedupes
@@ -203,6 +227,18 @@ public:
     /// the synchronous Compile call — the session state outlives it (the
     /// same lifecycle premise as the port-surface provider closure).
     void BindNodeFaces(const NodeFacesMap* node_faces);
+
+    /// Bind the injected entry faces plus the repository-field snapshot.
+    /// ResolveNodePorts merges entryFaces[entryId] onto nodes holding a
+    /// bound repository entry (a taskRepositoryRef field carrying a positive
+    /// integer in settings — the business-neutral bound-entry judgment),
+    /// after the node's own faces and with the same dedupe semantics (face
+    /// wins, WARN on collision). The entry-faces map is borrowed for the
+    /// duration of the synchronous Compile call; the repository-field
+    /// snapshot is copied.
+    void BindEntryFaces(
+        const EntryFacesMap* entry_faces,
+        RepositoryFieldMap   repository_fields);
 
     /// Bind the catalog-declared port surface provider. Extends (does not
     /// replace) factory-manager manifest resolution: edge validation,
@@ -314,6 +350,13 @@ private:
     // Borrowed per-node document faces (nullptr = no faces channel bound).
     const NodeFacesMap* node_faces_ = nullptr;
 
+    // Borrowed entry faces (nullptr = no entry-faces channel bound).
+    const EntryFacesMap* entry_faces_ = nullptr;
+
+    // Catalog-derived snapshot: component_guid → taskRepositoryRef field
+    // names (the bound-entry judgment's data source).
+    RepositoryFieldMap repository_fields_;
+
     /// Resolve port entries from a manifest definition yyjson::value.
     static std::vector<PortEntry> PortsFromDefinitionList(
         const yyjson::value& definition,
@@ -329,17 +372,29 @@ private:
     /// Resolve the effective per-node port set: the declared surface of the
     /// node's referenced component (empty and unresolved when the target is
     /// not a componentRef or neither declaration source knows it), with the
-    /// node's injected document faces merged on top (per-node union).
+    /// node's injected document faces and — for nodes holding a bound
+    /// repository entry — the entry's faces merged on top (per-node union).
     ManifestPorts ResolveNodePorts(
         const Dto::GraphNodeDto&                        node,
         std::unordered_map<std::string, ManifestPorts>& cache) const;
 
-    /// Merge the node's injected document faces onto a declared surface:
-    /// dedupe by port id with the face winning over a same-name declared
-    /// port (WARN on the collision); each face joins only its declared
-    /// direction side. Mutates only the caller's per-node copy — the
-    /// guid-keyed declaration cache stays declared-only.
-    void MergeNodeFaces(ManifestPorts& ports, const std::string& node_id) const;
+    /// Merge one document-face list onto a port surface: dedupe by port id
+    /// with the face winning over a same-name surviving port (WARN on the
+    /// collision); each face joins only its declared direction side.
+    /// Mutates only the caller's per-node copy — the guid-keyed declaration
+    /// cache stays declared-only.
+    void MergeFacesOntoSurface(
+        ManifestPorts&                       ports,
+        const std::string&                   node_id,
+        const std::vector<DocumentFacePort>& faces) const;
+
+    /// Resolve the repository entry a node is bound to (nullopt = not a
+    /// bound repository call node): the business-neutral judgment — a
+    /// catalog-declared taskRepositoryRef field carrying a positive integer
+    /// in the node settings. Returns the entry id as its decimal string
+    /// (the EntryFacesMap key form).
+    std::optional<std::string> ResolveBoundEntryId(
+        const Dto::GraphNodeDto& node) const;
 
     /// Build a node index: node_id -> GraphNodeDto* for O(1) lookup.
     static std::unordered_map<std::string, const Dto::GraphNodeDto*>

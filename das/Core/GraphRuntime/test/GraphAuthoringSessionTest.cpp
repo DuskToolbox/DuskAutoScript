@@ -2983,4 +2983,103 @@ namespace
             context_projection.find("\"actionCatalog\""),
             std::string::npos);
     }
+
+    // ======================================================================
+    // entryFaces 通道（绑条目调用节点按 entryId 并口）
+    // ======================================================================
+
+    /// Graph whose n_call node is a repository-bound call node ({g1} declares
+    /// a taskRepositoryRef field, settings carry entryId 7) and n_free is an
+    /// unbound sibling of the same shape. e_in/e_out ride the entry's
+    /// document ports on n_call; e_probe targets the entry's port on the
+    /// UNBOUND node (the contamination probe — it must stay PortNotFound).
+    std::string EntryFacesGraphContext(std::string_view entry_faces_json)
+    {
+        constexpr std::string_view catalog =
+            R"json([{"actionId":"{gs}","ports":[{"portId":"result","portType":"string","direction":"output"}]},{"actionId":"{g1}","config":[{"name":"repositoryRef","type":"taskRepositoryRef"}]},{"actionId":"{g2}","ports":[{"portId":"take","portType":"string","direction":"input"}]}])json";
+        return std::string(R"({"properties":)")
+               + RawGraphContextOf(
+                   {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+                    RawGraphNodeOf("n_src", "{gs}"),
+                    R"({"nodeId":"n_call","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{g1}","pluginGuid":"{p}"}},"settings":{"repositoryRef":7}})",
+                    RawGraphNodeOf("n_free", "{g2}"),
+                    RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
+                   {R"({"edgeId":"e_in","sourceNodeId":"n_src","sourcePortId":"result","targetNodeId":"n_call","targetPortId":"doc_in","edgeType":"data"})",
+                    R"({"edgeId":"e_out","sourceNodeId":"n_call","sourcePortId":"doc_out","targetNodeId":"n_free","targetPortId":"take","edgeType":"data"})",
+                    R"({"edgeId":"e_probe","sourceNodeId":"n_src","sourcePortId":"result","targetNodeId":"n_free","targetPortId":"doc_in","edgeType":"data"})"})
+               + R"(,"actionCatalog":)" + std::string(catalog)
+               + R"(,"entryFaces":)" + std::string(entry_faces_json) + "}";
+    }
+
+    constexpr std::string_view kValidEntryFaces =
+        R"([{"entryId":7,"ports":[{"id":"doc_in","type":"string","direction":"input"},{"id":"doc_out","type":"string","direction":"output"}]}])";
+
+    // 绑条目节点（settings 含 taskRepositoryRef 正值）context 带
+    // entryFaces 后，该节点编译口面并出入参双方向的文档口；未绑条目节
+    // 点不受 entryFaces 影响（同文档口名在未绑节点上仍 PortNotFound）。
+    TEST(GraphAuthoringSessionTest, EntryFacesMergeOntoBoundCallNode)
+    {
+        const SessionHandle s{EntryFacesGraphContext(kValidEntryFaces)};
+
+        const auto outcome = CompileOutcomeOf(s.p);
+        // e_in/e_out：绑条目节点的文档口入/出双方向均并入编译口面，
+        // string→string 兼容——零 TypeMismatch，唯一的 PortNotFound 来自
+        // 污染探针 e_probe（未绑条目的 n_free 不吃 entryFaces）。
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
+        const auto not_found = DiagnosticMessageOfKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound);
+        EXPECT_NE(not_found.find("doc_in"), std::string::npos);
+        EXPECT_NE(not_found.find("n_free"), std::string::npos);
+
+        // 编译产物携带文档口的双方向绑定（in 口作 target、out 口作
+        // source）。
+        DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(s.p, nullptr, compiled.Put()),
+            DAS_S_OK);
+        const auto plan_text = Compact(JsonToUtf8(compiled.Get()));
+        EXPECT_NE(
+            plan_text.find("\"targetPortId\":\"doc_in\""),
+            std::string::npos);
+        EXPECT_NE(
+            plan_text.find("\"sourcePortId\":\"doc_out\""),
+            std::string::npos);
+    }
+
+    // 畸形 entryFaces 键（缺 entryId / 缺 ports / entryId 非正整数）：
+    // 该键整体零 entryFaces + 会话继续加载文档——绑条目节点的文档口边
+    // 退回 PortNotFound（降级到「无口」）。
+    TEST(GraphAuthoringSessionTest, EntryFacesMalformedKeyDegradesToZeroFaces)
+    {
+        const std::array<std::string_view, 3> malformed = {
+            // 缺 entryId。
+            R"([{"ports":[{"id":"doc_in","type":"string","direction":"input"}]}])",
+            // 缺 ports 数组。
+            R"([{"entryId":7}])",
+            // entryId 非正整数。
+            R"([{"entryId":0,"ports":[{"id":"doc_in","type":"string","direction":"input"}]}])"};
+        for (const auto& faces_json : malformed)
+        {
+            const SessionHandle s{EntryFacesGraphContext(faces_json)};
+            // 会话创建成功、文档照常加载。
+            const auto document = DocumentOf(s.p);
+            auto       doc_obj = document.as_object();
+            ASSERT_TRUE(doc_obj.has_value());
+            ASSERT_TRUE(doc_obj->contains(std::string_view("graph")));
+            // 降级=零 entryFaces：绑条目节点的文档口边退回 PortNotFound。
+            const auto outcome = CompileOutcomeOf(s.p);
+            EXPECT_TRUE(DiagnosticsContainKind(
+                outcome,
+                Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound))
+                << faces_json;
+            const auto not_found = DiagnosticMessageOfKind(
+                outcome,
+                Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound);
+            EXPECT_NE(not_found.find("doc_in"), std::string::npos)
+                << faces_json;
+        }
+    }
 } // namespace

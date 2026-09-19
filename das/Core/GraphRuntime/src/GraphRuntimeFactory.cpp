@@ -326,6 +326,13 @@ struct GraphAuthoringSessionState
     // guid 聚合）；编译与画布投影按节点消费。faces 随 context 整体进入
     // 会话创建，与文档快照同 freshness（会话缓存按 revision 键控）。
     Das::Core::GraphRuntime::GraphCompiler::NodeFacesMap node_faces;
+    // entryFaces 通道：entry_id（节点 settings 所持正整数的十进制文本）
+    // → 绑定该条目的调用节点要并入的文档口面（被调条目文档的动态口快
+    // 照——签名物化存储副本的替代数据源）。types[] 为可选的注册类型透
+    // 传容器（消费随分区退役的投影侧类型注册表落地）。
+    Das::Core::GraphRuntime::GraphCompiler::EntryFacesMap entry_faces;
+    std::vector<Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType>
+        entry_face_types;
 };
 
 namespace
@@ -639,6 +646,10 @@ namespace
     ParseActionCatalogEntries(const yyjson::value& root);
     std::optional<Das::Core::GraphRuntime::GraphCompiler::NodeFacesMap>
     ParseNodeFaces(const yyjson::value& root);
+    std::optional<std::pair<
+        Das::Core::GraphRuntime::GraphCompiler::EntryFacesMap,
+        std::vector<Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType>>>
+    ParseEntryFaces(const yyjson::value& root);
 
     void SeedFromContext(GraphAuthoringSessionState& s, std::string_view json)
     {
@@ -695,6 +706,18 @@ namespace
             if (faces.has_value())
             {
                 s.node_faces = std::move(*faces);
+            }
+        }
+        // entryFaces 键（绑条目调用节点的文档口面通道）：畸形降级语义与
+        // nodeFaces 同款（该键整体零 entryFaces + WARNING + 会话继续）。
+        if (obj->contains(std::string_view("entryFaces")))
+        {
+            auto parsed =
+                ParseEntryFaces((*obj)[std::string_view("entryFaces")]);
+            if (parsed.has_value())
+            {
+                s.entry_faces = std::move(parsed->first);
+                s.entry_face_types = std::move(parsed->second);
             }
         }
 
@@ -1498,6 +1521,187 @@ namespace
         return faces;
     }
 
+    // entryFaces context 键解析（fail-closed 逐条；畸形→该键整体零
+    // entryFaces + WARNING + 会话继续——nodeFaces 同款降级）。条目形状：
+    // {entryId, ports:[...], types?:[{name[, compatibleWith]}]}——
+    // entryId 是节点 settings 所持的正整数（现仓 taskRepositoryRef 判定
+    // 的 wire 形态）；口条目锁形与 nodeFaces 共享 FacePortShapeValid 单
+    // 一来源；重复 entryId 视为形状违规（每条目一条）。types[] 为可选注
+    // 册类型透传容器（消费随分区退役的投影侧类型注册表落地）。
+    std::optional<std::pair<
+        Das::Core::GraphRuntime::GraphCompiler::EntryFacesMap,
+        std::vector<Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType>>>
+    ParseEntryFaces(const yyjson::value& root)
+    {
+        auto arr = root.as_array();
+        if (!arr.has_value())
+        {
+            DAS_CORE_LOG_WARN(
+                "context entryFaces key rejected: value is not an array; "
+                "the session continues with no injected entry faces");
+            return std::nullopt;
+        }
+        Das::Core::GraphRuntime::GraphCompiler::EntryFacesMap faces;
+        std::vector<Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType>
+                    types;
+        std::size_t entry_index = 0;
+        for (const auto& entry_value : *arr)
+        {
+            const auto reject = [entry_index](std::string_view reason)
+            {
+                DAS_CORE_LOG_WARN(
+                    "context entryFaces key rejected at entry {}: {}; the "
+                    "session continues with no injected entry faces",
+                    entry_index,
+                    reason);
+            };
+            auto entry_obj = entry_value.as_object();
+            if (!entry_obj.has_value()
+                || !entry_obj->contains(std::string_view("entryId")))
+            {
+                reject("entry is not an object or carries no entryId");
+                return std::nullopt;
+            }
+            const auto entry_id =
+                (*entry_obj)[std::string_view("entryId")].as_int();
+            if (!entry_id.has_value() || *entry_id <= 0)
+            {
+                reject("entryId is not a positive integer");
+                return std::nullopt;
+            }
+            const std::string entry_key = std::to_string(*entry_id);
+            if (faces.find(entry_key) != faces.end())
+            {
+                reject(
+                    "duplicate entryId (the wire contract is one entry "
+                    "per repository entry)");
+                return std::nullopt;
+            }
+            if (!entry_obj->contains(std::string_view("ports")))
+            {
+                reject("entry carries no ports array");
+                return std::nullopt;
+            }
+            auto ports_arr = (*entry_obj)[std::string_view("ports")].as_array();
+            if (!ports_arr.has_value())
+            {
+                reject("ports is not an array");
+                return std::nullopt;
+            }
+            std::vector<
+                Das::Core::GraphRuntime::GraphCompiler::DocumentFacePort>
+                ports;
+            ports.reserve(ports_arr->size());
+            std::size_t port_index = 0;
+            for (const auto& port_value : *ports_arr)
+            {
+                if (!FacePortShapeValid(port_value))
+                {
+                    reject(
+                        "port " + std::to_string(port_index)
+                        + " violates the {id,type,direction[,label]} "
+                          "shape");
+                    return std::nullopt;
+                }
+                auto        port_obj = port_value.as_object();
+                const auto& port = *port_obj;
+                Das::Core::GraphRuntime::GraphCompiler::DocumentFacePort
+                    port_entry;
+                port_entry.port_id =
+                    std::string(*port[std::string_view("id")].as_string());
+                port_entry.port_type =
+                    std::string(*port[std::string_view("type")].as_string());
+                port_entry.direction = std::string(
+                    *port[std::string_view("direction")].as_string());
+                if (port.contains(std::string_view("label")))
+                {
+                    if (auto label =
+                            port[std::string_view("label")].as_string();
+                        label.has_value() && !label->empty())
+                    {
+                        port_entry.label = std::string(*label);
+                    }
+                    else
+                    {
+                        port_entry.label = port_entry.port_id;
+                    }
+                }
+                else
+                {
+                    port_entry.label = port_entry.port_id;
+                }
+                ports.push_back(std::move(port_entry));
+                ++port_index;
+            }
+            // types?[]：可选注册类型透传（{name[, compatibleWith]}——
+            // compatibleWith 元素限字符串；非字符串/空 name 均为形状违
+            // 规）。
+            if (entry_obj->contains(std::string_view("types")))
+            {
+                auto types_arr =
+                    (*entry_obj)[std::string_view("types")].as_array();
+                if (!types_arr.has_value())
+                {
+                    reject("types is not an array");
+                    return std::nullopt;
+                }
+                for (const auto& type_value : *types_arr)
+                {
+                    auto type_obj = type_value.as_object();
+                    if (!type_obj.has_value()
+                        || !type_obj->contains(std::string_view("name")))
+                    {
+                        reject(
+                            "types element violates the "
+                            "{name[, compatibleWith]} shape");
+                        return std::nullopt;
+                    }
+                    auto name =
+                        (*type_obj)[std::string_view("name")].as_string();
+                    if (!name.has_value() || name->empty())
+                    {
+                        reject(
+                            "types element name is empty or not a "
+                            "string");
+                        return std::nullopt;
+                    }
+                    Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType
+                        type_entry;
+                    type_entry.name = std::string(*name);
+                    if (type_obj->contains(std::string_view("compatibleWith")))
+                    {
+                        auto compatible =
+                            (*type_obj)[std::string_view("compatibleWith")]
+                                .as_array();
+                        if (!compatible.has_value())
+                        {
+                            reject("compatibleWith is not an array");
+                            return std::nullopt;
+                        }
+                        for (const auto& compatible_name : *compatible)
+                        {
+                            auto compatible_text = compatible_name.as_string();
+                            if (!compatible_text.has_value()
+                                || compatible_text->empty())
+                            {
+                                reject(
+                                    "compatibleWith element is not a "
+                                    "non-empty string");
+                                return std::nullopt;
+                            }
+                            type_entry.compatible_with.emplace_back(
+                                *compatible_text);
+                        }
+                    }
+                    types.push_back(std::move(type_entry));
+                }
+            }
+            faces.emplace(std::move(entry_key), std::move(ports));
+            ++entry_index;
+        }
+        return std::make_pair(std::move(faces), std::move(types));
+    }
+
     // actionCatalog 数组的逐条 fail-closed 解析——SetActionCatalog C ABI
     // 与 SeedFromContext context 键播种共享的唯一逻辑源（追加裁定二：
     // 解析循环的形状语义以原 SetActionCatalog 实现为唯一逻辑源，搬运
@@ -2126,6 +2330,29 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         // 闭包的 action_entries 引用捕获同生命周期前提）；编译期零活查
         // 询（不回调任何外部存储/PluginManager）。
         compiler.BindNodeFaces(&p->node_faces);
+        // entryFaces 通道消费 + 绑条目判据的数据快照（与 required 清单
+        // 同范式）：taskRepositoryRef 字段名按 guid 自会话 catalog 推导注
+        // 入（编译器不回调 catalog）——ResolveNodePorts 据此从节点
+        // settings 解析 entryId 并并入 entryFaces[该 entryId]。
+        {
+            Das::Core::GraphRuntime::GraphCompiler::RepositoryFieldMap
+                repository_fields;
+            for (const auto& entry : p->action_entries)
+            {
+                for (const auto& config_field : entry.config_fields)
+                {
+                    if (config_field.type
+                        == std::string_view("taskRepositoryRef"))
+                    {
+                        repository_fields[entry.action_id].insert(
+                            config_field.name);
+                    }
+                }
+            }
+            compiler.BindEntryFaces(
+                &p->entry_faces,
+                std::move(repository_fields));
+        }
         // 端口面注入（与 required 清单同范式）：catalog 声明的静态端口面
         // （direction 由 inputs/outputs 声明携带）喂给编译器，使无 factory
         // manager 的 authoring 编译路径也能做端口校验与边界端口推导——
