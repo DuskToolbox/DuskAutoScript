@@ -41,6 +41,27 @@ module
         [out] Das::ExportInterface::IDasPortMap * *pp_out_port_map);
 
     //=============================================================================
+    // Date arithmetic (DasDate, UTC calendar fields)
+    //=============================================================================
+
+    // tm 风格字段直加 + timegm 链归一化进位：{2026,1,31}+{month:1} → {2026,3,3}
+    // （2 月 31 日按 mktime 语义进位，不发明 clamp）。复合偏移（year/month/day/
+    // hour/minute/second 各字段）可并存。字段范围非法（month 0/13+、day 0、hour 24+
+    // 等）返回 DAS_E_INVALID_ARGUMENT，不夹紧。
+    [ export, c_abi ] DasResult DasDateAdd(
+        const Das::ExportInterface::DasDate* p_base,
+        const Das::ExportInterface::DasDate* p_delta,
+        [out] Das::ExportInterface::DasDate* p_out_result);
+
+    // 两 DasDate 归一化后转 unix（timegm 链，UTC 字段语义）比较，[out] 写三态
+    // int32：左<右 → -1，相等 → 0，左>右 → 1。字段范围非法返回
+    // DAS_E_INVALID_ARGUMENT。
+    [ export, c_abi ] DasResult DasDateCompare(
+        const Das::ExportInterface::DasDate* p_left,
+        const Das::ExportInterface::DasDate* p_right,
+        [out] int32_t* p_out_result);
+
+    //=============================================================================
     // Logging (U8 string variants)
     //=============================================================================
 
