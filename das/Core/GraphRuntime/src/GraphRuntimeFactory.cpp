@@ -321,6 +321,11 @@ struct GraphAuthoringSessionState
     Das::Core::GraphRuntime::Dto::GraphDocumentDto document;
     std::vector<Das::Core::GraphRuntime::Contract::ActionCatalogEntry>
         action_entries;
+    // faces 通道（nodeFaces context 键）：node_id → 注入的文档动态口面快
+    // 照。按节点索引——同 guid 的 A/B 节点口不串面（按节点合并，绝不按
+    // guid 聚合）；编译与画布投影按节点消费。faces 随 context 整体进入
+    // 会话创建，与文档快照同 freshness（会话缓存按 revision 键控）。
+    Das::Core::GraphRuntime::GraphCompiler::NodeFacesMap node_faces;
 };
 
 namespace
@@ -627,6 +632,14 @@ namespace
         }
     }
 
+    // Forward declarations — the parse helpers' definitions live further
+    // down, next to the CatalogPortShapeValid lock-shape rule they share.
+    std::optional<
+        std::vector<Das::Core::GraphRuntime::Contract::ActionCatalogEntry>>
+    ParseActionCatalogEntries(const yyjson::value& root);
+    std::optional<Das::Core::GraphRuntime::GraphCompiler::NodeFacesMap>
+    ParseNodeFaces(const yyjson::value& root);
+
     void SeedFromContext(GraphAuthoringSessionState& s, std::string_view json)
     {
         if (json.empty())
@@ -646,6 +659,43 @@ namespace
         if (!obj)
         {
             return;
+        }
+
+        // actionCatalog 键自解析（追加裁定二）：与 SetActionCatalog C ABI
+        // 共享同一逻辑源（ParseActionCatalogEntries——逐条 fail-closed，
+        // 形状语义搬运不重写），SeedFromContext 在此播种进既有
+        // action_entries 容器（MakeCatalogFromState 读 state 路径零改
+        // 动）。插件构造期的 SetActionCatalog 转发在过渡窗口仍发生——同
+        // 内容幂等全量替换，无行为差异（111.1-05 与全部调用者原子退
+        // 役）。畸形降级与 Wire 转发拒绝同款：零 catalog + WARNING，会话
+        // 继续加载文档。
+        if (obj->contains(std::string_view("actionCatalog")))
+        {
+            auto entries = ParseActionCatalogEntries(
+                (*obj)[std::string_view("actionCatalog")]);
+            if (entries.has_value())
+            {
+                s.action_entries = std::move(*entries);
+            }
+            else
+            {
+                DAS_CORE_LOG_WARN(
+                    "context actionCatalog key rejected (shape violation); "
+                    "the session continues with an empty catalog");
+            }
+        }
+        // nodeFaces 键（faces 注入通道）：文档动态口面以数据快照随
+        // context 进入会话状态（编译宿主零活查询）。畸形→该键整体零
+        // faces + WARNING（含键名与违规条目定位，ParseNodeFaces 在违规
+        // 点发出）+ 会话继续——降级到「无口」而非「全口」；键缺席→零
+        // faces 零告警（过渡态/standalone 合法）。
+        if (obj->contains(std::string_view("nodeFaces")))
+        {
+            auto faces = ParseNodeFaces((*obj)[std::string_view("nodeFaces")]);
+            if (faces.has_value())
+            {
+                s.node_faces = std::move(*faces);
+            }
         }
 
         // Real scheduler context shape: {taskId, properties, revision,
@@ -1286,6 +1336,453 @@ namespace
         return true;
     }
 
+    // faces 通道口条目的锁形规则（单一来源，nodeFaces/entryFaces 两键共
+    // 用——照 CatalogPortShapeValid 先例收拢）：必含非空 id/type 与
+    // direction ∈ {input,output}；label 可选（缺失即 id，非字符串即违
+    // 规）；键集外任何键均为形状违规。与 CatalogPortShapeValid 分立——
+    // 那是 catalog 静态口（portId/portType）的词表，两键不同源。
+    bool FacePortShapeValid(const yyjson::value& port_value)
+    {
+        auto port_obj = port_value.as_object();
+        if (!port_obj.has_value() || !port_obj->contains(std::string_view("id"))
+            || !port_obj->contains(std::string_view("type"))
+            || !port_obj->contains(std::string_view("direction")))
+        {
+            return false;
+        }
+        for (const auto& [key, value] : *port_obj)
+        {
+            (void)value;
+            if (key != std::string_view("id") && key != std::string_view("type")
+                && key != std::string_view("direction")
+                && key != std::string_view("label"))
+            {
+                return false;
+            }
+        }
+        const auto& port = *port_obj;
+        const auto  id = port[std::string_view("id")].as_string();
+        if (!id.has_value() || id->empty())
+        {
+            return false;
+        }
+        const auto type = port[std::string_view("type")].as_string();
+        if (!type.has_value() || type->empty())
+        {
+            return false;
+        }
+        const auto direction = port[std::string_view("direction")].as_string();
+        if (!direction.has_value()
+            || (*direction != std::string_view("input")
+                && *direction != std::string_view("output")))
+        {
+            return false;
+        }
+        if (port.contains(std::string_view("label"))
+            && !port[std::string_view("label")].as_string().has_value())
+        {
+            return false;
+        }
+        return true;
+    }
+
+    // nodeFaces context 键解析（fail-closed 逐条；畸形→该键整体零 faces
+    // + WARNING（含键名与违规条目定位）+ 会话继续——actionCatalog Wire
+    // 降级同款，降级到「无口」而非「全口」）。条目形状：
+    // {nodeId, ports:[{id,type,direction[,label]}]}；重复 nodeId 视为形
+    // 状违规（wire 契约=每节点一条）。数据源是 Core 自产会话投影，但
+    // 解析仍按不可信输入防御（threat T-111.1-01）。
+    std::optional<Das::Core::GraphRuntime::GraphCompiler::NodeFacesMap>
+    ParseNodeFaces(const yyjson::value& root)
+    {
+        auto arr = root.as_array();
+        if (!arr.has_value())
+        {
+            DAS_CORE_LOG_WARN(
+                "context nodeFaces key rejected: value is not an array; the "
+                "session continues with no injected faces");
+            return std::nullopt;
+        }
+        Das::Core::GraphRuntime::GraphCompiler::NodeFacesMap faces;
+        std::size_t                                          entry_index = 0;
+        for (const auto& entry_value : *arr)
+        {
+            const auto reject = [entry_index](std::string_view reason)
+            {
+                DAS_CORE_LOG_WARN(
+                    "context nodeFaces key rejected at entry {}: {}; the "
+                    "session continues with no injected faces",
+                    entry_index,
+                    reason);
+            };
+            auto entry_obj = entry_value.as_object();
+            if (!entry_obj.has_value()
+                || !entry_obj->contains(std::string_view("nodeId")))
+            {
+                reject("entry is not an object or carries no nodeId");
+                return std::nullopt;
+            }
+            auto node_id = (*entry_obj)[std::string_view("nodeId")].as_string();
+            if (!node_id.has_value() || node_id->empty())
+            {
+                reject("nodeId is empty or not a string");
+                return std::nullopt;
+            }
+            if (faces.find(std::string(*node_id)) != faces.end())
+            {
+                reject(
+                    "duplicate nodeId (the wire contract is one entry "
+                    "per node)");
+                return std::nullopt;
+            }
+            if (!entry_obj->contains(std::string_view("ports")))
+            {
+                reject("entry carries no ports array");
+                return std::nullopt;
+            }
+            auto ports_arr = (*entry_obj)[std::string_view("ports")].as_array();
+            if (!ports_arr.has_value())
+            {
+                reject("ports is not an array");
+                return std::nullopt;
+            }
+            std::vector<
+                Das::Core::GraphRuntime::GraphCompiler::DocumentFacePort>
+                ports;
+            ports.reserve(ports_arr->size());
+            std::size_t port_index = 0;
+            for (const auto& port_value : *ports_arr)
+            {
+                if (!FacePortShapeValid(port_value))
+                {
+                    reject(
+                        "port " + std::to_string(port_index)
+                        + " violates the {id,type,direction[,label]} "
+                          "shape");
+                    return std::nullopt;
+                }
+                auto        port_obj = port_value.as_object();
+                const auto& port = *port_obj;
+                Das::Core::GraphRuntime::GraphCompiler::DocumentFacePort
+                    port_entry;
+                port_entry.port_id =
+                    std::string(*port[std::string_view("id")].as_string());
+                port_entry.port_type =
+                    std::string(*port[std::string_view("type")].as_string());
+                port_entry.direction = std::string(
+                    *port[std::string_view("direction")].as_string());
+                // label 可选：缺失即 id。
+                if (port.contains(std::string_view("label")))
+                {
+                    if (auto label =
+                            port[std::string_view("label")].as_string();
+                        label.has_value() && !label->empty())
+                    {
+                        port_entry.label = std::string(*label);
+                    }
+                    else
+                    {
+                        port_entry.label = port_entry.port_id;
+                    }
+                }
+                else
+                {
+                    port_entry.label = port_entry.port_id;
+                }
+                ports.push_back(std::move(port_entry));
+                ++port_index;
+            }
+            faces.emplace(std::string(*node_id), std::move(ports));
+            ++entry_index;
+        }
+        return faces;
+    }
+
+    // actionCatalog 数组的逐条 fail-closed 解析——SetActionCatalog C ABI
+    // 与 SeedFromContext context 键播种共享的唯一逻辑源（追加裁定二：
+    // 解析循环的形状语义以原 SetActionCatalog 实现为唯一逻辑源，搬运
+    // 不重写）。任何形状违规→nullopt（整批拒绝语义由调用方决定：C ABI
+    // 返回 DAS_E_INVALID_ARGUMENT 且会话不动；context 键降级为零
+    // catalog+WARNING 且会话继续）。
+    std::optional<
+        std::vector<Das::Core::GraphRuntime::Contract::ActionCatalogEntry>>
+    ParseActionCatalogEntries(const yyjson::value& root)
+    {
+        auto arr = root.as_array();
+        if (!arr)
+        {
+            return std::nullopt;
+        }
+        std::vector<Das::Core::GraphRuntime::Contract::ActionCatalogEntry>
+            entries;
+        entries.reserve(arr->size());
+        for (const auto& v : *arr)
+        {
+            auto entry_obj = v.as_object();
+            if (!entry_obj
+                || !entry_obj->contains(std::string_view("actionId")))
+            {
+                return std::nullopt;
+            }
+            auto action_id =
+                (*entry_obj)[std::string_view("actionId")].as_string();
+            if (!action_id || action_id->empty())
+            {
+                return std::nullopt;
+            }
+            Das::Core::GraphRuntime::Contract::ActionCatalogEntry entry;
+            entry.action_id = *action_id;
+            // Missing/empty label falls back to the actionId; a present
+            // non-string label is a shape violation.
+            entry.label = *action_id;
+            if (entry_obj->contains(std::string_view("label")))
+            {
+                auto label =
+                    (*entry_obj)[std::string_view("label")].as_string();
+                if (!label)
+                {
+                    return std::nullopt;
+                }
+                if (!label->empty())
+                {
+                    entry.label = *label;
+                }
+            }
+            if (entry_obj->contains(std::string_view("ports")))
+            {
+                auto ports_val =
+                    (*entry_obj)[std::string_view("ports")].as_array();
+                if (!ports_val)
+                {
+                    return std::nullopt;
+                }
+                entry.ports.reserve(ports_val->size());
+                for (const auto& port_val : *ports_val)
+                {
+                    auto port_obj = port_val.as_object();
+                    // 端口锁形规则单一来源：CatalogPortShapeValid（与端口
+                    // 面构建段共享——改键集/值域只改那里）。loopCarried 在
+                    // 此只验不存：wire 投影不携带它，端口面通道从目录原文
+                    // 重读。
+                    if (!port_obj || !CatalogPortShapeValid(port_val))
+                    {
+                        return std::nullopt;
+                    }
+                    Das::Core::GraphRuntime::Contract::GraphNodePort port;
+                    if (auto id =
+                            (*port_obj)[std::string_view("portId")].as_string();
+                        id && !id->empty())
+                    {
+                        port.port_id = *id;
+                    }
+                    else
+                    {
+                        return std::nullopt;
+                    }
+                    if (auto type = (*port_obj)[std::string_view("portType")]
+                                        .as_string();
+                        type && !type->empty())
+                    {
+                        port.port_type = *type;
+                    }
+                    else
+                    {
+                        return std::nullopt;
+                    }
+                    auto direction =
+                        (*port_obj)[std::string_view("direction")].as_string();
+                    if (direction
+                        && (*direction == std::string_view("input")
+                            || *direction == std::string_view("output")))
+                    {
+                        port.direction = *direction;
+                    }
+                    else
+                    {
+                        return std::nullopt;
+                    }
+                    if (port_obj->contains(std::string_view("displayLabel")))
+                    {
+                        auto display_label =
+                            (*port_obj)[std::string_view("displayLabel")]
+                                .as_string();
+                        if (!display_label)
+                        {
+                            return std::nullopt;
+                        }
+                        port.display_label = *display_label;
+                    }
+                    entry.ports.push_back(std::move(port));
+                }
+            }
+            // Optional config channel:
+            // {name,type,default?,taskGuid?,label?,required?,options?}
+            // elements with the element key set locked to exactly those keys
+            // — the same whole-catalog rejection on malformed input as the
+            // port channel.
+            if (entry_obj->contains(std::string_view("config")))
+            {
+                auto config_val =
+                    (*entry_obj)[std::string_view("config")].as_array();
+                if (!config_val)
+                {
+                    return std::nullopt;
+                }
+                entry.config_fields.reserve(config_val->size());
+                for (const auto& config_item : *config_val)
+                {
+                    auto config_obj = config_item.as_object();
+                    if (!config_obj
+                        || !config_obj->contains(std::string_view("name"))
+                        || !config_obj->contains(std::string_view("type")))
+                    {
+                        return std::nullopt;
+                    }
+                    for (const auto& [key, value] : *config_obj)
+                    {
+                        (void)value;
+                        if (key != std::string_view("name")
+                            && key != std::string_view("type")
+                            && key != std::string_view("default")
+                            && key != std::string_view("taskGuid")
+                            && key != std::string_view("label")
+                            && key != std::string_view("description")
+                            && key != std::string_view("required")
+                            && key != std::string_view("options"))
+                        {
+                            return std::nullopt;
+                        }
+                    }
+                    auto name =
+                        (*config_obj)[std::string_view("name")].as_string();
+                    if (!name || name->empty())
+                    {
+                        return std::nullopt;
+                    }
+                    auto type =
+                        (*config_obj)[std::string_view("type")].as_string();
+                    if (!type || type->empty())
+                    {
+                        return std::nullopt;
+                    }
+                    Das::Core::GraphRuntime::Contract::ConfigFieldDescriptor
+                        field;
+                    field.name = *name;
+                    field.type = *type;
+                    if (config_obj->contains(std::string_view("default")))
+                    {
+                        const auto& default_value =
+                            (*config_obj)[std::string_view("default")];
+                        if (!default_value.is_null())
+                        {
+                            field.default_value =
+                                Das::Utils::CloneYyjsonValue(default_value);
+                        }
+                    }
+                    // Optional declared target task type of a
+                    // component-domain field: a non-string value is a shape
+                    // violation; an empty string reads as "none declared"
+                    // (the same engaged-only reading the producer applies).
+                    if (config_obj->contains(std::string_view("taskGuid")))
+                    {
+                        auto task_guid =
+                            (*config_obj)[std::string_view("taskGuid")]
+                                .as_string();
+                        if (!task_guid)
+                        {
+                            return std::nullopt;
+                        }
+                        if (!task_guid->empty())
+                        {
+                            field.task_guid = *task_guid;
+                        }
+                    }
+                    // Optional producer-resolved display label of the field:
+                    // a non-string value is a shape violation; an empty or
+                    // absent label reads as "none declared" and the fields
+                    // projection falls back to the field name (the same
+                    // engaged-only reading the producer applies).
+                    if (config_obj->contains(std::string_view("label")))
+                    {
+                        auto label = (*config_obj)[std::string_view("label")]
+                                         .as_string();
+                        if (!label)
+                        {
+                            return std::nullopt;
+                        }
+                        if (!label->empty())
+                        {
+                            field.label = *label;
+                        }
+                    }
+                    // Optional producer-resolved help text of the field:
+                    // same shape rules as label (a non-string value is a
+                    // shape violation; empty or absent reads as "none
+                    // declared" — the projection then omits the wire key).
+                    if (config_obj->contains(std::string_view("description")))
+                    {
+                        auto description =
+                            (*config_obj)[std::string_view("description")]
+                                .as_string();
+                        if (!description)
+                        {
+                            return std::nullopt;
+                        }
+                        if (!description->empty())
+                        {
+                            field.description = *description;
+                        }
+                    }
+                    // Optional required declaration: a non-bool value is a
+                    // shape violation rejecting the whole catalog; absent or
+                    // false reads as not required (the projection always
+                    // emits the boolean so consumers see the declaration).
+                    if (config_obj->contains(std::string_view("required")))
+                    {
+                        auto required =
+                            (*config_obj)[std::string_view("required")]
+                                .as_bool();
+                        if (!required)
+                        {
+                            return std::nullopt;
+                        }
+                        field.required = *required;
+                    }
+                    // Optional closed candidate-list declaration: a non-empty
+                    // array of strings (the field's value domain, e.g. an
+                    // operator vocabulary). A non-array value or any
+                    // non-string/empty element is a shape violation rejecting
+                    // the whole catalog (fail-closed); an empty array reads
+                    // as not declared (engaged-only, the producer never
+                    // emits one).
+                    if (config_obj->contains(std::string_view("options")))
+                    {
+                        auto options =
+                            (*config_obj)[std::string_view("options")]
+                                .as_array();
+                        if (!options)
+                        {
+                            return std::nullopt;
+                        }
+                        field.options.reserve(options->size());
+                        for (const auto& option : *options)
+                        {
+                            auto option_text = option.as_string();
+                            if (!option_text || option_text->empty())
+                            {
+                                return std::nullopt;
+                            }
+                            field.options.emplace_back(*option_text);
+                        }
+                    }
+                    entry.config_fields.push_back(std::move(field));
+                }
+            }
+            entries.push_back(std::move(entry));
+        }
+        return entries;
+    }
+
     // 边界推导 C ABI 的 catalog 端口面解析：只消费 actionId + ports 通道，
     // 元素形状与 SetActionCatalog 同锁（共享 CatalogPortShapeValid 单一
     // 来源），同 all-or-nothing 拒绝语义——畸形输入整体拒绝（nullopt），
@@ -1624,6 +2121,11 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         // No factory manager bound at the authoring boundary, so manifest port
         // validation is skipped (acceptable for authoring preview).
         Das::Core::GraphRuntime::GraphCompiler compiler;
+        // faces 通道消费：nodeFaces 快照随 context 进入会话状态，此处借
+        // 引用注入编译器（编译同步完成，p 在编译期内有效——与 provider
+        // 闭包的 action_entries 引用捕获同生命周期前提）；编译期零活查
+        // 询（不回调任何外部存储/PluginManager）。
+        compiler.BindNodeFaces(&p->node_faces);
         // 端口面注入（与 required 清单同范式）：catalog 声明的静态端口面
         // （direction 由 inputs/outputs 声明携带）喂给编译器，使无 factory
         // manager 的 authoring 编译路径也能做端口校验与边界端口推导——
@@ -1918,7 +2420,10 @@ GraphAuthoringSessionUpgradeToGraph(GraphAuthoringSessionState* p)
 // the component — whose elements must be exactly
 // {portId,portType,direction[,displayLabel]} with direction in
 // {"input","output"}. Malformed input rejects the whole catalog and leaves
-// the session untouched.
+// the session untouched. The parse loop itself lives in
+// ParseActionCatalogEntries (shared with the SeedFromContext context-key
+// seeding channel); this entry keeps the C ABI's whole-batch reject
+// semantics.
 DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
     GraphAuthoringSessionState* p,
     IDasReadOnlyString*         p_action_catalog_json)
@@ -1939,280 +2444,13 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
     }
     try
     {
-        auto root = yyjson::read(std::string(utf8));
-        auto arr = root.as_array();
-        if (!arr)
+        auto       root = yyjson::read(std::string(utf8));
+        const auto entries = ParseActionCatalogEntries(root);
+        if (!entries.has_value())
         {
             return DAS_E_INVALID_ARGUMENT;
         }
-        std::vector<Das::Core::GraphRuntime::Contract::ActionCatalogEntry>
-            entries;
-        entries.reserve(arr->size());
-        for (const auto& v : *arr)
-        {
-            auto entry_obj = v.as_object();
-            if (!entry_obj
-                || !entry_obj->contains(std::string_view("actionId")))
-            {
-                return DAS_E_INVALID_ARGUMENT;
-            }
-            auto action_id =
-                (*entry_obj)[std::string_view("actionId")].as_string();
-            if (!action_id || action_id->empty())
-            {
-                return DAS_E_INVALID_ARGUMENT;
-            }
-            Das::Core::GraphRuntime::Contract::ActionCatalogEntry entry;
-            entry.action_id = *action_id;
-            // Missing/empty label falls back to the actionId; a present
-            // non-string label is a shape violation.
-            entry.label = *action_id;
-            if (entry_obj->contains(std::string_view("label")))
-            {
-                auto label =
-                    (*entry_obj)[std::string_view("label")].as_string();
-                if (!label)
-                {
-                    return DAS_E_INVALID_ARGUMENT;
-                }
-                if (!label->empty())
-                {
-                    entry.label = *label;
-                }
-            }
-            if (entry_obj->contains(std::string_view("ports")))
-            {
-                auto ports_val =
-                    (*entry_obj)[std::string_view("ports")].as_array();
-                if (!ports_val)
-                {
-                    return DAS_E_INVALID_ARGUMENT;
-                }
-                entry.ports.reserve(ports_val->size());
-                for (const auto& port_val : *ports_val)
-                {
-                    auto port_obj = port_val.as_object();
-                    // 端口锁形规则单一来源：CatalogPortShapeValid（与端口
-                    // 面构建段共享——改键集/值域只改那里）。loopCarried 在
-                    // 此只验不存：wire 投影不携带它，端口面通道从目录原文
-                    // 重读。
-                    if (!port_obj || !CatalogPortShapeValid(port_val))
-                    {
-                        return DAS_E_INVALID_ARGUMENT;
-                    }
-                    Das::Core::GraphRuntime::Contract::GraphNodePort port;
-                    if (auto id =
-                            (*port_obj)[std::string_view("portId")].as_string();
-                        id && !id->empty())
-                    {
-                        port.port_id = *id;
-                    }
-                    else
-                    {
-                        return DAS_E_INVALID_ARGUMENT;
-                    }
-                    if (auto type = (*port_obj)[std::string_view("portType")]
-                                        .as_string();
-                        type && !type->empty())
-                    {
-                        port.port_type = *type;
-                    }
-                    else
-                    {
-                        return DAS_E_INVALID_ARGUMENT;
-                    }
-                    auto direction =
-                        (*port_obj)[std::string_view("direction")].as_string();
-                    if (direction
-                        && (*direction == std::string_view("input")
-                            || *direction == std::string_view("output")))
-                    {
-                        port.direction = *direction;
-                    }
-                    else
-                    {
-                        return DAS_E_INVALID_ARGUMENT;
-                    }
-                    if (port_obj->contains(std::string_view("displayLabel")))
-                    {
-                        auto display_label =
-                            (*port_obj)[std::string_view("displayLabel")]
-                                .as_string();
-                        if (!display_label)
-                        {
-                            return DAS_E_INVALID_ARGUMENT;
-                        }
-                        port.display_label = *display_label;
-                    }
-                    entry.ports.push_back(std::move(port));
-                }
-            }
-            // Optional config channel:
-            // {name,type,default?,taskGuid?,label?,required?,options?}
-            // elements with the element key set locked to exactly those keys
-            // — the same whole-catalog rejection on malformed input as the
-            // port channel.
-            if (entry_obj->contains(std::string_view("config")))
-            {
-                auto config_val =
-                    (*entry_obj)[std::string_view("config")].as_array();
-                if (!config_val)
-                {
-                    return DAS_E_INVALID_ARGUMENT;
-                }
-                entry.config_fields.reserve(config_val->size());
-                for (const auto& config_item : *config_val)
-                {
-                    auto config_obj = config_item.as_object();
-                    if (!config_obj
-                        || !config_obj->contains(std::string_view("name"))
-                        || !config_obj->contains(std::string_view("type")))
-                    {
-                        return DAS_E_INVALID_ARGUMENT;
-                    }
-                    for (const auto& [key, value] : *config_obj)
-                    {
-                        (void)value;
-                        if (key != std::string_view("name")
-                            && key != std::string_view("type")
-                            && key != std::string_view("default")
-                            && key != std::string_view("taskGuid")
-                            && key != std::string_view("label")
-                            && key != std::string_view("description")
-                            && key != std::string_view("required")
-                            && key != std::string_view("options"))
-                        {
-                            return DAS_E_INVALID_ARGUMENT;
-                        }
-                    }
-                    auto name =
-                        (*config_obj)[std::string_view("name")].as_string();
-                    if (!name || name->empty())
-                    {
-                        return DAS_E_INVALID_ARGUMENT;
-                    }
-                    auto type =
-                        (*config_obj)[std::string_view("type")].as_string();
-                    if (!type || type->empty())
-                    {
-                        return DAS_E_INVALID_ARGUMENT;
-                    }
-                    Das::Core::GraphRuntime::Contract::ConfigFieldDescriptor
-                        field;
-                    field.name = *name;
-                    field.type = *type;
-                    if (config_obj->contains(std::string_view("default")))
-                    {
-                        const auto& default_value =
-                            (*config_obj)[std::string_view("default")];
-                        if (!default_value.is_null())
-                        {
-                            field.default_value =
-                                Das::Utils::CloneYyjsonValue(default_value);
-                        }
-                    }
-                    // Optional declared target task type of a
-                    // component-domain field: a non-string value is a shape
-                    // violation; an empty string reads as "none declared"
-                    // (the same engaged-only reading the producer applies).
-                    if (config_obj->contains(std::string_view("taskGuid")))
-                    {
-                        auto task_guid =
-                            (*config_obj)[std::string_view("taskGuid")]
-                                .as_string();
-                        if (!task_guid)
-                        {
-                            return DAS_E_INVALID_ARGUMENT;
-                        }
-                        if (!task_guid->empty())
-                        {
-                            field.task_guid = *task_guid;
-                        }
-                    }
-                    // Optional producer-resolved display label of the field:
-                    // a non-string value is a shape violation; an empty or
-                    // absent label reads as "none declared" and the fields
-                    // projection falls back to the field name (the same
-                    // engaged-only reading the producer applies).
-                    if (config_obj->contains(std::string_view("label")))
-                    {
-                        auto label = (*config_obj)[std::string_view("label")]
-                                         .as_string();
-                        if (!label)
-                        {
-                            return DAS_E_INVALID_ARGUMENT;
-                        }
-                        if (!label->empty())
-                        {
-                            field.label = *label;
-                        }
-                    }
-                    // Optional producer-resolved help text of the field:
-                    // same shape rules as label (a non-string value is a
-                    // shape violation; empty or absent reads as "none
-                    // declared" — the projection then omits the wire key).
-                    if (config_obj->contains(std::string_view("description")))
-                    {
-                        auto description =
-                            (*config_obj)[std::string_view("description")]
-                                .as_string();
-                        if (!description)
-                        {
-                            return DAS_E_INVALID_ARGUMENT;
-                        }
-                        if (!description->empty())
-                        {
-                            field.description = *description;
-                        }
-                    }
-                    // Optional required declaration: a non-bool value is a
-                    // shape violation rejecting the whole catalog; absent or
-                    // false reads as not required (the projection always
-                    // emits the boolean so consumers see the declaration).
-                    if (config_obj->contains(std::string_view("required")))
-                    {
-                        auto required =
-                            (*config_obj)[std::string_view("required")]
-                                .as_bool();
-                        if (!required)
-                        {
-                            return DAS_E_INVALID_ARGUMENT;
-                        }
-                        field.required = *required;
-                    }
-                    // Optional closed candidate-list declaration: a non-empty
-                    // array of strings (the field's value domain, e.g. an
-                    // operator vocabulary). A non-array value or any
-                    // non-string/empty element is a shape violation rejecting
-                    // the whole catalog (fail-closed); an empty array reads
-                    // as not declared (engaged-only, the producer never
-                    // emits one).
-                    if (config_obj->contains(std::string_view("options")))
-                    {
-                        auto options =
-                            (*config_obj)[std::string_view("options")]
-                                .as_array();
-                        if (!options)
-                        {
-                            return DAS_E_INVALID_ARGUMENT;
-                        }
-                        field.options.reserve(options->size());
-                        for (const auto& option : *options)
-                        {
-                            auto option_text = option.as_string();
-                            if (!option_text || option_text->empty())
-                            {
-                                return DAS_E_INVALID_ARGUMENT;
-                            }
-                            field.options.emplace_back(*option_text);
-                        }
-                    }
-                    entry.config_fields.push_back(std::move(field));
-                }
-            }
-            entries.push_back(std::move(entry));
-        }
-        p->action_entries = std::move(entries);
+        p->action_entries = std::move(*entries);
         return DAS_S_OK;
     }
     catch (...)

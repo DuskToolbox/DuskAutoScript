@@ -6,6 +6,7 @@
 #include <das/DasString.hpp>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -109,12 +110,36 @@ namespace
         return out;
     }
 
-    // Helper: populate the session's registry-backed actionCatalog so that
-    // addGraphNode / addFormSequenceItem succeed (D-84-31/32/33). Tests inject
-    // a literal {actionId,label} entry set rather than reaching into
-    // PluginManager. Returns the Core result so shape-rejection cases can
-    // assert on it.
-    DasResult SetActionCatalog(
+    // Compose a session context whose actionCatalog key seeds the catalog
+    // through SeedFromContext — the production wiring shape (the scheduler
+    // assembles the registry snapshot into the session context; the plugin
+    // forwards the whole context verbatim to CreateGraphAuthoringSession, so
+    // the Core-side parse is the seeding channel).
+    std::string WithActionCatalog(
+        std::string_view context,
+        std::string_view catalog_json)
+    {
+        yyjson::value root(Das::Utils::MakeYyjsonObject());
+        if (!context.empty())
+        {
+            root = yyjson::read(std::string(context));
+        }
+        auto obj = root.as_object();
+        if (!obj)
+        {
+            return std::string(context);
+        }
+        (*obj)[std::string_view("actionCatalog")] =
+            yyjson::read(std::string(catalog_json));
+        auto serialized = Das::Utils::SerializeYyjsonValue(root);
+        return serialized.value_or(std::string(context));
+    }
+
+    // Direct wrapper over the SetActionCatalog C ABI — for tests asserting
+    // the entry point's own accept/reject semantics (the ABI stays live
+    // through the transition window; its retirement lands atomically with
+    // the last plugin caller in a later plan).
+    DasResult CatalogAbi(
         GraphAuthoringSessionState* p,
         const std::string&          json_array)
     {
@@ -222,8 +247,8 @@ namespace
 
     TEST(GraphAuthoringSessionTest, GraphModeApplyChangeAddGraphNode)
     {
-        const SessionHandle s{""}; // graph mode
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        const SessionHandle s{
+            WithActionCatalog("", R"([{"actionId":"{g1}"}])")}; // graph mode
         auto r = ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -287,10 +312,10 @@ namespace
     {
         constexpr std::string_view item_a =
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
-        const SessionHandle s{
-            std::string(R"({"items":[)") + std::string(item_a) + "]}"};
-        SetActionCatalog(s.p, R"([{"actionId":"{gb}"}])");
-        auto r = ApplyChange(
+        const SessionHandle s{WithActionCatalog(
+            std::string(R"({"items":[)") + std::string(item_a) + "]}",
+            R"([{"actionId":"{gb}"}])")};
+        auto                r = ApplyChange(
             s.p,
             WrapEnvelope("addFormSequenceItem", R"({"actionId":"{gb}"})"));
         const auto result = Compact(JsonToUtf8(r.Get()));
@@ -358,13 +383,10 @@ namespace
         GraphAuthoringSessionTest,
         ActionCatalogObjectEntriesProjectLabelAndFallback)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"([{"actionId":"{g1}","label":"das.flow.launch"},{"actionId":"{g2}"}])"),
-            DAS_S_OK);
-        const auto document = DocumentOf(s.p);
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"([{"actionId":"{g1}","label":"das.flow.launch"},{"actionId":"{g2}"}])")};
+        const auto          document = DocumentOf(s.p);
 
         // A labeled entry keeps its label on the GetDocument projection.
         const auto labeled = CatalogLabelOf(document, "{g1}");
@@ -389,13 +411,13 @@ namespace
         const SessionHandle s{""};
         // Entry missing actionId.
         EXPECT_EQ(
-            SetActionCatalog(s.p, R"([{"label":"x"}])"),
+            CatalogAbi(s.p, R"([{"label":"x"}])"),
             DAS_E_INVALID_ARGUMENT);
         // Non-object entry: the legacy flat guid-string array form is gone.
-        EXPECT_EQ(SetActionCatalog(s.p, R"(["{g1}"])"), DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(CatalogAbi(s.p, R"(["{g1}"])"), DAS_E_INVALID_ARGUMENT);
         // Payload is not an array at all.
         EXPECT_EQ(
-            SetActionCatalog(s.p, R"({"actionId":"{g1}"})"),
+            CatalogAbi(s.p, R"({"actionId":"{g1}"})"),
             DAS_E_INVALID_ARGUMENT);
 
         // Rejections leave the session untouched: no catalog is projected.
@@ -461,17 +483,13 @@ namespace
 
     TEST(GraphAuthoringSessionTest, NodePortsProjectThroughSessionCatalog)
     {
-        const SessionHandle s{""}; // graph mode
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"json([{"actionId":"{g1}","label":"das.flow.branch","ports":[{"portId":"condition","portType":"bool","direction":"input"},{"portId":"true","portType":"signal","direction":"output"}]}])json")}; // graph mode
         // The registry snapshot form the Scheduler injects into the context:
         // {actionId,label} entries plus the per-entry static port surface
         // read from the component manifest definition
         // (inputs → "input", outputs → "output").
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"json([{"actionId":"{g1}","label":"das.flow.branch","ports":[{"portId":"condition","portType":"bool","direction":"input"},{"portId":"true","portType":"signal","direction":"output"}]}])json"),
-            DAS_S_OK);
-
         // The node is minted from the catalog entry, so its componentGuid is
         // the actionId the static ports merge onto.
         ApplyChange(
@@ -524,27 +542,25 @@ namespace
     {
         const SessionHandle s{""};
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"bool","direction":"sideways"}]}])json"),
             DAS_E_INVALID_ARGUMENT);
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"","direction":"input"}]}])json"),
             DAS_E_INVALID_ARGUMENT);
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"bool","direction":"input","extra":1}]}])json"),
             DAS_E_INVALID_ARGUMENT);
         EXPECT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"json([{"actionId":"{g1}","ports":["x"]}])json"),
+            CatalogAbi(s.p, R"json([{"actionId":"{g1}","ports":["x"]}])json"),
             DAS_E_INVALID_ARGUMENT);
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"json([{"actionId":"{g1}","ports":{"portId":"x"}}])json"),
             DAS_E_INVALID_ARGUMENT);
@@ -561,12 +577,12 @@ namespace
     {
         const SessionHandle s{""};
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"json([{"actionId":"{g1}","ports":[{"portId":"index","portType":"int64","direction":"output","loopCarried":true}]}])json"),
             DAS_S_OK);
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"json([{"actionId":"{g1}","ports":[{"portId":"index","portType":"int64","direction":"output","loopCarried":"yes"}]}])json"),
             DAS_E_INVALID_ARGUMENT);
@@ -580,17 +596,14 @@ namespace
     // "data". This locks the wire shape the UI fixture consumes.
     TEST(GraphAuthoringSessionTest, NodePortsProjectFiveKeysEndToEnd)
     {
-        const SessionHandle s{""}; // graph mode
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"json([{"actionId":"{g1}","label":"das.maapi.run","ports":[
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"json([{"actionId":"{g1}","label":"das.maapi.run","ports":[
                     {"portId":"executionInput","portType":"object","direction":"input","displayLabel":"Execution Input"},
                     {"portId":"completedTasks","portType":"array<string>","direction":"output","displayLabel":"Completed Tasks"},
                     {"portId":"succeeded","portType":"signal","direction":"output","displayLabel":"Succeeded"},
                     {"portId":"failed","portType":"signal","direction":"output","displayLabel":"Failed"}
-                ]}])json"),
-            DAS_S_OK);
+                ]}])json")}; // graph mode
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -679,8 +692,9 @@ namespace
         // Start empty (graph mode), add a node, take the acceptedProperties the
         // scheduler would persist, and re-seed a fresh session from it — the
         // node must survive the round-trip.
-        const SessionHandle s1{""};
-        SetActionCatalog(s1.p, R"([{"actionId":"{g1}"},{"actionId":"{g2}"}])");
+        const SessionHandle s1{WithActionCatalog(
+            "",
+            R"([{"actionId":"{g1}"},{"actionId":"{g2}"}])")};
         ASSERT_NE(
             Compact(
                 JsonToUtf8(
@@ -715,8 +729,8 @@ namespace
         // Seed a graph store, Compile, and confirm the plan is well-formed
         // (object with the compiled-plan shape; execution itself is exercised
         // by DasGraphTaskTest / GraphRuntimeTest).
-        const SessionHandle s{""};
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        const SessionHandle s{
+            WithActionCatalog("", R"([{"actionId":"{g1}"}])")};
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -736,12 +750,9 @@ namespace
     // $graph_input broadcast 绑定、边界口清单进编译产物。
     TEST(GraphAuthoringSessionTest, CompileDerivesBoundaryFromSessionCatalog)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"json([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"string","direction":"output"}]}])json"),
-            DAS_S_OK);
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"json([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"string","direction":"output"}]}])json")};
         ASSERT_NE(
             Compact(
                 JsonToUtf8(
@@ -879,8 +890,8 @@ namespace
 
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_GraphOutput)
     {
-        const SessionHandle s{""};
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        const SessionHandle s{
+            WithActionCatalog("", R"([{"actionId":"{g1}"}])")};
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -898,8 +909,8 @@ namespace
 
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_ApplyResultEnvelope)
     {
-        const SessionHandle s{""};
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        const SessionHandle s{
+            WithActionCatalog("", R"([{"actionId":"{g1}"}])")};
         auto apply_json = JsonToUtf8(
             ApplyChange(
                 s.p,
@@ -1014,17 +1025,14 @@ namespace
     // input defaults (branch.condition-style ports).
     TEST(GraphAuthoringSessionTest, InputDataPortsCarryOptionalValueKey)
     {
-        const SessionHandle s{""}; // graph mode
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"json([{"actionId":"{g1}","label":"das.flow.branch","ports":[
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"json([{"actionId":"{g1}","label":"das.flow.branch","ports":[
                     {"portId":"condition","portType":"bool","direction":"input"},
                     {"portId":"in","portType":"signal","direction":"input"},
                     {"portId":"true","portType":"signal","direction":"output"},
                     {"portId":"index","portType":"int","direction":"output"}
-                ]}])json"),
-            DAS_S_OK);
+                ]}])json")}; // graph mode
         ASSERT_EQ(
             Compact(
                 JsonToUtf8(
@@ -1145,8 +1153,8 @@ namespace
 
     TEST(GraphAuthoringSessionTest, MoveGraphNodeEndToEndWritesViewData)
     {
-        const SessionHandle s{""};
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        const SessionHandle s{
+            WithActionCatalog("", R"([{"actionId":"{g1}"}])")};
         ASSERT_EQ(
             Compact(
                 JsonToUtf8(
@@ -1187,8 +1195,8 @@ namespace
 
     TEST(GraphAuthoringSessionTest, MoveGraphNodeOverwritesExistingPosition)
     {
-        const SessionHandle s{""};
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        const SessionHandle s{
+            WithActionCatalog("", R"([{"actionId":"{g1}"}])")};
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -1214,8 +1222,8 @@ namespace
 
     TEST(GraphAuthoringSessionTest, MoveGraphNodeKeepsRevisionStable)
     {
-        const SessionHandle s{""};
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        const SessionHandle s{
+            WithActionCatalog("", R"([{"actionId":"{g1}"}])")};
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -1246,8 +1254,8 @@ namespace
     {
         // The scheduler persists acceptedProperties and re-seeds sessions
         // from it — the viewData partition must survive that round-trip.
-        const SessionHandle s1{""};
-        SetActionCatalog(s1.p, R"([{"actionId":"{g1}"}])");
+        const SessionHandle s1{
+            WithActionCatalog("", R"([{"actionId":"{g1}"}])")};
         ApplyChange(
             s1.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -1439,14 +1447,13 @@ namespace
 
     TEST(GraphAuthoringSessionTest, RemoveGraphNodesEndToEndDropsBatch)
     {
-        const SessionHandle s{""};
-        // The declared data port surface the edge-type derivation resolves
-        // through ("o" output / "i" input on {g1}).
-        SetActionCatalog(
-            s.p,
+        const SessionHandle s{WithActionCatalog(
+            "",
             R"([{"actionId":"{g1}","ports":[)"
             R"({"portId":"o","portType":"int","direction":"output"},)"
-            R"({"portId":"i","portType":"int","direction":"input"}]}])");
+            R"({"portId":"i","portType":"int","direction":"input"}]}])")};
+        // The declared data port surface the edge-type derivation resolves
+        // through ("o" output / "i" input on {g1}).
         for (int node_count = 0; node_count < 3; ++node_count)
         {
             ApplyChange(
@@ -1510,8 +1517,8 @@ namespace
 
     TEST(GraphAuthoringSessionTest, MoveGraphNodesEndToEndWritesBatch)
     {
-        const SessionHandle s{""};
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        const SessionHandle s{
+            WithActionCatalog("", R"([{"actionId":"{g1}"}])")};
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -1691,8 +1698,8 @@ namespace
 
     TEST(GraphAuthoringSessionTest, RenameGraphNodeEndToEndSurvivesReseed)
     {
-        const SessionHandle s1{""};
-        SetActionCatalog(s1.p, R"([{"actionId":"{g1}"}])");
+        const SessionHandle s1{
+            WithActionCatalog("", R"([{"actionId":"{g1}"}])")};
         ApplyChange(
             s1.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -1843,14 +1850,10 @@ namespace
 
     TEST(GraphAuthoringSessionTest, SetActionCatalogConfigProjectsIntoFields)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"([{"actionId":"{g1}","label":"das.flow.delay","config":[)"
-                R"({"name":"delay_ms","type":"int64","default":1000}]}])"),
-            DAS_S_OK);
-
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"([{"actionId":"{g1}","label":"das.flow.delay","config":[)"
+            R"({"name":"delay_ms","type":"int64","default":1000}]}])")};
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -1878,42 +1881,34 @@ namespace
     // in place so a single bad producer cannot silently blank the session.
     TEST(GraphAuthoringSessionTest, SetActionCatalogConfigMalformedRejected)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"([{"actionId":"{g1}","config":[{"name":"delay_ms",)"
-                R"("type":"int64","default":1000}]}])"),
-            DAS_S_OK);
-
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"([{"actionId":"{g1}","config":[{"name":"delay_ms",)"
+            R"("type":"int64","default":1000}]}])")};
         // Unknown key on a config element.
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
                 R"("default":1,"extra":2}]}])"),
             DAS_E_INVALID_ARGUMENT);
         // Missing name / missing type / empty type.
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"([{"actionId":"{g1}","config":[{"type":"int"}]}])"),
             DAS_E_INVALID_ARGUMENT);
         EXPECT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"([{"actionId":"{g1}","config":[{"name":"d"}]}])"),
+            CatalogAbi(s.p, R"([{"actionId":"{g1}","config":[{"name":"d"}]}])"),
             DAS_E_INVALID_ARGUMENT);
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"([{"actionId":"{g1}","config":[{"name":"d","type":""}]}])"),
             DAS_E_INVALID_ARGUMENT);
         // Non-array config value.
         EXPECT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"([{"actionId":"{g1}","config":{"delay_ms":1}}])"),
+            CatalogAbi(s.p, R"([{"actionId":"{g1}","config":{"delay_ms":1}}])"),
             DAS_E_INVALID_ARGUMENT);
 
         // The first (well-formed) catalog survived the failed sets: the
@@ -1934,16 +1929,12 @@ namespace
     // non-string taskGuid is a shape violation rejecting the whole catalog.
     TEST(GraphAuthoringSessionTest, SetActionCatalogConfigCarriesTaskGuid)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"([{"actionId":"{g1}","label":"das.maapi.run","config":[)"
-                R"({"name":"repositoryRef","type":"taskRepositoryRef",)"
-                R"("taskGuid":"69F20001-0000-4000-8000-000000000001"},)"
-                R"({"name":"runtimeInputs","type":"object"}]}])"),
-            DAS_S_OK);
-
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"([{"actionId":"{g1}","label":"das.maapi.run","config":[)"
+            R"({"name":"repositoryRef","type":"taskRepositoryRef",)"
+            R"("taskGuid":"69F20001-0000-4000-8000-000000000001"},)"
+            R"({"name":"runtimeInputs","type":"object"}]}])")};
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -1973,7 +1964,7 @@ namespace
         // Non-string taskGuid rejects the whole catalog; the accepted
         // catalog stays in place (same lockstep as the other shape rules).
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
                 R"("taskGuid":7}]}])"),
@@ -1998,15 +1989,11 @@ namespace
     // exactly the bool-typed key and nothing else.
     TEST(GraphAuthoringSessionTest, SetActionCatalogConfigCarriesRequired)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"([{"actionId":"{g1}","label":"das.flow.launch","config":[)"
-                R"({"name":"exePath","type":"string","required":true},)"
-                R"({"name":"args","type":"array<string>"}]}])"),
-            DAS_S_OK);
-
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"([{"actionId":"{g1}","label":"das.flow.launch","config":[)"
+            R"({"name":"exePath","type":"string","required":true},)"
+            R"({"name":"args","type":"array<string>"}]}])")};
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -2037,7 +2024,7 @@ namespace
         // Non-bool required rejects the whole catalog; the accepted catalog
         // stays in place (same lockstep as taskGuid/label shape rules).
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
                 R"("required":"yes"}]}])"),
@@ -2064,16 +2051,12 @@ namespace
     // description is a shape violation rejecting the whole catalog.
     TEST(GraphAuthoringSessionTest, SetActionCatalogConfigCarriesDescription)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"([{"actionId":"{g1}","label":"das.flow.launch","config":[)"
-                R"({"name":"exePath","type":"string","description":)"
-                R"("Bare command names resolve via PATH."},)"
-                R"({"name":"args","type":"array<string>"}]}])"),
-            DAS_S_OK);
-
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"([{"actionId":"{g1}","label":"das.flow.launch","config":[)"
+            R"({"name":"exePath","type":"string","description":)"
+            R"("Bare command names resolve via PATH."},)"
+            R"({"name":"args","type":"array<string>"}]}])")};
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -2105,7 +2088,7 @@ namespace
         // Non-string description rejects the whole catalog; the accepted
         // catalog stays in place (same lockstep as taskGuid/label/required).
         EXPECT_EQ(
-            SetActionCatalog(
+            CatalogAbi(
                 s.p,
                 R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
                 R"("description":7}]}])"),
@@ -2307,11 +2290,10 @@ namespace
     // 序）+ message 指引文案。
     TEST(GraphAuthoringSessionTest, CompileGraphViewRequiresBeginNode)
     {
-        const SessionHandle s{
-            RawGraphContextOf({RawGraphNodeOf("only", "{g1}")})};
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
-
-        const auto outcome = CompileOutcomeOf(s.p);
+        const SessionHandle s{WithActionCatalog(
+            RawGraphContextOf({RawGraphNodeOf("only", "{g1}")}),
+            R"([{"actionId":"{g1}"}])")};
+        const auto          outcome = CompileOutcomeOf(s.p);
         EXPECT_TRUE(DiagnosticsContainKind(
             outcome,
             Das::Core::GraphRuntime::CompileDiagnosticKind::BeginNodeMissing));
@@ -2366,12 +2348,12 @@ namespace
     // 缺 end（begin 恰一）→ 宽容：零 begin/end 约束诊断、执行序非空。
     TEST(GraphAuthoringSessionTest, CompileGraphViewToleratesMissingEndNode)
     {
-        const SessionHandle s{RawGraphContextOf(
-            {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
-             RawGraphNodeOf("worker", "{g1}")})};
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
-
-        const auto outcome = CompileOutcomeOf(s.p);
+        const SessionHandle s{WithActionCatalog(
+            RawGraphContextOf(
+                {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+                 RawGraphNodeOf("worker", "{g1}")}),
+            R"([{"actionId":"{g1}"}])")};
+        const auto          outcome = CompileOutcomeOf(s.p);
         EXPECT_FALSE(DiagnosticsContainKind(
             outcome,
             Das::Core::GraphRuntime::CompileDiagnosticKind::BeginNodeMissing));
@@ -2417,21 +2399,17 @@ namespace
 
         // 浮点源 → TypeMismatch 拒。
         {
-            const SessionHandle s{RawGraphContextOf(
-                {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
-                 RawGraphNodeOf("n_probe", "{g1}"),
-                 RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
-                {edge_literal("n_probe", "float")})};
-            ASSERT_EQ(
-                SetActionCatalog(
-                    s.p,
-                    std::string(
-                        R"([{"actionId":"{g1}","ports":[{"portId":"值","portType":"float","direction":"output"}]},)")
-                        + R"({"actionId":")" + std::string(BOUNDARY_END_GUID)
-                        + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
-                DAS_S_OK);
-
-            const auto outcome = CompileOutcomeOf(s.p);
+            const SessionHandle s{WithActionCatalog(
+                RawGraphContextOf(
+                    {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+                     RawGraphNodeOf("n_probe", "{g1}"),
+                     RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
+                    {edge_literal("n_probe", "float")}),
+                std::string(
+                    R"([{"actionId":"{g1}","ports":[{"portId":"值","portType":"float","direction":"output"}]},)")
+                    + R"({"actionId":")" + std::string(BOUNDARY_END_GUID)
+                    + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])")};
+            const auto          outcome = CompileOutcomeOf(s.p);
             EXPECT_TRUE(DiagnosticsContainKind(
                 outcome,
                 Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
@@ -2439,21 +2417,17 @@ namespace
 
         // int64 源（整数族内）→ 放行：零 TypeMismatch、执行序非空。
         {
-            const SessionHandle s{RawGraphContextOf(
-                {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
-                 RawGraphNodeOf("n_probe", "{g1}"),
-                 RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
-                {edge_literal("n_probe", "int64")})};
-            ASSERT_EQ(
-                SetActionCatalog(
-                    s.p,
-                    std::string(
-                        R"([{"actionId":"{g1}","ports":[{"portId":"值","portType":"int64","direction":"output"}]},)")
-                        + R"({"actionId":")" + std::string(BOUNDARY_END_GUID)
-                        + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
-                DAS_S_OK);
-
-            const auto outcome = CompileOutcomeOf(s.p);
+            const SessionHandle s{WithActionCatalog(
+                RawGraphContextOf(
+                    {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+                     RawGraphNodeOf("n_probe", "{g1}"),
+                     RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
+                    {edge_literal("n_probe", "int64")}),
+                std::string(
+                    R"([{"actionId":"{g1}","ports":[{"portId":"值","portType":"int64","direction":"output"}]},)")
+                    + R"({"actionId":")" + std::string(BOUNDARY_END_GUID)
+                    + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])")};
+            const auto          outcome = CompileOutcomeOf(s.p);
             EXPECT_FALSE(DiagnosticsContainKind(
                 outcome,
                 Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
@@ -2574,17 +2548,13 @@ namespace
     // 边界输入面携带该口（display=口名）。
     TEST(GraphAuthoringSessionTest, CompileResolvesDynamicPortEdgesAndSentinel)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                std::string(
-                    R"([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"string","direction":"output"}]},)")
-                    + R"({"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
-                    + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
-                    + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
-            DAS_S_OK);
-
+        const SessionHandle s{WithActionCatalog(
+            "",
+            std::string(
+                R"([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"string","direction":"output"}]},)")
+                + R"({"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
+                + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
+                + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])")};
         ApplyChangeExpectOk(
             s.p,
             "addNodePort",
@@ -2712,17 +2682,13 @@ namespace
         GraphAuthoringSessionTest,
         ConnectRejectsBoundaryDynamicPortDirectionViolation)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                std::string(
-                    R"([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"int","direction":"output"}]},)")
-                    + R"({"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
-                    + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
-                    + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
-            DAS_S_OK);
-
+        const SessionHandle s{WithActionCatalog(
+            "",
+            std::string(
+                R"([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"int","direction":"output"}]},)")
+                + R"({"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
+                + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
+                + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])")};
         ApplyChangeExpectOk(
             s.p,
             "addNodePort",
@@ -2770,15 +2736,11 @@ namespace
         GraphAuthoringSessionTest,
         InvokeNodePortMaterializationResolvesThroughDispatchAndCompile)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                std::string(
-                    R"([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"int","direction":"output"}]},)")
-                    + R"({"actionId":"{ginvoke}","ports":[{"portId":"compiledSnapshot","portType":"object","direction":"input"},{"portId":"result","portType":"object","direction":"output"}],"config":[{"name":"repositoryRef","type":"taskRepositoryRef"}]}])"),
-            DAS_S_OK);
-
+        const SessionHandle s{WithActionCatalog(
+            "",
+            std::string(
+                R"([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"int","direction":"output"}]},)")
+                + R"({"actionId":"{ginvoke}","ports":[{"portId":"compiledSnapshot","portType":"object","direction":"input"},{"portId":"result","portType":"object","direction":"output"}],"config":[{"name":"repositoryRef","type":"taskRepositoryRef"}]}])")};
         ApplyChangeExpectOk(s.p, "addGraphNode", R"({"actionId":"{g1}"})");
         ApplyChangeExpectOk(s.p, "addGraphNode", R"({"actionId":"{ginvoke}"})");
         // 绑定仓库条目：taskRepositoryRef 声明字段持正整数值。
@@ -2824,15 +2786,11 @@ namespace
         GraphAuthoringSessionTest,
         CompileEmptyPresetGraphHasNoPhantomBoundaryInputs)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"([{"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
-                    + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
-                    + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
-            DAS_S_OK);
-
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"([{"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
+                + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
+                + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])")};
         // end 长出参口「评分」（悬空），与静态「值」同为幻影入参候选。
         ApplyChangeExpectOk(
             s.p,
@@ -2868,15 +2826,11 @@ namespace
         GraphAuthoringSessionTest,
         GetProjectionCarriesDynamicPortOnSessionWire)
     {
-        const SessionHandle s{""};
-        ASSERT_EQ(
-            SetActionCatalog(
-                s.p,
-                R"([{"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
-                    + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
-                    + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])"),
-            DAS_S_OK);
-
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"([{"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
+                + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
+                + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])")};
         ApplyChangeExpectOk(
             s.p,
             "addNodePort",
@@ -2906,5 +2860,127 @@ namespace
                 std::string_view(BOUNDARY_END_GUID),
                 std::string_view("direction")),
             "input");
+    }
+
+    // ======================================================================
+    // faces 注入通道（nodeFaces context 键 → Core 既有解析点 → 会话状态
+    // → 编译器按节点并集）
+    // ======================================================================
+
+    /// A graph context whose n_dst node carries only one declared-face port
+    /// (none): the dyn_in port exists solely through the nodeFaces key. Two
+    /// edges ride the graph — one targeting the face port, one targeting an
+    /// unknown port — so one compile pass exercises both verdicts.
+    std::string NodeFacesGraphContext(std::string_view node_faces_json)
+    {
+        return std::string(R"({"properties":)")
+               + RawGraphContextOf(
+                   {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+                    RawGraphNodeOf("n_src", "{g1}"),
+                    RawGraphNodeOf("n_dst", "{g2}"),
+                    RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
+                   {R"({"edgeId":"e_ok","sourceNodeId":"n_src","sourcePortId":"result","targetNodeId":"n_dst","targetPortId":"dyn_in","edgeType":"data"})",
+                    R"({"edgeId":"e_bad","sourceNodeId":"n_src","sourcePortId":"result","targetNodeId":"n_dst","targetPortId":"no_such_port","edgeType":"data"})"})
+               + R"(,"actionCatalog":[{"actionId":"{g1}","ports":[{"portId":"result","portType":"string","direction":"output"}]},{"actionId":"{g2}"}],)"
+               + R"("nodeFaces":)" + std::string(node_faces_json) + "}";
+    }
+
+    constexpr std::string_view kValidNodeFaces =
+        R"([{"nodeId":"n_dst","ports":[{"id":"dyn_in","type":"string","direction":"input"}]}])";
+
+    // 端到端（tracer 缝）：nodeFaces 给 n_dst 一个声明面没有的口
+    // （dyn_in，string，input）——经会话 Compile，编译产物该节点输入口
+    // 面包含 dyn_in（绑定计划 target 携带该口）；target 该口的类型兼容
+    // 边零诊断通过，target 未知口的边仍 PortNotFound（无效线的编译侧
+    // 拒绝语义不变）。
+    TEST(GraphAuthoringSessionTest, NodeFacesContextKeyFlowsIntoCompile)
+    {
+        const SessionHandle s{NodeFacesGraphContext(kValidNodeFaces)};
+
+        const auto outcome = CompileOutcomeOf(s.p);
+        // e_bad：未知口仍拒绝（编辑期无效线拒绝语义的编译对照）。
+        EXPECT_TRUE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound));
+
+        const auto not_found = DiagnosticMessageOfKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound);
+        EXPECT_NE(not_found.find("no_such_port"), std::string::npos);
+        // e_ok：dyn_in 经 face 并入 n_dst 输入面，string→string 兼容——
+        // 既无 PortNotFound 也无 TypeMismatch。
+        EXPECT_EQ(not_found.find("dyn_in"), std::string::npos);
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
+
+        // 编译产物输入口面包含 dyn_in：绑定计划 target 携带该口。
+        DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(s.p, nullptr, compiled.Put()),
+            DAS_S_OK);
+        const auto plan_text = Compact(JsonToUtf8(compiled.Get()));
+        EXPECT_NE(
+            plan_text.find("\"targetPortId\":\"dyn_in\""),
+            std::string::npos);
+    }
+
+    // 畸形 nodeFaces 键（缺 ports 数组 / direction 越权值 / 缺 nodeId）：
+    // 该键整体零 faces + 会话继续加载文档——指向 dyn_in 的边退回
+    // PortNotFound（降级到「无口」而非「全口」，actionCatalog Wire 降级
+    // 同款）。
+    TEST(GraphAuthoringSessionTest, NodeFacesMalformedKeyDegradesToZeroFaces)
+    {
+        const std::array<std::string_view, 3> malformed = {
+            // 缺 ports 数组。
+            R"([{"nodeId":"n_dst"}])",
+            // direction 越权值。
+            R"([{"nodeId":"n_dst","ports":[{"id":"dyn_in","type":"string","direction":"sideways"}]}])",
+            // 缺 nodeId。
+            R"([{"ports":[{"id":"dyn_in","type":"string","direction":"input"}]}])"};
+        for (const auto& faces_json : malformed)
+        {
+            const SessionHandle s{NodeFacesGraphContext(faces_json)};
+            // 会话创建成功、文档照常加载。
+            const auto document = DocumentOf(s.p);
+            auto       doc_obj = document.as_object();
+            ASSERT_TRUE(doc_obj.has_value());
+            ASSERT_TRUE(doc_obj->contains(std::string_view("graph")));
+            // 降级=零 faces：dyn_in 不在口面，指向它的边 PortNotFound。
+            const auto outcome = CompileOutcomeOf(s.p);
+            EXPECT_TRUE(DiagnosticsContainKind(
+                outcome,
+                Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound))
+                << faces_json;
+            const auto not_found = DiagnosticMessageOfKind(
+                outcome,
+                Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound);
+            EXPECT_NE(not_found.find("dyn_in"), std::string::npos)
+                << faces_json;
+        }
+    }
+
+    // 追加裁定二等价性：同一 catalog 经 context 键（SeedFromContext 播
+    // 种）与经 SetActionCatalog C ABI 两条通道进会话——GetDocument 投影
+    // 逐字节等价（MakeCatalogFromState 消费路径不变）。catalog 覆盖
+    // label/ports/config 三通道。
+    TEST(GraphAuthoringSessionTest, ActionCatalogContextKeyMatchesAbiSeeding)
+    {
+        constexpr std::string_view catalog =
+            R"json([{"actionId":"{g1}","label":"das.flow.branch","ports":[{"portId":"condition","portType":"bool","direction":"input"},{"portId":"true","portType":"signal","direction":"output"}],"config":[{"name":"mode","type":"string","default":"auto","required":true}]},{"actionId":"{g2}"}])json";
+        const SessionHandle via_context{WithActionCatalog("", catalog)};
+        const SessionHandle via_abi{""};
+        ASSERT_EQ(CatalogAbi(via_abi.p, std::string(catalog)), DAS_S_OK);
+
+        const auto context_projection = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(via_context.p))
+                .value_or(""));
+        const auto abi_projection = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(via_abi.p))
+                .value_or(""));
+        EXPECT_EQ(context_projection, abi_projection);
+        EXPECT_NE(
+            context_projection.find("\"actionCatalog\""),
+            std::string::npos);
     }
 } // namespace

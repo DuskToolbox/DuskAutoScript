@@ -2621,3 +2621,89 @@ TEST(CompileOrchestrationTest, CompileCarriesBoundaryPortsInPlan)
     EXPECT_EQ(plan.boundary_ports.outputs[0].port_type, "string");
     EXPECT_EQ(plan.boundary_ports.outputs[0].node_ids[0], "n_1");
 }
+
+// ---------------------------------------------------------------------------
+// Document port faces (nodeFaces channel): per-node merge semantics
+// ---------------------------------------------------------------------------
+
+// face 口 id 与 catalog 声明口同 id：按口 id 去重、文档侧胜出（口面仅一
+// 份，类型取 face 侧）且不拒绝——重名 WARN 语义（文档侧为准）的行为锁
+// 定。声明为 int 的 shared 口被 face 覆写为 string 后，string 源边类型
+// 兼容通过、绑定计划 target_type 读 face 侧。
+TEST(NodeFacesMergeTest, DocumentFaceWinsOverSameNameDeclaredPort)
+{
+    const std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces{
+            {"{ga}", {{}, {{"out_str", "string"}, {"out_int", "int"}}}},
+            {"{gb}", {{{"shared", "int"}}, {}}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphCompiler::NodeFacesMap faces;
+    faces["B"] = std::vector<GraphCompiler::DocumentFacePort>{
+        {"shared", "string", "shared", "input"}};
+    compiler.BindNodeFaces(&faces);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeComponentNode("A", "{ga}"));
+    doc.nodes.push_back(MakeComponentNode("B", "{gb}"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out_str", "B", "shared"));
+
+    // string→string：face 胜出后类型兼容；若声明口胜出（int）则同一
+    // 条边会产出 TypeMismatch。
+    const auto diagnostics = compiler.ValidateEdgePorts(doc);
+    EXPECT_TRUE(diagnostics.empty());
+
+    // 口面仅一份且类型取 face 侧：绑定计划的 target_type 读 string。
+    const auto plan = compiler.Compile(doc);
+    ASSERT_EQ(plan.binding_plan.bindings.size(), 1u);
+    EXPECT_EQ(plan.binding_plan.bindings[0].target_type, "string");
+}
+
+// 同 guid 两节点各自注入不同 face：口面互不渗透（按节点合并，绝不按
+// guid 聚合）。C 与 A/B 同 guid 但零 faces——若面按 guid 聚合，C 会继承
+// b_in 使 e_leak 通过；按节点则 e_leak 的 target 口缺失（PortNotFound）。
+TEST(NodeFacesMergeTest, FacesArePerNodeNeverAggregatedByGuid)
+{
+    // {g} 在 catalog 侧是零口组件（was_resolved=true 的空声明面）——三节
+    // 点的口面差异全部来自各自的 faces，探针才隔离出「按节点合并」语
+    // 义（无 provider 时未解析口面会先以 UnresolvableComponentGuid 早
+    // 退，探针到不了口检查）。
+    const std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces{{"{g}", {{}, {}}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphCompiler::NodeFacesMap faces;
+    faces["A"] = std::vector<GraphCompiler::DocumentFacePort>{
+        {"a_out", "string", "a_out", "output"}};
+    faces["B"] = std::vector<GraphCompiler::DocumentFacePort>{
+        {"b_in", "string", "b_in", "input"}};
+    compiler.BindNodeFaces(&faces);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeComponentNode("A", "{g}"));
+    doc.nodes.push_back(MakeComponentNode("B", "{g}"));
+    doc.nodes.push_back(MakeComponentNode("C", "{g}"));
+    // A 的 a_out → B 的 b_in：per-node 面上合法。
+    doc.edges.push_back(MakeEdge("e_ok", "A", "a_out", "B", "b_in"));
+    // 交叉渗透探针：A 的 a_out → C 的 b_in——C 零 faces，按 guid 聚合才
+    // 会通过。
+    doc.edges.push_back(MakeEdge("e_leak", "A", "a_out", "C", "b_in"));
+
+    const auto diagnostics = compiler.ValidateEdgePorts(doc);
+    ASSERT_EQ(diagnostics.size(), 1u);
+    EXPECT_EQ(diagnostics[0].kind, CompileDiagnosticKind::PortNotFound);
+    EXPECT_EQ(diagnostics[0].edge_id, "e_leak");
+    EXPECT_EQ(diagnostics[0].port_id, "b_in");
+}

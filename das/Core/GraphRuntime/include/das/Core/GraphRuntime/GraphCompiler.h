@@ -171,6 +171,39 @@ public:
         std::function<std::optional<ComponentPortSurface>(
             const std::string& component_guid)>;
 
+    // -----------------------------------------------------------------------
+    // Document port faces (nodeFaces / entryFaces context channel)
+    // -----------------------------------------------------------------------
+
+    /// One dynamic port entry of the faces channel — the authoring-document
+    /// port snapshot riding the session context as a data payload (compile
+    /// host performs no live queries). Wire shape per port:
+    /// {id, type, direction[, label]} — label defaults to the id when absent;
+    /// direction is carried per entry and merges single-sided.
+    struct DocumentFacePort
+    {
+        std::string port_id;
+        std::string port_type;
+        std::string label;
+        std::string direction; // "input" | "output"
+    };
+
+    /// node_id → injected dynamic port faces. Keyed by node: two nodes
+    /// sharing one component_guid never share faces — the merge is per node,
+    /// never a guid aggregation.
+    using NodeFacesMap =
+        std::unordered_map<std::string, std::vector<DocumentFacePort>>;
+
+    /// Bind the injected per-node document port faces. Extends (does not
+    /// replace) the declared-surface resolution: ResolveNodePorts merges the
+    /// node's faces on top of the manifest/catalog-declared surface, dedupes
+    /// by port id with the face winning over a same-name declared port, and
+    /// WARNs on the collision (the document side wins; the surface never
+    /// carries a duplicate port id). The map is borrowed for the duration of
+    /// the synchronous Compile call — the session state outlives it (the
+    /// same lifecycle premise as the port-surface provider closure).
+    void BindNodeFaces(const NodeFacesMap* node_faces);
+
     /// Bind the catalog-declared port surface provider. Extends (does not
     /// replace) factory-manager manifest resolution: edge validation,
     /// binding-plan generation and boundary derivation all consult it when
@@ -278,6 +311,9 @@ private:
 
     ComponentPortSurfaceProvider port_surface_provider_;
 
+    // Borrowed per-node document faces (nullptr = no faces channel bound).
+    const NodeFacesMap* node_faces_ = nullptr;
+
     /// Resolve port entries from a manifest definition yyjson::value.
     static std::vector<PortEntry> PortsFromDefinitionList(
         const yyjson::value& definition,
@@ -292,10 +328,18 @@ private:
 
     /// Resolve the effective per-node port set: the declared surface of the
     /// node's referenced component (empty and unresolved when the target is
-    /// not a componentRef or neither declaration source knows it).
+    /// not a componentRef or neither declaration source knows it), with the
+    /// node's injected document faces merged on top (per-node union).
     ManifestPorts ResolveNodePorts(
         const Dto::GraphNodeDto&                        node,
         std::unordered_map<std::string, ManifestPorts>& cache) const;
+
+    /// Merge the node's injected document faces onto a declared surface:
+    /// dedupe by port id with the face winning over a same-name declared
+    /// port (WARN on the collision); each face joins only its declared
+    /// direction side. Mutates only the caller's per-node copy — the
+    /// guid-keyed declaration cache stays declared-only.
+    void MergeNodeFaces(ManifestPorts& ports, const std::string& node_id) const;
 
     /// Build a node index: node_id -> GraphNodeDto* for O(1) lookup.
     static std::unordered_map<std::string, const Dto::GraphNodeDto*>
