@@ -1,4 +1,5 @@
 {
     "graphTask.finished": "Graph task finished: end value = {0}",
-    "graphTask.failed": "Graph task failed: {0}"
+    "graphTask.failed": "Graph task failed: {0}",
+    "graphTask.scheduleSkipped": "Graph task missed {0} scheduled slot(s); next run moved to the upcoming slot"
 }

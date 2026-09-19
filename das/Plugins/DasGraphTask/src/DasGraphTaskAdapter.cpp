@@ -2,6 +2,8 @@
 
 #include <das/Plugins/DasGraphTask/DasGraphTaskAdapter.h>
 
+#include "GraphTaskFocusLog.h"
+
 #include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/Core/Utils/PortableTime.h>
 #include <das/DasApi.h>
@@ -30,6 +32,15 @@ namespace Plugins::DasGraphTask
         constexpr std::string_view NEXT_INTERVAL_KEY = "nextInterval";
         constexpr std::string_view NEXT_UNIT_KEY = "nextUnit";
         constexpr std::string_view NEXT_ANCHOR_KEY = "nextAnchorTime";
+
+        // end 组件「下次时间」string 口 id（manifest end definition 的输入/
+        // 输出镜像口对——动态通道数据源口）。
+        constexpr std::string_view NEXT_TIME_PORT_ID = "下次时间";
+
+        // 动态通道串长上限防线：wire 契约是 ISO 8601 UTC 定长 19 字符
+        // （YYYY-MM-DDTHH:MM:SS）；异常超长串在此截断（解析本身按 19 定长
+        // 拒绝，本上限只防日志/持有面的病态串）。
+        constexpr std::size_t MAX_CAPTURED_NEXT_TIME_LENGTH = 64;
 
         // D-B7 缺省一次性上界：9999-12-31T23:59:59 UTC——可安全经
         // TimegmPortable/time_t 往返的远未来时刻（字段类型字面最大值会溢出
@@ -90,6 +101,82 @@ namespace Plugins::DasGraphTask
                 return false;
             }
             return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+        }
+
+        // 严格 ISO 8601 UTC 定长解析（D-B5 wire 契约）：YYYY-MM-DDTHH:MM:SS
+        // 19 字符定长 + 分隔符定位 + 逐位数字 + 分段范围校验（month 1-12/
+        // day 1-31/hour 0-23/minute 0-59/second 0-59，year ≥ 1）——不夹紧、
+        // 不猜测，任何偏差整串拒绝。字符串是插件产出端口值（非受信），
+        // 解析后字段再经 DasDateCompare ABI 谓词复核（日历域 + timegm 往
+        // 返——T-111-05：恶意/损坏端口值不能直接驱动调度器）。直填 DasDate
+        // UTC 字段与静态通道 base 的 PortableGmtime 出字段同语义，经
+        // SchedulerService DasDateToUnix（TimegmPortable）还原同一 unix，
+        // 往返精确。
+        bool ParseIso8601UtcStrict(
+            const std::string&        text,
+            ExportInterface::DasDate& out)
+        {
+            const auto digit_of = [](char c) -> int
+            { return c >= '0' && c <= '9' ? c - '0' : -1; };
+            if (text.size() != 19)
+            {
+                return false;
+            }
+            if (text[4] != '-' || text[7] != '-' || text[10] != 'T'
+                || text[13] != ':' || text[16] != ':')
+            {
+                return false;
+            }
+            int fields[6] = {0, 0, 0, 0, 0, 0};
+            // 每字段起止位（year 0-3 / month 5-6 / day 8-9 / hour 11-12 /
+            // minute 14-15 / second 17-18），其余位为分隔符（已校验）。
+            const std::size_t field_spans[6][2] =
+                {{0, 3}, {5, 6}, {8, 9}, {11, 12}, {14, 15}, {17, 18}};
+            for (int field = 0; field < 6; ++field)
+            {
+                int value = 0;
+                for (std::size_t pos = field_spans[field][0];
+                     pos <= field_spans[field][1];
+                     ++pos)
+                {
+                    const int digit = digit_of(text[pos]);
+                    if (digit < 0)
+                    {
+                        return false;
+                    }
+                    value = value * 10 + digit;
+                }
+                fields[field] = value;
+            }
+            if (fields[0] < 1)
+            {
+                // year 0 经 timegm 落在可表示域边缘且语义荒谬，拒绝。
+                return false;
+            }
+            if (fields[1] < 1 || fields[1] > 12 || fields[2] < 1
+                || fields[2] > 31)
+            {
+                return false;
+            }
+            if (fields[3] > 23 || fields[4] > 59 || fields[5] > 59)
+            {
+                return false;
+            }
+            ExportInterface::DasDate parsed{};
+            parsed.year = static_cast<std::uint16_t>(fields[0]);
+            parsed.month = static_cast<std::uint8_t>(fields[1]);
+            parsed.day = static_cast<std::uint8_t>(fields[2]);
+            parsed.hour = static_cast<std::uint8_t>(fields[3]);
+            parsed.minute = static_cast<std::uint8_t>(fields[4]);
+            parsed.second = static_cast<std::uint8_t>(fields[5]);
+            // ABI 谓词防线（111-01 日历域校验 + timegm 往返）。
+            std::int32_t validation = 0;
+            if (DAS::IsFailed(DasDateCompare(&parsed, &parsed, &validation)))
+            {
+                return false;
+            }
+            out = parsed;
+            return true;
         }
 
         // DasDate(UTC 字段) → unix → 本地 tm → 锚点钟点改写（秒清零）→
@@ -355,7 +442,10 @@ namespace Plugins::DasGraphTask
         // 本次执行推进调度周期：基准失效，执行后首次 GetNextExecutionTime
         // 以执行完成时刻重锚定（「执行到 End 后记录」——D-B7）。无 Do 伴随
         // 的重算不推槽（同 base 同返回值）由 last_planned_ 持有态保证。
+        // 动态通道捕获值同步清空——每次执行重捕获，陈旧值不跨执行残留
+        // （D-B5）。
         last_planned_.reset();
+        captured_next_time_.reset();
 
         // task_settings is the CompiledGraphPlanDto serialization the
         // scheduler extracted from the authoring compile envelope's
@@ -399,12 +489,32 @@ namespace Plugins::DasGraphTask
         }
 
         // 委托同模块直接构造的组件内核执行（GraphRuntime 驱动代码仅
-        // DasGraphTaskImpl 一份）；输出 portmap 丢弃——IDasTask 无结构化
-        // 返回值（fire-and-forget，与 MaapiTask 同语义）。无 host 时内核
-        // 自身以结构化错误失败，hostless 回退分支随之消亡。
+        // DasGraphTaskImpl 一份）。无 host 时内核自身以结构化错误失败，
+        // hostless 回退分支随之消亡。
         DasGraphTaskImpl                          component(host_.Get());
         DAS::DasPtr<ExportInterface::IDasPortMap> output;
-        return component.Do(stop_token, input_map.Get(), output.Put());
+        const DasResult                           do_result =
+            component.Do(stop_token, input_map.Get(), output.Put());
+
+        // 动态通道捕获（D-B5）：执行成功后从 end「下次时间」口读字符串
+        // （111-03 MaaPI brain 经 PortableGmtime 格式化的 ISO 8601 UTC 定长
+        // 19 字符串）。口缺省/读取失败 = 无动态值（GetNextExecutionTime
+        // 回落静态通道），不视为错误、不影响 Do 返回码。端组件把已连线的
+        // 输入口转写进出参面（「下次时间」口对镜像），此处读到的即图内组
+        // 件连线产出（MaaPI nextTime 或任意日期源）。
+        if (DAS::IsOk(do_result) && output.Get() != nullptr)
+        {
+            const std::string captured =
+                Das::Utils::GetPortString(output.Get(), NEXT_TIME_PORT_ID);
+            if (!captured.empty())
+            {
+                if (captured.size() <= MAX_CAPTURED_NEXT_TIME_LENGTH)
+                {
+                    captured_next_time_ = captured;
+                }
+            }
+        }
+        return do_result;
     }
 
     DasResult DasGraphTaskAdapter::GetNextExecutionTime(
@@ -420,6 +530,32 @@ namespace Plugins::DasGraphTask
         // 按结构化失败收口（Core 既有窄 catch 亦兜底，双保险）。
         try
         {
+            // ---- 动态通道优先（D-B5）：Do 捕获的 end「下次时间」口值 ----
+            // 串是插件产出端口值经 PortableGmtime 格式化的 UTC 字段
+            // （111-01 wire 契约三端同语义），直填 DasDate 后经
+            // SchedulerService DasDateToUnix（TimegmPortable）还原同一
+            // unix，往返精确；与静态通道 base 的出字段同归 UTC 字段。解析
+            // 失败 fail-safe 回落静态通道（A1 裁决）。
+            if (captured_next_time_.has_value())
+            {
+                ExportInterface::DasDate dynamic_date{};
+                if (ParseIso8601UtcStrict(*captured_next_time_, dynamic_date))
+                {
+                    *p_out_date = dynamic_date;
+                    return DAS_S_OK;
+                }
+                DAS_LOG_WARNING(
+                    DAS_FMT_NS::format(
+                        "DasGraphTaskAdapter::GetNextExecutionTime: captured "
+                        "next time port value is not strict ISO 8601 UTC "
+                        "(value=\"{}\"), falling back to static channel, "
+                        "result={}",
+                        captured_next_time_->substr(0, 32),
+                        static_cast<std::int64_t>(DAS_E_INVALID_ARGUMENT))
+                        .c_str());
+                // 回落静态通道（下方继续）。
+            }
+
             // ---- 静态通道：end 节点 compiled_settings 三件套 ----
             EndNextSettings         end_settings;
             const EndSettingsStatus settings_status =
@@ -587,6 +723,15 @@ namespace Plugins::DasGraphTask
                             .c_str());
                     return DAS_E_INVALID_ARGUMENT;
                 }
+            }
+
+            // 超窗跳槽经 focus 记录链路（i18n graphTask.scheduleSkipped +
+            // user.jsonl）记录跳过经过——发布失败只落调试日志，不影响本
+            // 函数返回码（Publish 语义）。
+            if (skipped > 0)
+            {
+                PublishGraphTaskScheduleSkippedFocusEntry(
+                    static_cast<std::int64_t>(skipped));
             }
 
             *p_out_date = next;

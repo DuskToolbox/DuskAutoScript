@@ -3605,3 +3605,464 @@ TEST(DasGraphTaskTest, GetNextExecutionTimeReanchorsAfterDo)
         DAS_S_OK);
     EXPECT_TRUE(ScheduleDateEquals(after_do, 2026, 6, 2, 11, 0, 0));
 }
+
+// ============================================================================
+// GetNextExecutionTime 动态通道（D-B5——Do 捕获 end「下次时间」口）与
+// scheduleSkipped focus 日志（D-B4）
+// ============================================================================
+
+namespace
+{
+    // 日期串探针节点组件：Do 输出 下次时间=next_time_text 的 string 口
+    // （图内 MaaPI brain 输出端口的本地替身——111-03 nextTime 口同位）。
+    class NextTimeProbeComponent final
+        : public Das::PluginInterface::IDasTaskComponent
+    {
+    public:
+        explicit NextTimeProbeComponent(std::string next_time_text)
+            : next_time_text_(std::move(next_time_text))
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponent>())
+            {
+                *pp_out =
+                    static_cast<Das::PluginInterface::IDasTaskComponent*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            if (p_out_guid == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_guid = GuidOfText(PROBE_COMPONENT_GUID_TEXT);
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "NextTimeProbeComponent",
+                pp_out_name);
+        }
+
+        DasResult DAS_STD_CALL ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_result_json = nullptr;
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        Do(Das::PluginInterface::IDasStopToken*,
+           Das::ExportInterface::IDasReadOnlyPortMap*,
+           Das::ExportInterface::IDasPortMap** pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_port_map = nullptr;
+            DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+            const DasResult hr = CreateIDasPortMap(output_map.Put());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            const std::string       value_owned{next_time_text_};
+            const DasReadOnlyString value_key{"下次时间"};
+            const DasReadOnlyString value_value{value_owned.c_str()};
+            const DasResult         set_hr =
+                output_map->SetString(value_key.Get(), value_value.Get());
+            if (DAS::IsFailed(set_hr))
+            {
+                return set_hr;
+            }
+            *pp_out_port_map = output_map.Get();
+            output_map.Get()->AddRef();
+            return DAS_S_OK;
+        }
+
+    private:
+        std::string           next_time_text_;
+        std::atomic<uint32_t> ref_count_{1};
+    };
+
+    // begin/end 经真工厂（manifest 分派是生产身份源）；日期串探针走本地
+    // 替身（BoundaryDispatchHost 同款结构）。
+    class ScheduleProbeDispatchHost final
+        : public Das::PluginInterface::IDasTaskComponentHost
+    {
+    public:
+        explicit ScheduleProbeDispatchHost(std::string probe_next_time_text)
+            : probe_next_time_text_(std::move(probe_next_time_text))
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+            {
+                *pp_out =
+                    static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
+                        this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_component = nullptr;
+            if (component_guid == GuidOfText(BEGIN_COMPONENT_GUID_TEXT)
+                || component_guid == GuidOfText(END_COMPONENT_GUID_TEXT))
+            {
+                DasGraphTaskComponentFactory factory{this};
+                return factory.CreateComponent(
+                    component_guid,
+                    pp_out_component);
+            }
+            if (component_guid == GuidOfText(PROBE_COMPONENT_GUID_TEXT))
+            {
+                auto* component =
+                    new NextTimeProbeComponent(probe_next_time_text_);
+                component->AddRef();
+                *pp_out_component = component;
+                return DAS_S_OK;
+            }
+            return DAS_E_NOT_FOUND;
+        }
+
+    private:
+        std::string           probe_next_time_text_;
+        std::atomic<uint32_t> ref_count_{1};
+    };
+
+    // 编译一张「探针.下次时间 → end.下次时间」连线的图，写出
+    // executionInput shell 文本（PreservedBeginEnd 同款会话流程；catalog
+    // 声明 end 的值 int 对 + 下次时间 string 对与探针的下次时间出线）。
+    void CompileNextTimeProbePlanText(std::string& out_shell_text)
+    {
+        GraphAuthoringSessionState* state = nullptr;
+        EXPECT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
+        ASSERT_NE(state, nullptr);
+
+        const std::string action_catalog =
+            std::string(R"([{"actionId":")")
+            + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)"
+            + R"({"actionId":")" + std::string(END_COMPONENT_GUID_TEXT)
+            + R"(","ports":[)"
+            + R"({"portId":"值","portType":"int","direction":"input"},)"
+            + R"({"portId":"值","portType":"int","direction":"output"},)"
+            + R"({"portId":"下次时间","portType":"string","direction":"input"},)"
+            + R"({"portId":"下次时间","portType":"string","direction":"output"}]},)"
+            + R"({"actionId":")" + std::string(PROBE_COMPONENT_GUID_TEXT)
+            + R"(","ports":[)"
+            + R"({"portId":"下次时间","portType":"string","direction":"output"}]}])";
+        {
+            DasPtr<IDasReadOnlyString> catalog_string;
+            ASSERT_EQ(
+                CreateIDasReadOnlyStringFromUtf8(
+                    action_catalog.c_str(),
+                    catalog_string.Put()),
+                DAS_S_OK);
+            ASSERT_EQ(
+                GraphAuthoringSessionSetActionCatalog(
+                    state,
+                    catalog_string.Get()),
+                DAS_S_OK);
+        }
+
+        // 探针节点（预置 n_0/n_1 之后顺延 n_2）。
+        std::string probe_node_id;
+        {
+            DasPtr<Das::ExportInterface::IDasJson> apply_result;
+            const std::string add_probe = WrapAuthoringChange(
+                "addGraphNode",
+                std::string(R"({"actionId":")")
+                    + std::string(PROBE_COMPONENT_GUID_TEXT) + R"("})");
+            DasPtr<IDasReadOnlyString> add_probe_string;
+            CreateIDasReadOnlyStringFromUtf8(
+                add_probe.c_str(),
+                add_probe_string.Put());
+            ASSERT_EQ(
+                GraphAuthoringSessionApplyChange(
+                    state,
+                    add_probe_string.Get(),
+                    apply_result.Put()),
+                DAS_S_OK);
+            const auto nodes =
+                GraphNodesOfResponseText(JsonTextOf(apply_result.Get()));
+            ASSERT_EQ(nodes.size(), 3u);
+            for (const auto& node : nodes)
+            {
+                if (node.component_guid == PROBE_COMPONENT_GUID_TEXT)
+                {
+                    probe_node_id = node.node_id;
+                }
+            }
+            ASSERT_EQ(probe_node_id, "n_2");
+        }
+
+        // 连线：探针.下次时间 → end.下次时间（string→string 数据边）。
+        {
+            DasPtr<Das::ExportInterface::IDasJson> apply_result;
+            const std::string connect_probe = WrapAuthoringChange(
+                "connectGraphPorts",
+                std::string(R"({"fromNodeId":")") + probe_node_id
+                    + R"(","fromPortId":"下次时间","toNodeId":"n_1","toPortId":"下次时间"})");
+            DasPtr<IDasReadOnlyString> connect_probe_string;
+            CreateIDasReadOnlyStringFromUtf8(
+                connect_probe.c_str(),
+                connect_probe_string.Put());
+            ASSERT_EQ(
+                GraphAuthoringSessionApplyChange(
+                    state,
+                    connect_probe_string.Get(),
+                    apply_result.Put()),
+                DAS_S_OK);
+            ASSERT_TRUE(
+                ResponseDiagnosticsEmpty(JsonTextOf(apply_result.Get())));
+        }
+
+        // 编译取 executionInput shell 文本。
+        {
+            DasPtr<Das::ExportInterface::IDasJson> compiled;
+            ASSERT_EQ(
+                GraphAuthoringSessionCompile(state, nullptr, compiled.Put()),
+                DAS_S_OK);
+            ASSERT_TRUE(ResponseDiagnosticsEmpty(JsonTextOf(compiled.Get())));
+            auto root = yyjson::read(JsonTextOf(compiled.Get()));
+            auto root_obj = root.as_object();
+            ASSERT_TRUE(root_obj.has_value());
+            auto compile_section =
+                (*root_obj)[std::string_view("compile")].as_object();
+            ASSERT_TRUE(compile_section.has_value());
+            const auto shell = Das::Utils::SerializeYyjsonValue(
+                (*compile_section)[std::string_view("executionInput")]);
+            ASSERT_TRUE(shell.has_value());
+            out_shell_text = *shell;
+        }
+        DestroyGraphAuthoringSession(state);
+    }
+} // namespace
+
+// 动态通道（D-B5）：Do 后 end「下次时间」口带 ISO 8601 UTC 串 →
+// GetNextExecutionTime 返回解析值，不受 fake clock 影响（null settings 也
+// 胜出——动态优先）；字段 == 该 brain unix 经 PortableGmtime 反填的 UTC
+// 字段（UTC 语义往返——与静态通道 base 出字段同归）。
+TEST(DasGraphTaskTest, GetNextExecutionTimeDynamicChannelFromEndPort)
+{
+    std::string plan_text;
+    CompileNextTimeProbePlanText(plan_text);
+    ASSERT_FALSE(plan_text.empty());
+
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new ScheduleProbeDispatchHost("2031-02-03T04:05:06"));
+    DasGraphTaskAdapter adapter{host.Get()};
+    adapter.SetClockForTest(
+        [] { return ScheduleUnixOfUtc(2026, 9, 19, 12, 0, 0); });
+
+    const auto plan_settings = ScheduleSettingsJsonOf(plan_text);
+    ASSERT_TRUE(DAS::IsOk(adapter.Do(nullptr, nullptr, plan_settings.Get())));
+
+    Das::ExportInterface::DasDate next{};
+    ASSERT_EQ(adapter.GetNextExecutionTime(nullptr, &next), DAS_S_OK);
+    EXPECT_TRUE(ScheduleDateEquals(next, 2031, 2, 3, 4, 5, 6));
+}
+
+// 口缺省（图未连日期线 / Do 未捕获）→ 回落静态通道：Do 后 Get 以静态
+// 三件套 settings 计算次日（此时钟驱动），不因动态缺席报错。
+TEST(DasGraphTaskTest, GetNextExecutionTimeFallsBackToStaticWhenPortAbsent)
+{
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new MockTaskComponentHost());
+    DasGraphTaskAdapter adapter{host.Get()};
+    adapter.SetClockForTest(
+        [] { return ScheduleUnixOfUtc(2026, 9, 19, 12, 0, 0); });
+
+    // 空 plan 执行成功但无 end 口 → 无动态值。
+    const auto plan_settings = ScheduleSettingsJsonOf(EmptyCompiledPlanText());
+    ASSERT_TRUE(DAS::IsOk(adapter.Do(nullptr, nullptr, plan_settings.Get())));
+
+    const auto settings = ScheduleSettingsJsonOf(
+        MakePlanShellWithEndSettings(R"({"nextInterval":1,"nextUnit":"day"})"));
+    Das::ExportInterface::DasDate next{};
+    ASSERT_EQ(adapter.GetNextExecutionTime(settings.Get(), &next), DAS_S_OK);
+    // 静态通道：Do 已重锚定 base=now → 次日同时刻。
+    EXPECT_TRUE(ScheduleDateEquals(next, 2026, 9, 20, 12, 0, 0));
+}
+
+// 非法日期串（越界字段 "2026-13-40T99:00:00" / 短串 "2026-13" / 非 ISO
+// 文本）→ warn + 回落静态通道（fail-safe，A1 裁决）——不夹紧不猜测。
+TEST(DasGraphTaskTest, GetNextExecutionTimeIllegalPortStringFallsBackStatic)
+{
+    std::string plan_text;
+    CompileNextTimeProbePlanText(plan_text);
+    ASSERT_FALSE(plan_text.empty());
+
+    const auto static_settings = ScheduleSettingsJsonOf(
+        MakePlanShellWithEndSettings(R"({"nextInterval":1,"nextUnit":"day"})"));
+
+    const std::vector<std::string> illegal_texts = {
+        "2026-13-40T99:00:00",
+        "2026-13",
+        "not a date"};
+    for (const std::string& illegal_text : illegal_texts)
+    {
+        auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+            new ScheduleProbeDispatchHost(illegal_text));
+        DasGraphTaskAdapter adapter{host.Get()};
+        adapter.SetClockForTest(
+            [] { return ScheduleUnixOfUtc(2026, 9, 19, 12, 0, 0); });
+
+        const auto plan_settings = ScheduleSettingsJsonOf(plan_text);
+        ASSERT_TRUE(
+            DAS::IsOk(adapter.Do(nullptr, nullptr, plan_settings.Get())));
+
+        Das::ExportInterface::DasDate next{};
+        ASSERT_EQ(
+            adapter.GetNextExecutionTime(static_settings.Get(), &next),
+            DAS_S_OK);
+        // 回落静态：Do 重锚定 base=now → 次日同时刻。
+        EXPECT_TRUE(ScheduleDateEquals(next, 2026, 9, 20, 12, 0, 0));
+    }
+}
+
+// Do 每次入口清空动态捕获（陈旧值不跨执行残留）：上一次执行捕获的合法
+// 串，经一次无日期口的 Do 后不再生效。
+TEST(DasGraphTaskTest, GetNextExecutionTimeCaptureClearedPerExecution)
+{
+    std::string plan_text;
+    CompileNextTimeProbePlanText(plan_text);
+    ASSERT_FALSE(plan_text.empty());
+
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new ScheduleProbeDispatchHost("2031-02-03T04:05:06"));
+    DasGraphTaskAdapter adapter{host.Get()};
+    adapter.SetClockForTest(
+        [] { return ScheduleUnixOfUtc(2026, 9, 19, 12, 0, 0); });
+
+    const auto plan_settings = ScheduleSettingsJsonOf(plan_text);
+    ASSERT_TRUE(DAS::IsOk(adapter.Do(nullptr, nullptr, plan_settings.Get())));
+
+    {
+        Das::ExportInterface::DasDate next{};
+        ASSERT_EQ(adapter.GetNextExecutionTime(nullptr, &next), DAS_S_OK);
+        EXPECT_TRUE(ScheduleDateEquals(next, 2031, 2, 3, 4, 5, 6));
+    }
+
+    // 第二次执行：空 plan（无日期口）→ 捕获清空，回落静态。
+    const auto empty_plan_settings =
+        ScheduleSettingsJsonOf(EmptyCompiledPlanText());
+    ASSERT_TRUE(
+        DAS::IsOk(adapter.Do(nullptr, nullptr, empty_plan_settings.Get())));
+
+    const auto static_settings = ScheduleSettingsJsonOf(
+        MakePlanShellWithEndSettings(R"({"nextInterval":1,"nextUnit":"day"})"));
+    Das::ExportInterface::DasDate next{};
+    ASSERT_EQ(
+        adapter.GetNextExecutionTime(static_settings.Get(), &next),
+        DAS_S_OK);
+    EXPECT_TRUE(ScheduleDateEquals(next, 2026, 9, 20, 12, 0, 0));
+}
+
+// 超窗跳槽 focus 条目含跳过槽数（D-B4：skipped>0 经 i18n 链路记录——
+// 注入面=显式 recorder + i18n 目录；表缺失回落 en 字面模板，{0} 渲染）。
+TEST_F(GraphTaskFocusLogFixture, RecordsScheduleSkippedEntryWithSlotCount)
+{
+    SetDefaultLocale("en");
+    const std::filesystem::path missing_directory =
+        std::filesystem::current_path()
+        / DAS_PATH_LITERAL("graphtask-focus-i18n-absent");
+
+    EXPECT_EQ(
+        RecordGraphTaskScheduleSkippedFocusEntry(
+            recorder_.Get(),
+            missing_directory,
+            3),
+        DAS_S_OK);
+
+    const auto entry = LastFocusLogJsonlEntry(ReadUserJsonlText());
+    ASSERT_TRUE(entry.has_value());
+    EXPECT_EQ(entry->type, "warning");
+    EXPECT_NE(
+        entry->text.find("Graph task missed 3 scheduled slot(s)"),
+        std::string::npos);
+}
+
+// 超窗发布入口在生产环境（无 recorder 服务/无 i18n 表的单测进程）不抛不
+// 崩——GetNextExecutionTime 的超窗路径调用它，返回码不受影响。
+TEST(GraphTaskFocusLogPublish, PublishScheduleSkippedNeverFailsTheTaskPath)
+{
+    PublishGraphTaskScheduleSkippedFocusEntry(2);
+    SUCCEED();
+}

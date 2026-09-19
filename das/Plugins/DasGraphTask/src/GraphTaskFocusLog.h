@@ -47,6 +47,20 @@ namespace Das::Plugins::DasGraphTask
     // 试日志（含失败消息），不降级 + 插件包内 i18n/ 目录（DLL 自定位）。
     void PublishGraphTaskFailedFocusEntry(std::string_view failure_message);
 
+    // 超窗跳槽事件 focus 记录（user.jsonl → UI 事件日志面板）：跳过槽数经
+    // 插件 i18n 模板渲染（{0} 位置占位符），表缺失/解析失败回落 en 字面模
+    // 板。条目类型 WARNING（调度偏移值得注意，非任务失败）。记录失败只落
+    // 调试日志，绝不影响 GetNextExecutionTime 返回码。测试注入面：显式
+    // recorder + i18n 目录。
+    DasResult RecordGraphTaskScheduleSkippedFocusEntry(
+        Das::ExportInterface::IDasProcessLogRecorder* recorder,
+        const std::filesystem::path&                  i18n_directory,
+        std::int64_t                                  skipped_slots);
+
+    // 生产入口：主进程 das.focus-log-recorder 具名服务；resolve 失败落调
+    // 试日志（含跳过槽数），不降级 + 插件包内 i18n/ 目录（DLL 自定位）。
+    void PublishGraphTaskScheduleSkippedFocusEntry(std::int64_t skipped_slots);
+
 } // namespace Das::Plugins::DasGraphTask
 
 #endif // DAS_PLUGINS_DASGRAPHTASK_GRAPHTASKFOCUSLOG_H

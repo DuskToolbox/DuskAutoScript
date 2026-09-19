@@ -1,4 +1,5 @@
 {
     "graphTask.finished": "图任务完成：结束值 = {0}",
-    "graphTask.failed": "图任务失败：{0}"
+    "graphTask.failed": "图任务失败：{0}",
+    "graphTask.scheduleSkipped": "图任务错过 {0} 个计划槽点，下次执行顺延至未来槽点"
 }

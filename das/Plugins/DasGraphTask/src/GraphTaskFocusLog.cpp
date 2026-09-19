@@ -27,6 +27,14 @@ namespace Das::Plugins::DasGraphTask
         constexpr std::string_view FAILED_TEXT_FALLBACK =
             "Graph task failed: {0}";
 
+        constexpr std::string_view SCHEDULE_SKIPPED_I18N_KEY =
+            "graphTask.scheduleSkipped";
+
+        // i18n 表不可用时的 en 字面模板（含 {0}=跳过槽数占位符）。
+        constexpr std::string_view SCHEDULE_SKIPPED_TEXT_FALLBACK =
+            "Graph task missed {0} scheduled slot(s); next run moved to the "
+            "upcoming slot";
+
         // DLL 自定位（DasMaaPi PluginUtils 同款）：this_line_location 返回
         // 本代码所在模块路径，i18n 表随插件部署在 DLL 目录 i18n/ 下。
         std::optional<std::filesystem::path> PluginModuleI18nDirectory()
@@ -283,6 +291,85 @@ namespace Das::Plugins::DasGraphTask
                     "GraphTask failed focus entry not recorded "
                     "(record_rc={})",
                     static_cast<std::int64_t>(record_rc))
+                    .c_str());
+        }
+    }
+
+    DasResult RecordGraphTaskScheduleSkippedFocusEntry(
+        Das::ExportInterface::IDasProcessLogRecorder* recorder,
+        const std::filesystem::path&                  i18n_directory,
+        std::int64_t                                  skipped_slots)
+    {
+        if (recorder == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        const std::string template_text = ResolveTextTemplate(
+            i18n_directory,
+            SCHEDULE_SKIPPED_I18N_KEY,
+            SCHEDULE_SKIPPED_TEXT_FALLBACK);
+        std::string entry_text = template_text;
+        try
+        {
+            // make_format_args 持引用而非拥有：skipped_slots 是具名形参，
+            // 生命周期覆盖 vformat 调用（禁临时量悬垂引用）。
+            entry_text = DAS_FMT_NS::vformat(
+                template_text,
+                DAS_FMT_NS::make_format_args(skipped_slots));
+        }
+        catch (...)
+        {
+            // 模板占位符异常（缺参/错序）按字面输出，不阻断记录。
+        }
+        return RecordFocusLogEntry(
+            recorder,
+            ExportInterface::DAS_LOG_TYPE_WARNING,
+            entry_text);
+    }
+
+    void PublishGraphTaskScheduleSkippedFocusEntry(std::int64_t skipped_slots)
+    {
+        // 主进程具名服务（IPC 模式经 proxy 回主进程写 user.jsonl）；resolve
+        // 失败即落调试日志（含跳过槽数），不降级、无本地工厂——focus 面板
+        // 看不到跳槽事件时按此定位，GetNextExecutionTime 返回码不受影响。
+        DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
+        {
+            DasPtr<IDasBase> resolved_base;
+            const DasResult  resolve_rc = DasQueryMainProcessInterfaceByName(
+                "das.focus-log-recorder",
+                resolved_base.Put());
+            if (DAS::IsOk(resolve_rc) && resolved_base)
+            {
+                (void)resolved_base.As(recorder.Put());
+            }
+            else
+            {
+                DAS_LOG_ERROR(
+                    DAS_FMT_NS::format(
+                        "GraphTask focus recorder resolve failed "
+                        "(resolve_rc={}); "
+                        "schedule-skipped entry not published (skipped "
+                        "slots={})",
+                        static_cast<std::int64_t>(resolve_rc),
+                        skipped_slots)
+                        .c_str());
+                return;
+            }
+        }
+        const std::optional<std::filesystem::path> i18n_directory =
+            PluginModuleI18nDirectory();
+        const DasResult record_rc = RecordGraphTaskScheduleSkippedFocusEntry(
+            recorder.Get(),
+            i18n_directory.value_or(std::filesystem::path{}),
+            skipped_slots);
+        if (DAS::IsFailed(record_rc))
+        {
+            DAS_LOG_ERROR(
+                DAS_FMT_NS::format(
+                    "GraphTask schedule-skipped focus entry not recorded "
+                    "(record_rc={}, skipped slots={})",
+                    static_cast<std::int64_t>(record_rc),
+                    skipped_slots)
                     .c_str());
         }
     }
