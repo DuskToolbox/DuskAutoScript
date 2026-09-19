@@ -458,6 +458,54 @@
         }
       }
     },
+    "PortDeclaration": {
+      "type": "object",
+      "required": ["id", "type", "direction"],
+      "additionalProperties": false,
+      "$comment": "Document-level declared port. id follows the node-port name field discipline (non-empty, at most 100 UTF-8 bytes, no leading '$') and must be unique within the section; label defaults to id when omitted; type is a builtin value type or a name registered in the same document's types[]; direction is the signature direction. The same-document closure of type is enforced by the C++ validator (a JSON schema cannot reference sibling array entries).",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[^$].*$",
+          "$comment": "UTF-8 byte length cap and reserved-prefix ban, matching AddNodePort.portId."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Optional display label; defaults to id when omitted. Engaged-only: present means non-empty."
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Nine builtin value types (bool/int/int64/float/double/string/image/base/component) or a name registered in the same document's types[]. Cross-document/plugin names are rejected by the C++ validator."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["input", "output"]
+        }
+      }
+    },
+    "TypeDeclaration": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "$comment": "Document-level registered type. name follows the node-port name field discipline (non-empty, at most 100 UTF-8 bytes, no leading '$') and must be unique within the document (a registration-name ambiguity is a port-surface ambiguity). compatibleWith is scoped to builtin value types x names registered in the same document — cross-plugin references are rejected.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[^$].*$"
+        },
+        "compatibleWith": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "$comment": "Optional; each entry must be a builtin value type or a name registered in the same document's types[] (first-stage scope: own types x builtins)."
+        }
+      }
+    },
     "AuthoringDocument": {
       "type": "object",
       "required": ["contractVersion", "viewKind", "revision"],
@@ -484,6 +532,16 @@
         "formSequence": { "$ref": "#/$defs/FormSequence" },
         "graph": { "$ref": "#/$defs/GraphDocument" },
         "actionCatalog": { "$ref": "#/$defs/ActionCatalog" },
+        "ports": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PortDeclaration" },
+          "$comment": "Document-level port declaration section (engaged-only: absent key is the norm for existing documents; a pure manifest component document stays valid without it)."
+        },
+        "types": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TypeDeclaration" },
+          "$comment": "Document-level type registration section (engaged-only). Registered names extend the ports[].type vocabulary of the SAME document only."
+        },
         "viewData": { "type": "object" }
       }
     },

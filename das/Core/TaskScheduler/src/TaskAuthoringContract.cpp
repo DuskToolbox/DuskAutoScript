@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -2714,6 +2715,231 @@ namespace Das::Core::TaskScheduler
             // Unknown kinds are rejected by the caller before dispatch.
             return Pass();
         }
+
+        // ===== 根文档 ports/types section（engaged-only）=====
+        //
+        // 文档声明口/类型注册 section：缺席合法（既有文档零破坏），出现即
+        // 逐字段校验。形状定稿：ports[]={id(必填,纪律), label(可选缺省=id,
+        // 出现即非空), type(必填=九词内建或同文档 types 注册名),
+        // direction(input|output)}；types[]={name(必填,纪律,同文档唯一),
+        // compatibleWith(可选数组, 每项=九词或同文档注册名——限自类型×内
+        // 建, 防跨插件类型注入)}。纯 manifest 组件文档不带两 section 照常
+        // 通过（契约只定义能力形状，不强制组件接入）。
+
+        // 口名/注册名纪律：与 GraphRuntime 模块 AuthoringDocContract.cpp
+        // 的 NodePortNameViolation 同语义 lockstep（该函数在 GraphRuntime
+        // 匿名命名空间内不可达，此处为同语义私有镜像，两处须同步演化）：
+        // 非空、UTF-8 字节数 ≤100、不以 "$" 开头（哨兵源命名空间保留）。
+        // 返回违规描述，nullopt = 合法。
+        std::optional<std::string> PortNameDisciplineViolation(
+            std::string_view name)
+        {
+            if (name.empty())
+            {
+                return std::string("must be non-empty");
+            }
+            if (name.size() > MAX_NODE_PORT_NAME_UTF8_BYTES)
+            {
+                return std::string("must be at most 100 UTF-8 bytes");
+            }
+            if (name.front() == '$')
+            {
+                return std::string("must not start with '$' (reserved)");
+            }
+            return std::nullopt;
+        }
+
+        bool IsBuiltinPortValueType(std::string_view value_type)
+        {
+            return std::find(
+                       NODE_PORT_VALUE_TYPES.begin(),
+                       NODE_PORT_VALUE_TYPES.end(),
+                       value_type)
+                   != NODE_PORT_VALUE_TYPES.end();
+        }
+
+        // types section 两遍扫：先逐条形状 + name 纪律 + 同文档唯一（收集
+        // 注册名全集），再回扫 compatibleWith 引用（全集已知后才能做限域
+        // 校验）。registered_names_out 回传注册名集合供 ports 的 type 校验
+        // 复用（先 types 后 ports 的调用序由此保证）。
+        AuthoringValidationResult ValidateTypesSection(
+            const yyjson::value&   types,
+            std::set<std::string>& registered_names_out)
+        {
+            auto arr_opt = types.as_array();
+            if (!arr_opt)
+            {
+                return Fail("invalidTypes", "types must be array");
+            }
+            for (const auto& entry : *arr_opt)
+            {
+                auto entry_obj = entry.as_object();
+                if (!entry_obj)
+                {
+                    return Fail("invalidValue", "types entry must be object");
+                }
+                const auto& obj = *entry_obj;
+                if (!OnlyKeys(obj, {"name", "compatibleWith"}))
+                {
+                    return Fail(
+                        "unknownField",
+                        "types entry rejects unknown field");
+                }
+                if (auto r = RequireNonEmptyString(
+                        obj,
+                        "name",
+                        "invalidValue",
+                        "types[].name required and non-empty");
+                    !r.valid)
+                {
+                    return r;
+                }
+                const auto name = obj["name"].as_string().value();
+                if (auto violation = PortNameDisciplineViolation(name))
+                {
+                    return Fail("invalidValue", "types[].name " + *violation);
+                }
+                if (!registered_names_out.insert(std::string(name)).second)
+                {
+                    return Fail("duplicateTypeName", "types[].name duplicate");
+                }
+                if (obj.contains("compatibleWith")
+                    && !obj["compatibleWith"].is_array())
+                {
+                    return Fail(
+                        "invalidValue",
+                        "types[].compatibleWith must be array");
+                }
+            }
+            // 第二遍：compatibleWith 限域=九词内建 × 同文档注册名。
+            for (const auto& entry : *arr_opt)
+            {
+                auto entry_obj = entry.as_object();
+                if (!entry_obj)
+                {
+                    continue;
+                }
+                const auto& obj = *entry_obj;
+                if (!obj.contains("compatibleWith"))
+                {
+                    continue;
+                }
+                auto compatible_view = obj["compatibleWith"].as_array().value();
+                for (const auto& item : compatible_view)
+                {
+                    if (!item.is_string())
+                    {
+                        return Fail(
+                            "invalidValue",
+                            "types[].compatibleWith entries must be strings");
+                    }
+                    const auto referenced = item.as_string().value();
+                    if (referenced.empty()
+                        || (!IsBuiltinPortValueType(referenced)
+                            && registered_names_out.count(
+                                   std::string(referenced))
+                                   == 0))
+                    {
+                        return Fail(
+                            "invalidValue",
+                            "types[].compatibleWith entries must be builtin "
+                            "value types or names registered in the same "
+                            "document");
+                    }
+                }
+            }
+            return Pass();
+        }
+
+        // ports section：type 词汇表=九词 NODE_PORT_VALUE_TYPES ∪ 同文档
+        // types 注册名（勿用编译侧 GetKnownTypes 的 13 词超集——
+        // signal/json/object/null 禁入）。id 同文档内无重复（重复口 id =
+        // 连线坐标歧义）。
+        AuthoringValidationResult ValidatePortsSection(
+            const yyjson::value&         ports,
+            const std::set<std::string>& registered_type_names)
+        {
+            auto arr_opt = ports.as_array();
+            if (!arr_opt)
+            {
+                return Fail("invalidPorts", "ports must be array");
+            }
+            std::set<std::string> seen_ids;
+            for (const auto& entry : *arr_opt)
+            {
+                auto entry_obj = entry.as_object();
+                if (!entry_obj)
+                {
+                    return Fail("invalidValue", "ports entry must be object");
+                }
+                const auto& obj = *entry_obj;
+                if (!OnlyKeys(obj, {"id", "label", "type", "direction"}))
+                {
+                    return Fail(
+                        "unknownField",
+                        "ports entry rejects unknown field");
+                }
+                if (auto r = RequireNonEmptyString(
+                        obj,
+                        "id",
+                        "invalidValue",
+                        "ports[].id required and non-empty");
+                    !r.valid)
+                {
+                    return r;
+                }
+                const auto id = obj["id"].as_string().value();
+                if (auto violation = PortNameDisciplineViolation(id))
+                {
+                    return Fail("invalidValue", "ports[].id " + *violation);
+                }
+                if (!seen_ids.insert(std::string(id)).second)
+                {
+                    return Fail("duplicatePortId", "ports[].id duplicate");
+                }
+                // label 可选、缺省=id；出现即必须为非空字符串。
+                if (obj.contains("label"))
+                {
+                    if (!HasStringField(obj, "label")
+                        || obj["label"].as_string().value().empty())
+                    {
+                        return Fail(
+                            "invalidValue",
+                            "ports[].label must be a non-empty string when "
+                            "present");
+                    }
+                }
+                if (!HasStringField(obj, "type"))
+                {
+                    return Fail("missingField", "ports[].type required");
+                }
+                const auto type = obj["type"].as_string().value();
+                if (type.empty()
+                    || (!IsBuiltinPortValueType(type)
+                        && registered_type_names.count(std::string(type)) == 0))
+                {
+                    return Fail(
+                        "invalidValue",
+                        "ports[].type must be a builtin value type "
+                        "(bool/int/int64/float/double/string/image/base/"
+                        "component) or a name registered in this document's "
+                        "types");
+                }
+                if (!HasStringField(obj, "direction"))
+                {
+                    return Fail("missingField", "ports[].direction required");
+                }
+                const auto direction = obj["direction"].as_string().value();
+                if (direction != std::string_view("input")
+                    && direction != std::string_view("output"))
+                {
+                    return Fail(
+                        "invalidValue",
+                        "ports[].direction must be input|output");
+                }
+            }
+            return Pass();
+        }
     } // namespace
 
     AuthoringValidationResult ValidateAuthoringDocument(
@@ -2776,6 +3002,28 @@ namespace Das::Core::TaskScheduler
             }
         }
 
+        // 文档声明口/类型注册 section（engaged-only）：先校 types（收集同
+        // 文档注册名全集）再校 ports（type 词汇表=九词 ∪ 注册名）。
+        std::set<std::string> registered_type_names;
+        if (obj.contains("types"))
+        {
+            if (auto r =
+                    ValidateTypesSection(obj["types"], registered_type_names);
+                !r.valid)
+            {
+                return r;
+            }
+        }
+        if (obj.contains("ports"))
+        {
+            if (auto r =
+                    ValidatePortsSection(obj["ports"], registered_type_names);
+                !r.valid)
+            {
+                return r;
+            }
+        }
+
         // Document-level viewData partition (UI-owned canvas coordinates,
         // written by moveGraphNode): container type only — the content is
         // the UI's free partition and must not be interpreted here.
@@ -2794,6 +3042,8 @@ namespace Das::Core::TaskScheduler
                  "formSequence",
                  "graph",
                  "actionCatalog",
+                 "ports",
+                 "types",
                  "viewData"}))
         {
             return Fail(
