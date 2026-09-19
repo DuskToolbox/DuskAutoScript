@@ -488,11 +488,12 @@ namespace Contract
                    || component_guid == GRAPH_END_COMPONENT_GUID;
         }
 
-        /// 已绑仓库条目的调用节点判定（签名口物化通道的角色门判据，业务
-        /// 中立——不特判组件 guid，只认目录声明的 taskRepositoryRef 字段持
-        /// 正整数值）：这类节点的边界签名口（提取编排物化或手工重建）与
-        /// 运行期值通道共享口坐标，动态口分区是它们的可寻址载体。
-        bool NodeHoldsBoundRepositoryEntry(
+        /// 已绑仓库条目的调用节点 entry id 解析（业务中立——不特判组件
+        /// guid，只认目录声明的 taskRepositoryRef 字段持正整数值）：
+        /// 返回该正整数（十进制文本键由调用方按容器键形转换），
+        /// nullopt = 未绑条目。NodeHoldsBoundRepositoryEntry 与 entryFaces
+        /// 消费（编译侧/投影侧）共用本判据——单一逻辑源。
+        std::optional<int64_t> BoundRepositoryEntryIdOf(
             const Dto::GraphNodeDto&            node,
             const std::optional<ActionCatalog>& action_catalog)
         {
@@ -500,7 +501,7 @@ namespace Contract
                 FindCatalogEntry(action_catalog, ComponentGuidOf(node));
             if (entry == nullptr)
             {
-                return false;
+                return std::nullopt;
             }
             std::vector<std::string_view> repository_field_names;
             for (const auto& config_field : entry->config_fields)
@@ -512,12 +513,12 @@ namespace Contract
             }
             if (repository_field_names.empty())
             {
-                return false;
+                return std::nullopt;
             }
             auto settings_obj = node.settings.as_object();
             if (!settings_obj.has_value())
             {
-                return false;
+                return std::nullopt;
             }
             for (const auto& field_name : repository_field_names)
             {
@@ -527,12 +528,25 @@ namespace Contract
                 }
                 const auto& value =
                     (*settings_obj)[std::string_view(field_name)];
-                if (value.is_int() && value.as_int().value_or(0) > 0)
+                if (value.is_int())
                 {
-                    return true;
+                    const auto entry_id = value.as_int();
+                    if (entry_id.has_value() && *entry_id > 0)
+                    {
+                        return *entry_id;
+                    }
                 }
             }
-            return false;
+            return std::nullopt;
+        }
+
+        /// 已绑仓库条目的调用节点判定（签名口物化通道的角色门判据）——
+        /// BoundRepositoryEntryIdOf 的布尔形态。
+        bool NodeHoldsBoundRepositoryEntry(
+            const Dto::GraphNodeDto&            node,
+            const std::optional<ActionCatalog>& action_catalog)
+        {
+            return BoundRepositoryEntryIdOf(node, action_catalog).has_value();
         }
 
         /// node 作用域稳定口 id 分配（照 AllocateStableNodeId 模式）：
@@ -768,7 +782,9 @@ namespace Contract
 
         GraphView MapGraphView(
             const Dto::GraphDocumentDto&        doc,
-            const std::optional<ActionCatalog>& action_catalog)
+            const std::optional<ActionCatalog>& action_catalog,
+            const GraphCompiler::NodeFacesMap*  node_faces,
+            const GraphCompiler::EntryFacesMap* entry_faces)
         {
             GraphView view;
             // Connected input-port endpoints, keyed
@@ -875,6 +891,63 @@ namespace Contract
                     }
                 }
 
+                // faces 注入通道 merge（调用侧合并形态）：nodeFaces[本节
+                // 点] 与绑条目节点的 entryFaces[entryId]（判据复用
+                // BoundRepositoryEntryIdOf 单一逻辑源）直接并入
+                // GraphNodePort 列表——BuildPortsValue 的五键+dynamic 投
+                // 影键形不变，faces 口以既有 dynamic 标记呈现。去重规则
+                // 与编译侧一致：按口 id，face 胜出同名已投影口。
+                const auto append_face_ports =
+                    [&out, &node, &connected_input_sources](
+                        const std::vector<GraphCompiler::DocumentFacePort>&
+                            faces)
+                {
+                    for (const auto& face : faces)
+                    {
+                        const auto removed = std::remove_if(
+                            out.ports.begin(),
+                            out.ports.end(),
+                            [&face](const GraphNodePort& projected)
+                            { return projected.port_id == face.port_id; });
+                        out.ports.erase(removed, out.ports.end());
+                        GraphNodePort projected;
+                        projected.port_id = face.port_id;
+                        projected.display_label = face.label;
+                        projected.port_type = face.port_type;
+                        projected.direction = face.direction;
+                        projected.category = DerivePortCategory(face.port_type);
+                        projected.dynamic_port = true;
+                        AttachPortValueFromSettings(
+                            node.settings,
+                            node.node_id,
+                            connected_input_sources,
+                            projected);
+                        out.ports.push_back(std::move(projected));
+                    }
+                };
+                if (node_faces != nullptr)
+                {
+                    const auto found = node_faces->find(node.node_id);
+                    if (found != node_faces->end())
+                    {
+                        append_face_ports(found->second);
+                    }
+                }
+                if (entry_faces != nullptr)
+                {
+                    const auto bound_entry_id =
+                        BoundRepositoryEntryIdOf(node, action_catalog);
+                    if (bound_entry_id.has_value())
+                    {
+                        const auto found =
+                            entry_faces->find(std::to_string(*bound_entry_id));
+                        if (found != entry_faces->end())
+                        {
+                            append_face_ports(found->second);
+                        }
+                    }
+                }
+
                 view.nodes.push_back(std::move(out));
             }
 
@@ -949,7 +1022,9 @@ namespace Contract
 
     AuthoringDocument ToAuthoringDocument(
         const Dto::GraphDocumentDto&        document,
-        const std::optional<ActionCatalog>& action_catalog)
+        const std::optional<ActionCatalog>& action_catalog,
+        const GraphCompiler::NodeFacesMap*  node_faces,
+        const GraphCompiler::EntryFacesMap* entry_faces)
     {
         AuthoringDocument out;
         out.revision = document.version;
@@ -964,7 +1039,8 @@ namespace Contract
         else
         {
             out.view_kind = ViewKind::Graph;
-            out.graph = MapGraphView(document, action_catalog);
+            out.graph =
+                MapGraphView(document, action_catalog, node_faces, entry_faces);
         }
         return out;
     }
@@ -1340,7 +1416,9 @@ namespace Contract
 
     yyjson::value SerializeDocument(
         const Dto::GraphDocumentDto&        document,
-        const std::optional<ActionCatalog>& action_catalog)
+        const std::optional<ActionCatalog>& action_catalog,
+        const GraphCompiler::NodeFacesMap*  node_faces,
+        const GraphCompiler::EntryFacesMap* entry_faces)
     {
         // Build the strict Phase 84 wire by hand. Earlier shape-based
         // yyjson::object(shape, copy_string) emitted every optional as null;
@@ -1389,9 +1467,10 @@ namespace Contract
         {
             root_obj["viewKind"] =
                 std::make_pair(std::string_view("graph"), yyjson::copy_string);
-            const auto view = MapGraphView(document, action_catalog);
-            auto       g_v = Das::Utils::MakeYyjsonObject();
-            auto       g_o = g_v.as_object();
+            const auto view =
+                MapGraphView(document, action_catalog, node_faces, entry_faces);
+            auto g_v = Das::Utils::MakeYyjsonObject();
+            auto g_o = g_v.as_object();
             if (g_o)
             {
                 auto g = *g_o;

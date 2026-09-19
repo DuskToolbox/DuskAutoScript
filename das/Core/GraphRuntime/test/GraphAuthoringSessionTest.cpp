@@ -3082,4 +3082,149 @@ namespace
                 << faces_json;
         }
     }
+
+    // ======================================================================
+    // faces 画布投影（BuildPortsValue 调用侧合并形态）
+    // ======================================================================
+
+    /// Locate one port object of a component's node in the Get graph view by
+    /// portId; nullopt when the node or the port is absent.
+    std::optional<yyjson::value> NodePortByIdOfComponent(
+        const yyjson::value& document,
+        std::string_view     component_guid,
+        std::string_view     port_id)
+    {
+        const auto ports = NodePortsOfComponent(document, component_guid);
+        if (!ports.has_value())
+        {
+            return std::nullopt;
+        }
+        auto arr = ports->as_array();
+        if (!arr.has_value())
+        {
+            return std::nullopt;
+        }
+        for (const auto& port : *arr)
+        {
+            auto port_obj = port.as_object();
+            if (!port_obj)
+            {
+                continue;
+            }
+            auto id = (*port_obj)[std::string_view("portId")].as_string();
+            if (id.has_value() && *id == port_id)
+            {
+                return Das::Utils::CloneYyjsonValue(port);
+            }
+        }
+        return std::nullopt;
+    }
+
+    // context 带 faces 的会话 GetDocument：图视图该节点 ports 数组含动
+    // 态口条目——五键（portId/displayLabel/portType/direction/category）
+    // 齐全 + 既有 dynamic 标记，不新增投影键。
+    TEST(GraphAuthoringSessionTest, NodeFacesProjectIntoCanvasPorts)
+    {
+        const SessionHandle s{NodeFacesGraphContext(kValidNodeFaces)};
+
+        const auto document = DocumentOf(s.p);
+        const auto dyn_in = NodePortByIdOfComponent(
+            document,
+            std::string_view("{g2}"),
+            std::string_view("dyn_in"));
+        ASSERT_TRUE(dyn_in.has_value());
+        auto port_obj = dyn_in->as_object();
+        ASSERT_TRUE(port_obj.has_value());
+        EXPECT_TRUE(port_obj->contains(std::string_view("portId")));
+        EXPECT_TRUE(port_obj->contains(std::string_view("displayLabel")));
+        EXPECT_TRUE(port_obj->contains(std::string_view("portType")));
+        EXPECT_TRUE(port_obj->contains(std::string_view("direction")));
+        EXPECT_TRUE(port_obj->contains(std::string_view("category")));
+        // dynamic 标记是既有通道：faces 口经它呈现，静态口无该键。
+        EXPECT_TRUE(port_obj->contains(std::string_view("dynamic")));
+        auto direction = (*port_obj)[std::string_view("direction")].as_string();
+        ASSERT_TRUE(direction.has_value());
+        EXPECT_EQ(*direction, "input");
+        auto port_type = (*port_obj)[std::string_view("portType")].as_string();
+        ASSERT_TRUE(port_type.has_value());
+        EXPECT_EQ(*port_type, "string");
+        // label 可选缺失即 id。
+        auto label = (*port_obj)[std::string_view("displayLabel")].as_string();
+        ASSERT_TRUE(label.has_value());
+        EXPECT_EQ(*label, "dyn_in");
+
+        // 声明口（catalog 静态面）不带 dynamic 键——faces 只标记注入的
+        // 文档口。
+        const auto declared = NodePortByIdOfComponent(
+            document,
+            std::string_view("{g1}"),
+            std::string_view("result"));
+        ASSERT_TRUE(declared.has_value());
+        auto declared_obj = declared->as_object();
+        ASSERT_TRUE(declared_obj.has_value());
+        EXPECT_FALSE(declared_obj->contains(std::string_view("dynamic")));
+
+        // 带 faces 的文档仍过严格校验器。
+        auto result =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_TRUE(result.valid)
+            << result.error_kind << ": " << result.message;
+    }
+
+    // entryFaces 画布投影：绑条目调用节点的 ports 含条目文档口（dynamic
+    // 标记），未绑节点不吃 entryFaces。
+    TEST(GraphAuthoringSessionTest, EntryFacesProjectIntoCanvasPorts)
+    {
+        const SessionHandle s{EntryFacesGraphContext(kValidEntryFaces)};
+
+        const auto document = DocumentOf(s.p);
+        // 绑条目节点 n_call（{g1}）：双方向文档口均投影且带 dynamic。
+        const auto doc_in = NodePortByIdOfComponent(
+            document,
+            std::string_view("{g1}"),
+            std::string_view("doc_in"));
+        ASSERT_TRUE(doc_in.has_value());
+        auto in_obj = doc_in->as_object();
+        ASSERT_TRUE(in_obj.has_value());
+        EXPECT_TRUE(in_obj->contains(std::string_view("dynamic")));
+        auto in_direction =
+            (*in_obj)[std::string_view("direction")].as_string();
+        ASSERT_TRUE(in_direction.has_value());
+        EXPECT_EQ(*in_direction, "input");
+
+        const auto doc_out = NodePortByIdOfComponent(
+            document,
+            std::string_view("{g1}"),
+            std::string_view("doc_out"));
+        ASSERT_TRUE(doc_out.has_value());
+        auto out_obj = doc_out->as_object();
+        ASSERT_TRUE(out_obj.has_value());
+        EXPECT_TRUE(out_obj->contains(std::string_view("dynamic")));
+        auto out_direction =
+            (*out_obj)[std::string_view("direction")].as_string();
+        ASSERT_TRUE(out_direction.has_value());
+        EXPECT_EQ(*out_direction, "output");
+
+        // 未绑节点 n_free（{g2}）：不吃 entryFaces——doc_in 不在其口面，
+        // 其声明口 take 照常投影且无 dynamic。
+        const auto leaked = NodePortByIdOfComponent(
+            document,
+            std::string_view("{g2}"),
+            std::string_view("doc_in"));
+        EXPECT_FALSE(leaked.has_value());
+        const auto take = NodePortByIdOfComponent(
+            document,
+            std::string_view("{g2}"),
+            std::string_view("take"));
+        ASSERT_TRUE(take.has_value());
+        auto take_obj = take->as_object();
+        ASSERT_TRUE(take_obj.has_value());
+        EXPECT_FALSE(take_obj->contains(std::string_view("dynamic")));
+
+        // 带 entryFaces 的文档仍过严格校验器。
+        auto result =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_TRUE(result.valid)
+            << result.error_kind << ": " << result.message;
+    }
 } // namespace

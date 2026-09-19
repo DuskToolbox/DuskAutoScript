@@ -9,6 +9,7 @@
 
 #include <cpp_yyjson.hpp>
 #include <das/Core/GraphRuntime/Config.h>
+#include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -303,7 +304,9 @@ namespace Contract
     /// actionId); when absent the node ports[] carry dynamic ports only.
     AuthoringDocument ToAuthoringDocument(
         const Dto::GraphDocumentDto&        document,
-        const std::optional<ActionCatalog>& action_catalog = std::nullopt);
+        const std::optional<ActionCatalog>& action_catalog = std::nullopt,
+        const GraphCompiler::NodeFacesMap*  node_faces = nullptr,
+        const GraphCompiler::EntryFacesMap* entry_faces = nullptr);
 
     // -----------------------------------------------------------------------
     // Upgrade (formSequence → graph) — one-way, lossless, in-place on the store
@@ -331,9 +334,17 @@ namespace Contract
     /// `action_catalog` is optional; when present it is emitted on the
     /// document root so clients can render the "add item/node" affordance
     /// without a separate round-trip.
+    /// `node_faces` / `entry_faces` are the optional faces-channel snapshots
+    /// (the session state's injected document port faces). When present, the
+    /// graph view merges them onto the projected nodes[] ports arrays as
+    /// dynamic ports — same dedupe rule as the compile side (face wins over
+    /// a same-name projected port); nullptr = no faces channel (the
+    /// projection then matches the pre-faces wire exactly).
     yyjson::value SerializeDocument(
         const Dto::GraphDocumentDto&        document,
-        const std::optional<ActionCatalog>& action_catalog = std::nullopt);
+        const std::optional<ActionCatalog>& action_catalog = std::nullopt,
+        const GraphCompiler::NodeFacesMap*  node_faces = nullptr,
+        const GraphCompiler::EntryFacesMap* entry_faces = nullptr);
 
     /// Serialize the authoritative store as the D-41 *source* blob
     /// (acceptedProperties). This is the full GraphDocumentDto — the persisted

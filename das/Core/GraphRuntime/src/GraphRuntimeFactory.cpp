@@ -1225,7 +1225,10 @@ namespace
         int32_t            base_revision,
         const GraphDocDto& document,
         const std::optional<Das::Core::GraphRuntime::Contract::ActionCatalog>&
-            action_catalog)
+            action_catalog,
+        const Das::Core::GraphRuntime::GraphCompiler::NodeFacesMap* node_faces,
+        const Das::Core::GraphRuntime::GraphCompiler::EntryFacesMap*
+            entry_faces)
     {
         auto root = Das::Utils::MakeYyjsonObject();
         auto obj = root.as_object();
@@ -1242,7 +1245,9 @@ namespace
             (*obj)[std::string_view("document")] =
                 Das::Core::GraphRuntime::Contract::SerializeDocument(
                     document,
-                    action_catalog);
+                    action_catalog,
+                    node_faces,
+                    entry_faces);
         }
         else
         {
@@ -1276,7 +1281,9 @@ namespace
             (*obj)[std::string_view("document")] =
                 Das::Core::GraphRuntime::Contract::SerializeDocument(
                     document,
-                    action_catalog);
+                    action_catalog,
+                    node_faces,
+                    entry_faces);
             // acceptedProperties remains the persisted source so the client
             // sees the unchanged authoritative state.
             (*obj)[std::string_view("acceptedProperties")] =
@@ -2196,7 +2203,9 @@ DAS_C_API DasResult GraphAuthoringSessionGetDocument(
         // diagnostics 永远为空数组（满足 validator required 约束）。
         auto document = Das::Core::GraphRuntime::Contract::SerializeDocument(
             p->document,
-            catalog);
+            catalog,
+            &p->node_faces,
+            &p->entry_faces);
 
         yyjson::value envelope(Das::Utils::MakeYyjsonObject());
         auto          env_obj = envelope.as_object();
@@ -2253,7 +2262,9 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
                      std::nullopt},
                     p->document.version,
                     p->document,
-                    MakeCatalogFromState(*p)),
+                    MakeCatalogFromState(*p),
+                    &p->node_faces,
+                    &p->entry_faces),
                 pp_out_result_json);
             return r;
         }
@@ -2270,7 +2281,9 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
                      std::nullopt},
                     p->document.version,
                     p->document,
-                    MakeCatalogFromState(*p)),
+                    MakeCatalogFromState(*p),
+                    &p->node_faces,
+                    &p->entry_faces),
                 pp_out_result_json);
         }
 
@@ -2295,7 +2308,9 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
                 r,
                 static_cast<int32_t>(base_revision),
                 p->document,
-                MakeCatalogFromState(*p)),
+                MakeCatalogFromState(*p),
+                &p->node_faces,
+                &p->entry_faces),
             pp_out_result_json);
     }
     catch (const std::bad_alloc&)
