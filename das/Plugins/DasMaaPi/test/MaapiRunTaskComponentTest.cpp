@@ -1,14 +1,19 @@
 #include "../src/MaapiRunTaskComponent.h"
+#include "../src/MaapiScheduleBrain.h"
 #include "../src/PluginUtils.h"
 #include "FakeMaaApiBoundary.h"
 
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/abi/IDasStringVector.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <cstdio>
+#include <ctime>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -23,8 +28,9 @@ namespace
     // envelope fixture 直接构造 ExecutionEnvelopeDto 并序列化——cpp_yyjson
     // 的 default_caster 经 PFR 对每个字段调 obj[key]，缺 key（如
     // focusTranslationsPath/schedule 即便为空也必须显式存在）在 cast 前抛
-    // std::out_of_range，手搓 JSON 字符串极易漏键。
-    std::string MakeEnvelopeJson()
+    // std::out_of_range，手搓 JSON 字符串极易漏键。schedule 由参数注入
+    // （默认 off：kind=""）。
+    std::string MakeEnvelopeJson(const MaaScheduleConfigDto& schedule = {})
     {
         ExecutionEnvelopeDto envelope;
         envelope.maapi.interface_directory = "C:/maa";
@@ -46,6 +52,8 @@ namespace
         // 与 FakeMaaApiBoundary::GetResourceHash 的默认返回一致，避免
         // resource hash mismatch 警告诊断混入断言面。
         envelope.maapi.resource_hash = "hash-expected";
+
+        envelope.maapi.schedule = schedule;
 
         MaaTaskExecutionDto task;
         task.task_name = "E2ETestTask";
@@ -122,6 +130,75 @@ namespace
         std::string value(utf8 != nullptr ? utf8 : "");
         p_str->Release();
         return value;
+    }
+
+    // 跨平台 gmtime_s(Win32) / gmtime_r(POSIX)——UTC 字段期望值计算用
+    // （D-B5 wire 契约的 UTC 语义断言）。
+    std::tm* PortableGmtime(const std::time_t* timer, std::tm* buf)
+    {
+#ifdef _WIN32
+        return gmtime_s(buf, timer) == 0 ? buf : nullptr;
+#else
+        return gmtime_r(timer, buf);
+#endif
+    }
+
+    std::tm* PortableLocaltime(const std::time_t* timer, std::tm* buf)
+    {
+#ifdef _WIN32
+        return localtime_s(buf, timer) == 0 ? buf : nullptr;
+#else
+        return localtime_r(timer, buf);
+#endif
+    }
+
+    // 构造"本地 HH:MM:00 今天"的 unix 时间戳（fake clock 注入值）。
+    std::time_t LocalTodayUnix(int hour, int minute)
+    {
+        std::time_t now = std::time(nullptr);
+        std::tm     local{};
+        PortableLocaltime(&now, &local);
+        local.tm_hour = hour;
+        local.tm_min = minute;
+        local.tm_sec = 0;
+        local.tm_isdst = -1;
+        return std::mktime(&local);
+    }
+
+    // output PortMap 键集（GetKeys）是否含指定键——engaged-only 断言用
+    // （off 不发 nextTime 键的键集级验证，比读值空串更强）。
+    bool PortMapHasKey(
+        ExportInterface::IDasReadOnlyPortMap* map,
+        std::string_view                      port_id)
+    {
+        Das::DasPtr<ExportInterface::IDasStringVector> keys;
+        if (DAS::IsFailed(map->GetKeys(keys.Put())) || !keys)
+        {
+            return false;
+        }
+        std::uint64_t count = 0;
+        if (DAS::IsFailed(keys->Size(&count)))
+        {
+            return false;
+        }
+        for (std::uint64_t i = 0; i < count; ++i)
+        {
+            IDasReadOnlyString* p_key = nullptr;
+            if (DAS::IsFailed(keys->At(i, &p_key)) || p_key == nullptr)
+            {
+                continue;
+            }
+            const char* utf8 = nullptr;
+            p_key->GetUtf8(&utf8);
+            const bool matched =
+                utf8 != nullptr && std::string_view(utf8) == port_id;
+            p_key->Release();
+            if (matched)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 } // namespace
 
@@ -617,4 +694,95 @@ TEST(DasMaaPiRunTaskComponent, DoPrefersExecutionInputPortOverRepositoryRef)
     EXPECT_EQ(hr, DAS_S_OK);
     EXPECT_FALSE(resolver_called);
     EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:"));
+}
+
+// D-B5：daily schedule 的 Do 成功后 nextTime 口值 == 共享 brain 助手计算值
+// 的 ISO 8601 UTC 串（定长 19 字符逐字符；字段 == 该 unix 经 PortableGmtime
+// 的 UTC 字段——UTC 语义断言，禁本地字段）。fake clock 固定 now，组件按
+// 「本次 Do 刚执行（今日已 fired）」语义调助手 → daily 恒推明日 slot。
+TEST(DasMaaPiRunTaskComponent, DoEmitsNextTimePortFromScheduleBrain)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    MaaScheduleConfigDto schedule;
+    schedule.kind = "daily";
+    schedule.daily_time = "09:00";
+    schedule.daily_catch_up = false;
+
+    const std::time_t now = LocalTodayUnix(8, 0);
+    component.SetClockForTest([stamp = now] { return stamp; });
+
+    DasPtr<ExportInterface::IDasPortMap> input_map =
+        MakeInputPortMap(MakeEnvelopeJson(schedule));
+
+    DasPtr<ExportInterface::IDasPortMap> result;
+    const auto hr = component.Do(nullptr, input_map.Get(), result.Put());
+    ASSERT_EQ(hr, DAS_S_OK);
+
+    // 助手期望值：last_fired = 今日 ymd（Do 刚执行）→ 明日 09:00 slot。
+    const auto expected =
+        ComputeNextScheduleRun(schedule, now, EncodeLocalYmd(now));
+    ASSERT_EQ(expected.status, ScheduleNextStatus::Ok);
+    const std::string expected_text =
+        FormatNextRunIso8601Utc(expected.next_unix);
+    ASSERT_EQ(expected_text.size(), 19u);
+
+    ASSERT_TRUE(result);
+    EXPECT_TRUE(PortMapHasKey(result.Get(), "nextTime"));
+    const auto next_time = ReadStringPort(result.Get(), "nextTime");
+
+    // 值 == 助手计算值的 ISO 串（同 helper 同格式）。
+    EXPECT_EQ(next_time, expected_text);
+
+    // 定长格式逐字符：YYYY-MM-DDTHH:MM:SS 分隔符位精确。
+    ASSERT_EQ(next_time.size(), 19u);
+    EXPECT_EQ(next_time[4], '-');
+    EXPECT_EQ(next_time[7], '-');
+    EXPECT_EQ(next_time[10], 'T');
+    EXPECT_EQ(next_time[13], ':');
+    EXPECT_EQ(next_time[16], ':');
+
+    // UTC 字段语义：串的日期时间字段 == 期望 unix 经 PortableGmtime 的 UTC
+    // 字段（实现若误用本地字段，非 UTC 时区机器上必不相等——与 111-02 解析
+    // 端 TimegmPortable 直填/DasDateToUnix 往返一致）。
+    std::tm utc{};
+    ASSERT_NE(PortableGmtime(&expected.next_unix, &utc), nullptr);
+    char utc_text[20];
+    ASSERT_EQ(
+        std::snprintf(
+            utc_text,
+            sizeof(utc_text),
+            "%04d-%02d-%02dT%02d:%02d:%02d",
+            utc.tm_year + 1900,
+            utc.tm_mon + 1,
+            utc.tm_mday,
+            utc.tm_hour,
+            utc.tm_min,
+            utc.tm_sec),
+        19);
+    EXPECT_EQ(next_time, std::string(utc_text));
+}
+
+// D-B5 engaged-only 纪律（Q4 裁决）：schedule=off 的 Do 成功后 output 键集
+// 不含 nextTime（GetKeys 不含）——adapter（111-02）捕获不到即回落静态通道。
+TEST(DasMaaPiRunTaskComponent, DoWithScheduleOffOmitsNextTimePort)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    component.SetClockForTest([stamp = LocalTodayUnix(8, 0)] { return stamp; });
+
+    // 默认 schedule = off（kind=""）。
+    DasPtr<ExportInterface::IDasPortMap> input_map =
+        MakeInputPortMap(MakeEnvelopeJson());
+
+    DasPtr<ExportInterface::IDasPortMap> result;
+    const auto hr = component.Do(nullptr, input_map.Get(), result.Put());
+    ASSERT_EQ(hr, DAS_S_OK);
+
+    ASSERT_TRUE(result);
+    EXPECT_FALSE(PortMapHasKey(result.Get(), "nextTime"));
 }

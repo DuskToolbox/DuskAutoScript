@@ -9,6 +9,7 @@
 #include <cpp_yyjson.hpp>
 
 #include <cstdint>
+#include <ctime>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -88,6 +89,12 @@ namespace Plugins::DasMaaPi
             ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
             ExportInterface::IDasPortMap**        pp_out_port_map) override;
 
+        // fake clock seam：nextTime 输出口（D-B5 共享 schedule brain）的计算
+        // 时钟。生产默认 std::time(nullptr)；单测注入固定时钟（照 MaapiTask::
+        // SetClockForTest 同范式）。
+        using ClockFn = std::function<std::time_t()>;
+        void SetClockForTest(ClockFn fn) { now_ = std::move(fn); }
+
     private:
         // settings 存储锁：ApplySettingsChange（Configure 阶段投递）与 Do
         // （执行）可能来自不同线程。
@@ -96,6 +103,8 @@ namespace Plugins::DasMaaPi
         int64_t repository_entry_id_ = 0;
         // runtimeInputs 存储值（对象级运行时输入覆盖）；null = 未设置。
         yyjson::value runtime_inputs_;
+        // nextTime 口的计算时钟（D-B5）。
+        ClockFn now_ = [] { return std::time(nullptr); };
     };
 
     class MaapiRunTaskComponentFactory final

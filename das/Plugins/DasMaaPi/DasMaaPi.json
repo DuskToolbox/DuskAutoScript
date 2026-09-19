@@ -67,6 +67,11 @@
               "id": "diagnostics",
               "type": "array<object>",
               "label": { "en": "Diagnostics", "zh-cn": "诊断信息" }
+            },
+            {
+              "id": "nextTime",
+              "type": "string",
+              "label": { "en": "Next Run Time", "zh-cn": "下次执行时间" }
             }
           ],
           "signals": [

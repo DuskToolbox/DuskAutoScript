@@ -1,6 +1,8 @@
 // MaapiTask schedule brain: fake-clock 单测覆盖 GetNextExecutionTime 从
 // task_settings 参数解析 envelope schedule / daily next-run / daily 跨午夜 /
-// off→fail / envelope schedule key 解析。
+// off→fail / envelope schedule key 解析；共享 brain 助手（111-03 D-B5 抽出）
+// 纯函数 interval/daily/off 三分支与 MaapiTask 行为一致性。
+#include "../src/MaapiScheduleBrain.h"
 #include "../src/MaapiTask.h"
 
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
@@ -348,4 +350,115 @@ TEST(MaapiSchedule, NullSettings_ReturnsInvalidPointer)
     MaapiTask                     task;
     Das::ExportInterface::DasDate date{};
     EXPECT_EQ(task.GetNextExecutionTime(nullptr, &date), DAS_E_INVALID_POINTER);
+}
+
+// 共享 brain 助手 interval 分支：与 MaapiTask::GetNextExecutionTime 同输入
+// 同输出（101 行为零变化抽取的一致性断言——Task 侧改调助手后的对偶验证）。
+TEST(MaapiSchedule, BrainIntervalMatchesTaskGetNextExecutionTime)
+{
+    const std::time_t    now = LocalTodayUnix(12, 0);
+    MaaScheduleConfigDto schedule;
+    schedule.kind = "interval";
+    schedule.interval_minutes = 45;
+
+    MaapiTask task;
+    task.SetClockForTest([stamp = now] { return stamp; });
+    auto json = EnvelopeJson(
+        R"({"kind":"interval","intervalMinutes":45,"dailyTime":"","dailyCatchUp":false})");
+
+    Das::ExportInterface::DasDate date{};
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &date), DAS_S_OK);
+
+    const auto next = ComputeNextScheduleRun(schedule, now, 0);
+    ASSERT_EQ(next.status, ScheduleNextStatus::Ok);
+    EXPECT_EQ(DasDateToUnix(date), next.next_unix);
+    EXPECT_EQ(next.next_unix, now + 45 * 60);
+}
+
+// 共享 brain 助手 daily 分支（含 catch-up 两次调用的状态机传递）：与
+// MaapiTask::GetNextExecutionTime 同输入同输出——last_fired_ymd 经助手
+// 出参传递后第 2 次调用推明日 slot（防热循环核心语义不因抽取漂移）。
+TEST(MaapiSchedule, BrainDailyMatchesTaskGetNextExecutionTimeIncludingCatchUp)
+{
+    const std::time_t now =
+        LocalTodayUnix(10, 0); // 今日 10:00，slot 09:00 已过
+    MaaScheduleConfigDto schedule;
+    schedule.kind = "daily";
+    schedule.daily_time = "09:00";
+    schedule.daily_catch_up = true;
+
+    MaapiTask task;
+    task.SetClockForTest([stamp = now] { return stamp; });
+    auto json = EnvelopeJson(
+        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":true})");
+
+    // 第 1 次：catch-up 补跑返回 now，状态机标记今日已 fired。
+    Das::ExportInterface::DasDate first_date{};
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &first_date), DAS_S_OK);
+    const auto first_run = ComputeNextScheduleRun(schedule, now, 0);
+    ASSERT_EQ(first_run.status, ScheduleNextStatus::Ok);
+    EXPECT_EQ(DasDateToUnix(first_date), first_run.next_unix);
+    EXPECT_EQ(first_run.next_unix, now);
+    EXPECT_EQ(first_run.last_fired_ymd, EncodeLocalYmd(now));
+
+    // 第 2 次：同日再问 → 明日 slot（状态机经 last_fired_ymd 入参传递）。
+    Das::ExportInterface::DasDate second_date{};
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &second_date), DAS_S_OK);
+    const auto second_run =
+        ComputeNextScheduleRun(schedule, now, first_run.last_fired_ymd);
+    ASSERT_EQ(second_run.status, ScheduleNextStatus::Ok);
+    EXPECT_EQ(DasDateToUnix(second_date), second_run.next_unix);
+    EXPECT_GT(second_run.next_unix, now);
+}
+
+// 共享 brain 助手 off / 非法描述分支：Off ↔ MaapiTask
+// DAS_E_NO_IMPLEMENTATION、Invalid ↔ DAS_E_INVALID_ARGUMENT 的分类对齐。
+TEST(MaapiSchedule, BrainOffAndInvalidMatchTaskErrorCodes)
+{
+    MaaScheduleConfigDto off;
+    off.kind = "";
+    EXPECT_EQ(
+        ComputeNextScheduleRun(off, LocalTodayUnix(8, 0), 0).status,
+        ScheduleNextStatus::Off);
+
+    MaaScheduleConfigDto bad_interval;
+    bad_interval.kind = "interval";
+    bad_interval.interval_minutes = 0;
+    EXPECT_EQ(
+        ComputeNextScheduleRun(bad_interval, LocalTodayUnix(8, 0), 0).status,
+        ScheduleNextStatus::Invalid);
+
+    MaaScheduleConfigDto bad_daily;
+    bad_daily.kind = "daily";
+    bad_daily.daily_time = "9am";
+    EXPECT_EQ(
+        ComputeNextScheduleRun(bad_daily, LocalTodayUnix(8, 0), 0).status,
+        ScheduleNextStatus::Invalid);
+}
+
+// ISO 8601 UTC 格式化助手：定长 19 字符，字段 == unix 经 gmtime 的 UTC
+// 字段（UTC round-trip：TimegmPortable 编码的期望值直比——若实现误用
+// 本地字段，非 UTC 时区机器上必不相等）。
+TEST(MaapiSchedule, FormatNextRunIso8601UtcUsesUtcFields)
+{
+    // 2026-09-19T04:43:55 UTC 的 unix（UTC 字段直接编码）。
+    std::tm utc{};
+    utc.tm_year = 2026 - 1900;
+    utc.tm_mon = 9 - 1;
+    utc.tm_mday = 19;
+    utc.tm_hour = 4;
+    utc.tm_min = 43;
+    utc.tm_sec = 55;
+    const std::time_t stamp = PortableTimegm(&utc);
+    ASSERT_NE(stamp, static_cast<std::time_t>(-1));
+
+    const std::string text = FormatNextRunIso8601Utc(stamp);
+    ASSERT_EQ(text.size(), 19u);
+    EXPECT_EQ(text, "2026-09-19T04:43:55");
+    // 定长格式分隔符位精确（YYYY-MM-DDTHH:MM:SS）。
+    EXPECT_EQ(text[4], '-');
+    EXPECT_EQ(text[7], '-');
+    EXPECT_EQ(text[10], 'T');
+    EXPECT_EQ(text[13], ':');
+    EXPECT_EQ(text[16], ':');
 }

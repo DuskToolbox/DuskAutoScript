@@ -3,6 +3,7 @@
 #include "MaapiRunTaskComponent.h"
 
 #include "MaapiExecutionKernel.h"
+#include "MaapiScheduleBrain.h"
 #include "PluginUtils.h"
 
 #include <das/DasApi.h>
@@ -621,6 +622,34 @@ namespace Plugins::DasMaaPi
             output_map->SetString(
                 DasReadOnlyString("diagnostics").Get(),
                 DasReadOnlyString("[]").Get());
+        }
+
+        // D-B5 nextTime 默认输出口：值 = 共享 schedule brain（101 先例延续，
+        // 插件自治）算出的下次执行时间，ISO 8601 UTC 定长 19 字符（111-01
+        // wire 契约，111-02 adapter 按同 id 捕获，连到 end「下次时间」口）。
+        // 本次 Do 刚执行（今日已 fired）→ daily 恒推明日 slot，与 MaapiTask
+        // Do→GetNextExecutionTime 序列同语义。engaged-only 纪律（Q4 裁决）：
+        // schedule=off / 描述非法 → 不发键，adapter 捕获不到自然回落静态
+        // 通道；执行失败不发（成功路径末尾）。
+        if (!DAS::IsFailed(execute_result))
+        {
+            if (auto parsed_envelope = ParseExecutionEnvelope(*envelope_json);
+                !DAS::IsFailed(parsed_envelope.result))
+            {
+                const std::time_t now = now_();
+                const auto        next = ComputeNextScheduleRun(
+                    parsed_envelope.envelope.maapi.schedule,
+                    now,
+                    EncodeLocalYmd(now));
+                if (next.status == ScheduleNextStatus::Ok)
+                {
+                    output_map->SetString(
+                        DasReadOnlyString("nextTime").Get(),
+                        DasReadOnlyString(
+                            FormatNextRunIso8601Utc(next.next_unix).c_str())
+                            .Get());
+                }
+            }
         }
 
         *pp_out_port_map = output_map.Get();
