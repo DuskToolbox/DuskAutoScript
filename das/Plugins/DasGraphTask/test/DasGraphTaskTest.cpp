@@ -1,4 +1,5 @@
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
+#include <das/Core/Utils/PortableTime.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -24,6 +25,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -3312,3 +3314,294 @@ namespace
     }
 
 } // namespace
+
+// ============================================================================
+// GetNextExecutionTime 静态通道（D-B4/D-B3/D-B7——end 三件套驱动，注入时钟）
+// ============================================================================
+
+namespace
+{
+    // 与 GraphBoundaryComponents.h 钉值独立（测试侧字面量，漂移即红）。
+    constexpr std::string_view SCHEDULE_END_GUID_TEXT =
+        "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D";
+
+    // UTC 字段 → unix（与 Core DasDateToUnix 的 TimegmPortable 链同语义）。
+    std::time_t ScheduleUnixOfUtc(
+        int year,
+        int month,
+        int day,
+        int hour = 0,
+        int min = 0,
+        int sec = 0)
+    {
+        std::tm tm{};
+        tm.tm_year = year - 1900;
+        tm.tm_mon = month - 1;
+        tm.tm_mday = day;
+        tm.tm_hour = hour;
+        tm.tm_min = min;
+        tm.tm_sec = sec;
+        tm.tm_isdst = 0;
+        return Das::Core::Utils::TimegmPortable(&tm);
+    }
+
+    // end compiled_settings 文本 → 编译产物 {"fingerprint","plan"} 外壳
+    // （adapter 下钻路径与生产一致——收到的是编译产物非 graph doc）。
+    std::string MakePlanShellWithEndSettings(std::string_view settings_json)
+    {
+        return std::string(
+                   R"({"fingerprint":"t","plan":{"nodeSnapshots":[{"nodeId":"n_1","componentGuid":")")
+               + std::string(SCHEDULE_END_GUID_TEXT)
+               + R"(","compiledSettings":)" + std::string(settings_json)
+               + R"(}]}})";
+    }
+
+    // 无 end 快照的外壳（仅一个无关节点）——D-B7 缺省族「无 end 快照」支。
+    std::string MakePlanShellWithoutEndNode()
+    {
+        return R"({"fingerprint":"t","plan":{"nodeSnapshots":[{"nodeId":"n_1","componentGuid":"77777777-7777-7777-7777-777777777777","compiledSettings":{"foo":1}}]}})";
+    }
+
+    DasPtr<Das::ExportInterface::IDasJson> ScheduleSettingsJsonOf(
+        const std::string& text)
+    {
+        DasPtr<Das::ExportInterface::IDasJson> json;
+        EXPECT_EQ(ParseDasJsonFromString(text.c_str(), json.Put()), DAS_S_OK);
+        EXPECT_NE(json.Get(), nullptr);
+        return json;
+    }
+
+    bool ScheduleDateEquals(
+        const Das::ExportInterface::DasDate& date,
+        std::uint16_t                        year,
+        std::uint8_t                         month,
+        std::uint8_t                         day,
+        std::uint8_t                         hour,
+        std::uint8_t                         minute,
+        std::uint8_t                         second)
+    {
+        return date.year == year && date.month == month && date.day == day
+               && date.hour == hour && date.minute == minute
+               && date.second == second;
+    }
+} // namespace
+
+// 静态通道 day:1：now 固定 → 次日同时刻（「本次+偏移」锚定，UTC 字段）。
+TEST(DasGraphTaskTest, GetNextExecutionTimeStaticDayReturnsNextDaySameTime)
+{
+    DasGraphTaskAdapter adapter{nullptr};
+    adapter.SetClockForTest(
+        [] { return ScheduleUnixOfUtc(2026, 1, 31, 10, 30, 15); });
+
+    const auto settings = ScheduleSettingsJsonOf(
+        MakePlanShellWithEndSettings(R"({"nextInterval":1,"nextUnit":"day"})"));
+    Das::ExportInterface::DasDate next{};
+    ASSERT_EQ(adapter.GetNextExecutionTime(settings.Get(), &next), DAS_S_OK);
+    // 1 月 31 日 + 1 天 = 2 月 1 日；同时刻（D-B4「定时执行，下次同时刻」）。
+    EXPECT_TRUE(ScheduleDateEquals(next, 2026, 2, 1, 10, 30, 15));
+}
+
+// month:1 月末进位语义经 111-01 C ABI：base 1/31 + 1 月 → 3/3（2 月 31 日
+// 按 tm/timegm 归一化，不发明 clamp）——adapter 层断言字段（delta 组装）。
+TEST(DasGraphTaskTest, GetNextExecutionTimeStaticMonthCarriesViaCAbi)
+{
+    DasGraphTaskAdapter adapter{nullptr};
+    adapter.SetClockForTest(
+        [] { return ScheduleUnixOfUtc(2026, 1, 31, 10, 0, 0); });
+
+    const auto settings = ScheduleSettingsJsonOf(MakePlanShellWithEndSettings(
+        R"({"nextInterval":1,"nextUnit":"month"})"));
+    Das::ExportInterface::DasDate next{};
+    ASSERT_EQ(adapter.GetNextExecutionTime(settings.Get(), &next), DAS_S_OK);
+    EXPECT_TRUE(ScheduleDateEquals(next, 2026, 3, 3, 10, 0, 0));
+}
+
+// 锚定钟点 "08:00"：base 钟点改写为 08:00:00（本地域换算，秒清零）后
+// +1 天。期望值用 CRT 本地域链独立推（host 时区无关的 oracle）。
+TEST(DasGraphTaskTest, GetNextExecutionTimeAnchorRewritesBaseClockTime)
+{
+    const std::time_t now = ScheduleUnixOfUtc(2026, 9, 19, 14, 23, 45);
+
+    // oracle：localtime → 钟点改写 → mktime → gmtime → UTC 字段 + day:1。
+    Das::ExportInterface::DasDate expected{};
+    {
+        std::tm local{};
+        ASSERT_NE(Das::Core::Utils::PortableLocaltime(&now, &local), nullptr);
+        local.tm_hour = 8;
+        local.tm_min = 0;
+        local.tm_sec = 0;
+        local.tm_isdst = -1;
+        const std::time_t anchored = std::mktime(&local);
+        ASSERT_NE(anchored, static_cast<std::time_t>(-1));
+        std::tm utc{};
+        ASSERT_NE(Das::Core::Utils::PortableGmtime(&anchored, &utc), nullptr);
+        expected.year = static_cast<std::uint16_t>(utc.tm_year + 1900);
+        expected.month = static_cast<std::uint8_t>(utc.tm_mon + 1);
+        expected.day = static_cast<std::uint8_t>(utc.tm_mday);
+        expected.hour = static_cast<std::uint8_t>(utc.tm_hour);
+        expected.minute = static_cast<std::uint8_t>(utc.tm_min);
+        expected.second = static_cast<std::uint8_t>(utc.tm_sec);
+        Das::ExportInterface::DasDate delta{0, 0, 1, 0, 0, 0};
+        ASSERT_EQ(DasDateAdd(&expected, &delta, &expected), DAS_S_OK);
+    }
+
+    DasGraphTaskAdapter adapter{nullptr};
+    adapter.SetClockForTest([now] { return now; });
+    const auto settings = ScheduleSettingsJsonOf(MakePlanShellWithEndSettings(
+        R"({"nextInterval":1,"nextUnit":"day","nextAnchorTime":"08:00"})"));
+    Das::ExportInterface::DasDate next{};
+    ASSERT_EQ(adapter.GetNextExecutionTime(settings.Get(), &next), DAS_S_OK);
+    EXPECT_TRUE(ScheduleDateEquals(
+        next,
+        expected.year,
+        expected.month,
+        expected.day,
+        expected.hour,
+        expected.minute,
+        expected.second));
+    EXPECT_EQ(next.second, 0);
+}
+
+// 超窗：时钟推进越过下个槽点（停机/延迟）→ 跳到未来的下一个槽，不补跑
+// （skipped 语义经返回时间验证：越过 3 槽 → 返回 T0+4d）。
+TEST(DasGraphTaskTest, GetNextExecutionTimeOverWindowJumpsToFutureSlot)
+{
+    const std::time_t   t0 = ScheduleUnixOfUtc(2026, 1, 1, 0, 0, 0);
+    std::time_t         current = t0;
+    DasGraphTaskAdapter adapter{nullptr};
+    adapter.SetClockForTest([&current] { return current; });
+
+    const auto settings = ScheduleSettingsJsonOf(
+        MakePlanShellWithEndSettings(R"({"nextInterval":1,"nextUnit":"day"})"));
+
+    Das::ExportInterface::DasDate next{};
+    ASSERT_EQ(adapter.GetNextExecutionTime(settings.Get(), &next), DAS_S_OK);
+    EXPECT_TRUE(ScheduleDateEquals(next, 2026, 1, 2, 0, 0, 0));
+
+    // 越过 T0+1d/T0+2d/T0+3d 三槽 → 未来下一槽 = T0+4d。
+    current = t0 + 3 * 86400 + 3600;
+    ASSERT_EQ(adapter.GetNextExecutionTime(settings.Get(), &next), DAS_S_OK);
+    EXPECT_TRUE(ScheduleDateEquals(next, 2026, 1, 5, 0, 0, 0));
+}
+
+// 幂等重算：无 Do 伴随的连续两次 GetNextExecutionTime 返回相同 DasDate
+// （RefreshNextExecutionTimes/ComputeInitial 不推槽——防重算推挤）。
+TEST(DasGraphTaskTest, GetNextExecutionTimeIdempotentWithoutDo)
+{
+    DasGraphTaskAdapter adapter{nullptr};
+    adapter.SetClockForTest(
+        [] { return ScheduleUnixOfUtc(2026, 5, 10, 8, 0, 0); });
+
+    const auto settings = ScheduleSettingsJsonOf(
+        MakePlanShellWithEndSettings(R"({"nextInterval":2,"nextUnit":"day"})"));
+
+    Das::ExportInterface::DasDate first{};
+    ASSERT_EQ(adapter.GetNextExecutionTime(settings.Get(), &first), DAS_S_OK);
+    EXPECT_TRUE(ScheduleDateEquals(first, 2026, 5, 12, 8, 0, 0));
+
+    Das::ExportInterface::DasDate second{};
+    ASSERT_EQ(adapter.GetNextExecutionTime(settings.Get(), &second), DAS_S_OK);
+    EXPECT_EQ(second.year, first.year);
+    EXPECT_EQ(second.month, first.month);
+    EXPECT_EQ(second.day, first.day);
+    EXPECT_EQ(second.hour, first.hour);
+    EXPECT_EQ(second.minute, first.minute);
+    EXPECT_EQ(second.second, first.second);
+}
+
+// D-B7 缺省族（用户裁决 2026-09-19）：null json / 无 end 快照 / end 缺
+// nextInterval+nextUnit 键 → 全部返回最大值 {9999,12,31,23,59,59}——一次
+// 性任务（调度器持久化远未来时间不再触发），返回 OK 不落 now 热循环。
+TEST(DasGraphTaskTest, GetNextExecutionTimeDefaultFamilyYieldsOneShotMax)
+{
+    DasGraphTaskAdapter adapter{nullptr};
+    adapter.SetClockForTest(
+        [] { return ScheduleUnixOfUtc(2026, 9, 19, 12, 0, 0); });
+
+    const auto expect_one_shot = [&](Das::ExportInterface::IDasJson* settings)
+    {
+        Das::ExportInterface::DasDate next{};
+        ASSERT_EQ(adapter.GetNextExecutionTime(settings, &next), DAS_S_OK);
+        EXPECT_TRUE(ScheduleDateEquals(next, 9999, 12, 31, 23, 59, 59));
+    };
+
+    // a) null json。
+    expect_one_shot(nullptr);
+
+    // b) 无 end 快照。
+    expect_one_shot(
+        ScheduleSettingsJsonOf(MakePlanShellWithoutEndNode()).Get());
+
+    // c) end 在场但 compiled_settings 无三件套键。
+    expect_one_shot(ScheduleSettingsJsonOf(
+                        MakePlanShellWithEndSettings(R"({"other":true})"))
+                        .Get());
+
+    // d) end 在场、有 nextInterval 但缺 nextUnit 键（半配置同为缺省族）。
+    expect_one_shot(ScheduleSettingsJsonOf(
+                        MakePlanShellWithEndSettings(R"({"nextInterval":1})"))
+                        .Get());
+}
+
+// 非法配置：nextInterval=0 / nextUnit 词表外 → DAS_E_INVALID_ARGUMENT
+// （防热循环：不落 now，显性报错由 Core sentinel 兜底）。
+TEST(DasGraphTaskTest, GetNextExecutionTimeInvalidConfigRejected)
+{
+    DasGraphTaskAdapter adapter{nullptr};
+    adapter.SetClockForTest(
+        [] { return ScheduleUnixOfUtc(2026, 9, 19, 12, 0, 0); });
+
+    {
+        const auto settings =
+            ScheduleSettingsJsonOf(MakePlanShellWithEndSettings(
+                R"({"nextInterval":0,"nextUnit":"day"})"));
+        Das::ExportInterface::DasDate next{};
+        EXPECT_EQ(
+            adapter.GetNextExecutionTime(settings.Get(), &next),
+            DAS_E_INVALID_ARGUMENT);
+    }
+    {
+        const auto settings =
+            ScheduleSettingsJsonOf(MakePlanShellWithEndSettings(
+                R"({"nextInterval":1,"nextUnit":"fortnight"})"));
+        Das::ExportInterface::DasDate next{};
+        EXPECT_EQ(
+            adapter.GetNextExecutionTime(settings.Get(), &next),
+            DAS_E_INVALID_ARGUMENT);
+    }
+}
+
+// Do 推进调度周期：Do 执行后基准重锚定（执行完成时刻起算，「执行到 End
+// 后记录」），下次时间随新基准推进——与幂等重算（无 Do 不推槽）相对。
+TEST(DasGraphTaskTest, GetNextExecutionTimeReanchorsAfterDo)
+{
+    const std::time_t t0 = ScheduleUnixOfUtc(2026, 6, 1, 9, 0, 0);
+    std::time_t       current = t0;
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new MockTaskComponentHost());
+    DasGraphTaskAdapter adapter{host.Get()};
+    adapter.SetClockForTest([&current] { return current; });
+
+    const auto settings = ScheduleSettingsJsonOf(
+        MakePlanShellWithEndSettings(R"({"nextInterval":1,"nextUnit":"day"})"));
+
+    Das::ExportInterface::DasDate first{};
+    ASSERT_EQ(adapter.GetNextExecutionTime(settings.Get(), &first), DAS_S_OK);
+    EXPECT_TRUE(ScheduleDateEquals(first, 2026, 6, 2, 9, 0, 0));
+
+    // Do 执行（空 plan 经 mock host 成功）——基准失效。
+    {
+        const auto plan_settings =
+            ScheduleSettingsJsonOf(EmptyCompiledPlanText());
+        ASSERT_TRUE(
+            DAS::IsOk(adapter.Do(nullptr, nullptr, plan_settings.Get())));
+    }
+
+    // 执行耗时 2 小时：重锚定 base=T0+2h → next=次日同时刻（跟随本次）。
+    current = t0 + 2 * 3600;
+    Das::ExportInterface::DasDate after_do{};
+    ASSERT_EQ(
+        adapter.GetNextExecutionTime(settings.Get(), &after_do),
+        DAS_S_OK);
+    EXPECT_TRUE(ScheduleDateEquals(after_do, 2026, 6, 2, 11, 0, 0));
+}

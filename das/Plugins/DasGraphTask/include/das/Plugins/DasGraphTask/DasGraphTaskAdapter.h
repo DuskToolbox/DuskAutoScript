@@ -5,6 +5,11 @@
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTask.Implements.hpp>
 
+#include <ctime>
+#include <functional>
+#include <optional>
+#include <string>
+
 // Task type GUID: {F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3}
 // Must equal DasGraphTask.json tasks.<key> / executionComponent.componentGuid,
 // otherwise SchedulerService::Initialize cannot match task_descriptors to fill
@@ -50,6 +55,28 @@ namespace Plugins::DasGraphTask
         DAS_IMPL GetNextExecutionTime(
             ExportInterface::IDasJson* p_task_settings_json,
             ExportInterface::DasDate*  p_out_date) override;
+
+        // fake clock seam：注入固定时钟驱动静态通道（次日/月末/超窗）单测，
+        // 无需实时等待。生产默认 std::time(nullptr)。照 MaapiTask 的
+        // ClockFn/SetClockForTest 范式（101-01 模式沿用）。
+        using ClockFn = std::function<std::time_t()>;
+        void SetClockForTest(ClockFn fn) { now_ = std::move(fn); }
+
+    private:
+        // 本次调度周期的基准时刻（「本次原计划时刻」锚，UTC 字段）。重锚定
+        // 即提交（首次计算 / Do 执行后首次计算），此后无 Do 伴随的重算路径
+        // （RefreshNextExecutionTimes/ComputeInitialNextExecutionTime）不推
+        // 槽——同 base 同返回值（防重算推挤）。Do 入口 reset：执行后首次
+        // GetNextExecutionTime 以执行完成时刻重锚定（「执行到 End 后记录」
+        // 语义——end 算出的下次时间从本次执行起算）。
+        // 进程内自持、不持久化；进程重启后基准回落 now_() 重锚定
+        // （RESEARCH Open Questions Q2 RESOLVED 处置）。
+        std::optional<ExportInterface::DasDate> last_planned_;
+        // Do 成功后从 end「下次时间」口捕获的 ISO 8601 UTC 串（动态通道优
+        // 先消费）。每次 Do 入口清空重捕获，陈旧值不跨执行残留；口缺省/
+        // 读取失败 = 无动态值（回落静态通道）。
+        std::optional<std::string> captured_next_time_;
+        ClockFn                    now_ = [] { return std::time(nullptr); };
     };
 } // namespace Plugins::DasGraphTask
 DAS_NS_END
