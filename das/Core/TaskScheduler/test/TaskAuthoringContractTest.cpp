@@ -349,6 +349,365 @@ TEST(TaskAuthoringContractTest, DocumentViewDataNonObjectFails)
     EXPECT_EQ(result.error_kind, "invalidViewData");
 }
 
+// ===== 根文档 ports/types section（文档协议扩展，engaged-only）=====
+//
+// 动态口是 authoring 文档机制的能力（opt-in）：文档声明口（ports[]）、
+// 文档编辑口（formSequence items）、编译消费口（nodeFaces 注入）。
+// 两 section 缺席合法（既有文档零破坏），出现即按形状定稿逐字段校验。
+
+TEST(TaskAuthoringContractTest, PortsTypesSectionsAbsentDocumentPasses)
+{
+    // engaged-only：缺 ports/types 两键的既有文档形状照常通过（零破坏）。
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 3,
+        "formSequence": {"items": []}
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
+}
+
+TEST(TaskAuthoringContractTest, PortsSectionValidEntriesPass)
+{
+    // ports[] 合法条目：最小三键 {id,type,direction}；label 可选缺省=id；
+    // 空数组 engaged 合法。type 词汇表=九词内建 ∪ 同文档 types 注册名。
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [
+            {"id": "x", "type": "string", "direction": "input"},
+            {"id": "shot", "label": "截图", "type": "image", "direction": "output"}
+        ],
+        "types": []
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
+}
+
+TEST(
+    TaskAuthoringContractTest,
+    PortsSectionTypeVocabularyIsNineWordsPlusRegistrations)
+{
+    // type="signal" 拒绝——九词 NODE_PORT_VALUE_TYPES 是唯一内建词表，
+    // 不是 GetKnownTypes() 的 13 词超集（signal/json/object/null 禁入）。
+    auto signal = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "x", "type": "signal", "direction": "input"}]
+    })json");
+    auto signal_r = Das::Core::TaskScheduler::ValidateAuthoringDocument(signal);
+    EXPECT_FALSE(signal_r.valid);
+    EXPECT_EQ(signal_r.error_kind, "invalidValue") << signal_r.message;
+
+    // type=同文档 types[].name 注册名：通过；types 无此名：拒绝。
+    auto registered = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "x", "type": "MyType", "direction": "input"}],
+        "types": [{"name": "MyType"}]
+    })json");
+    auto registered_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(registered);
+    EXPECT_TRUE(registered_r.valid) << registered_r.message;
+
+    auto unregistered = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "x", "type": "MyType", "direction": "input"}]
+    })json");
+    auto unregistered_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(unregistered);
+    EXPECT_FALSE(unregistered_r.valid);
+    EXPECT_EQ(unregistered_r.error_kind, "invalidValue")
+        << unregistered_r.message;
+}
+
+TEST(TaskAuthoringContractTest, PortsSectionIdFieldDisciplineRejectsViolations)
+{
+    // ports[].id 照抄 NodePortNameViolation 字段纪律：非空、≤100 UTF-8
+    // 字节、禁 "$" 前缀（AuthoringDocContract.cpp:561-577 lockstep）。
+    auto empty_id = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "", "type": "string", "direction": "input"}]
+    })json");
+    auto empty_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(empty_id);
+    EXPECT_FALSE(empty_r.valid);
+    EXPECT_EQ(empty_r.error_kind, "invalidValue") << empty_r.message;
+
+    const std::string oversized_id(101, 'a');
+    auto              oversize = ParseJson(
+        "{\"contractVersion\":1,\"viewKind\":\"formSequence\",\"revision\":0,"
+        "\"ports\":[{\"id\":\""
+        + oversized_id + "\",\"type\":\"string\",\"direction\":\"input\"}]}");
+    auto oversize_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(oversize);
+    EXPECT_FALSE(oversize_r.valid);
+    EXPECT_EQ(oversize_r.error_kind, "invalidValue") << oversize_r.message;
+
+    auto dollar_id = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "$x", "type": "string", "direction": "input"}]
+    })json");
+    auto dollar_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(dollar_id);
+    EXPECT_FALSE(dollar_r.valid);
+    EXPECT_EQ(dollar_r.error_kind, "invalidValue") << dollar_r.message;
+}
+
+TEST(TaskAuthoringContractTest, PortsSectionDirectionMustBeInputOrOutput)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "x", "type": "string", "direction": "inout"}]
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "invalidValue") << result.message;
+}
+
+TEST(TaskAuthoringContractTest, PortsSectionUnknownKeyRejected)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "x", "type": "string", "direction": "input", "foo": 1}]
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "unknownField") << result.message;
+}
+
+TEST(TaskAuthoringContractTest, PortsSectionDuplicateIdRejected)
+{
+    // id 无重复——重复口 id = 连线坐标歧义。
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [
+            {"id": "x", "type": "string", "direction": "input"},
+            {"id": "x", "type": "int", "direction": "output"}
+        ]
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "duplicatePortId") << result.message;
+}
+
+TEST(
+    TaskAuthoringContractTest,
+    PortsSectionLabelMustBeNonEmptyStringWhenPresent)
+{
+    auto empty_label = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "x", "label": "", "type": "string", "direction": "input"}]
+    })json");
+    auto empty_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(empty_label);
+    EXPECT_FALSE(empty_r.valid);
+    EXPECT_EQ(empty_r.error_kind, "invalidValue") << empty_r.message;
+
+    auto numeric_label = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "x", "label": 5, "type": "string", "direction": "input"}]
+    })json");
+    auto numeric_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(numeric_label);
+    EXPECT_FALSE(numeric_r.valid);
+    EXPECT_EQ(numeric_r.error_kind, "invalidValue") << numeric_r.message;
+}
+
+TEST(TaskAuthoringContractTest, PortsSectionContainerMustBeArray)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": {"id": "x"}
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "invalidPorts") << result.message;
+}
+
+TEST(TaskAuthoringContractTest, TypesSectionNameDisciplineAndUniqueness)
+{
+    // 合法形状：name 必填同款纪律（非空/≤100/禁$），compatibleWith 可缺省。
+    auto valid = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "types": [
+            {"name": "MyType"},
+            {"name": "Other", "compatibleWith": ["int"]}
+        ]
+    })json");
+    auto valid_r = Das::Core::TaskScheduler::ValidateAuthoringDocument(valid);
+    EXPECT_TRUE(valid_r.valid) << valid_r.message;
+
+    // name 空：拒（同款字段纪律）。
+    auto empty_name = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "types": [{"name": ""}]
+    })json");
+    auto empty_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(empty_name);
+    EXPECT_FALSE(empty_r.valid);
+    EXPECT_EQ(empty_r.error_kind, "invalidValue") << empty_r.message;
+
+    // name "$" 前缀：拒。
+    auto dollar_name = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "types": [{"name": "$MyType"}]
+    })json");
+    auto dollar_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(dollar_name);
+    EXPECT_FALSE(dollar_r.valid);
+    EXPECT_EQ(dollar_r.error_kind, "invalidValue") << dollar_r.message;
+
+    // 同文档 name 重复：拒（注册名歧义=口面歧义）。
+    auto duplicate = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "types": [{"name": "MyType"}, {"name": "MyType"}]
+    })json");
+    auto duplicate_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(duplicate);
+    EXPECT_FALSE(duplicate_r.valid);
+    EXPECT_EQ(duplicate_r.error_kind, "duplicateTypeName")
+        << duplicate_r.message;
+}
+
+TEST(
+    TaskAuthoringContractTest,
+    TypesSectionCompatibleWithScopedToBuiltinsAndSameDocument)
+{
+    // compatibleWith 每项=九词内建或同文档 types[].name（防跨插件类型注入）。
+    auto scoped = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "types": [
+            {"name": "MyType"},
+            {"name": "Other", "compatibleWith": ["int", "MyType"]}
+        ]
+    })json");
+    auto scoped_r = Das::Core::TaskScheduler::ValidateAuthoringDocument(scoped);
+    EXPECT_TRUE(scoped_r.valid) << scoped_r.message;
+
+    auto cross_document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "types": [{"name": "MyType", "compatibleWith": ["OtherPluginType"]}]
+    })json");
+    auto cross_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(cross_document);
+    EXPECT_FALSE(cross_r.valid);
+    EXPECT_EQ(cross_r.error_kind, "invalidValue") << cross_r.message;
+
+    // 非字符串项：拒。
+    auto numeric_item = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "types": [{"name": "MyType", "compatibleWith": [7]}]
+    })json");
+    auto numeric_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(numeric_item);
+    EXPECT_FALSE(numeric_r.valid);
+    EXPECT_EQ(numeric_r.error_kind, "invalidValue") << numeric_r.message;
+
+    // 非数组 compatibleWith：拒。
+    auto non_array = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "types": [{"name": "MyType", "compatibleWith": "int"}]
+    })json");
+    auto non_array_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(non_array);
+    EXPECT_FALSE(non_array_r.valid);
+    EXPECT_EQ(non_array_r.error_kind, "invalidValue") << non_array_r.message;
+}
+
+TEST(TaskAuthoringContractTest, TypesSectionUnknownKeyRejected)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "types": [{"name": "MyType", "foo": 1}]
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "unknownField") << result.message;
+}
+
+TEST(TaskAuthoringContractTest, PortsSectionMissingRequiredKeysRejected)
+{
+    auto no_type = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "x", "direction": "input"}]
+    })json");
+    auto no_type_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(no_type);
+    EXPECT_FALSE(no_type_r.valid);
+    EXPECT_EQ(no_type_r.error_kind, "missingField") << no_type_r.message;
+
+    auto no_direction = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "ports": [{"id": "x", "type": "string"}]
+    })json");
+    auto no_direction_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(no_direction);
+    EXPECT_FALSE(no_direction_r.valid);
+    EXPECT_EQ(no_direction_r.error_kind, "missingField")
+        << no_direction_r.message;
+}
+
 TEST(TaskAuthoringContractTest, MissingContractVersionFails)
 {
     auto document = ParseJson(R"json({
@@ -2614,6 +2973,182 @@ TEST(TaskAuthoringContractTest, SchemaJsonNodePortDefsLocked)
         }
     }
     EXPECT_TRUE(wanted_refs.empty());
+}
+
+// schema 根文档 ports/types section 对账（Core/schema 两层 lockstep）：
+// AuthoringDocument.properties 增两键；PortDeclaration/TypeDeclaration
+// 形状与 C++ ValidatePortsSection/ValidateTypesSection 逐字段一致——
+// required 集、additionalProperties:false、id/name 的 maxLength 100 + 禁$
+// pattern、type 词汇表封闭说明。
+TEST(TaskAuthoringContractTest, SchemaJsonPortsTypesSectionsLocked)
+{
+    const auto schema_path = ResolveSchemaJsonPath();
+    ASSERT_TRUE(schema_path.has_value())
+        << "TaskAuthoringHttpContract.schema.json not found above "
+        << std::filesystem::current_path();
+    const auto schema_text = ReadFileText(*schema_path);
+    ASSERT_TRUE(schema_text.has_value());
+
+    auto schema = ParseJson(*schema_text);
+    auto schema_object = schema.as_object();
+    ASSERT_TRUE(schema_object.has_value());
+    auto defs_value = (*schema_object)[std::string_view("$defs")];
+    auto defs_object = defs_value.as_object();
+    ASSERT_TRUE(defs_object.has_value());
+
+    // AuthoringDocument.properties 含 ports/types 两键（数组引用）。
+    auto document_def =
+        (*defs_object)[std::string_view("AuthoringDocument")].as_object();
+    ASSERT_TRUE(document_def.has_value());
+    auto document_properties =
+        (*document_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(document_properties.has_value());
+    for (const std::string_view section : {"ports", "types"})
+    {
+        ASSERT_TRUE(document_properties->contains(std::string_view(section)))
+            << section;
+        auto section_definition =
+            (*document_properties)[std::string_view(section)].as_object();
+        ASSERT_TRUE(section_definition.has_value()) << section;
+        EXPECT_EQ(
+            (*section_definition)[std::string_view("type")].as_string().value(),
+            "array")
+            << section;
+        auto items_definition =
+            (*section_definition)[std::string_view("items")].as_object();
+        ASSERT_TRUE(items_definition.has_value()) << section;
+        EXPECT_EQ(
+            (*items_definition)[std::string_view("$ref")].as_string().value(),
+            section == std::string_view("ports") ? "#/$defs/PortDeclaration"
+                                                 : "#/$defs/TypeDeclaration")
+            << section;
+    }
+
+    // PortDeclaration：required {id,type,direction}，label 可选。
+    auto port_def =
+        (*defs_object)[std::string_view("PortDeclaration")].as_object();
+    ASSERT_TRUE(port_def.has_value());
+    auto port_no_extra =
+        (*port_def)[std::string_view("additionalProperties")].as_bool();
+    ASSERT_TRUE(port_no_extra.has_value());
+    EXPECT_FALSE(*port_no_extra);
+    std::set<std::string> port_required;
+    auto                  port_required_array =
+        (*port_def)[std::string_view("required")].as_array();
+    ASSERT_TRUE(port_required_array.has_value());
+    for (const auto& item : *port_required_array)
+    {
+        port_required.insert(std::string(item.as_string().value()));
+    }
+    EXPECT_EQ(
+        port_required,
+        (std::set<std::string>{"id", "type", "direction"}));
+
+    auto port_properties =
+        (*port_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(port_properties.has_value());
+    auto id_definition = (*port_properties)[std::string_view("id")].as_object();
+    ASSERT_TRUE(id_definition.has_value());
+    EXPECT_EQ(
+        (*id_definition)[std::string_view("type")].as_string().value(),
+        "string");
+    EXPECT_EQ(
+        (*id_definition)[std::string_view("minLength")].as_sint().value(),
+        1);
+    EXPECT_EQ(
+        (*id_definition)[std::string_view("maxLength")].as_sint().value(),
+        100);
+    EXPECT_EQ(
+        (*id_definition)[std::string_view("pattern")].as_string().value(),
+        "^[^$].*$");
+
+    auto label_definition =
+        (*port_properties)[std::string_view("label")].as_object();
+    ASSERT_TRUE(label_definition.has_value());
+    EXPECT_EQ(
+        (*label_definition)[std::string_view("type")].as_string().value(),
+        "string");
+    EXPECT_EQ(
+        (*label_definition)[std::string_view("minLength")].as_sint().value(),
+        1);
+
+    auto port_type_definition =
+        (*port_properties)[std::string_view("type")].as_object();
+    ASSERT_TRUE(port_type_definition.has_value());
+    EXPECT_EQ(
+        (*port_type_definition)[std::string_view("type")].as_string().value(),
+        "string");
+    EXPECT_EQ(
+        (*port_type_definition)[std::string_view("minLength")]
+            .as_sint()
+            .value(),
+        1);
+
+    auto direction_definition =
+        (*port_properties)[std::string_view("direction")].as_object();
+    ASSERT_TRUE(direction_definition.has_value());
+    auto direction_enum =
+        (*direction_definition)[std::string_view("enum")].as_array();
+    ASSERT_TRUE(direction_enum.has_value());
+    std::set<std::string> direction_values;
+    for (const auto& item : *direction_enum)
+    {
+        direction_values.insert(std::string(item.as_string().value()));
+    }
+    EXPECT_EQ(direction_values, (std::set<std::string>{"input", "output"}));
+
+    // TypeDeclaration：required {name}，compatibleWith 可选数组。
+    auto type_def =
+        (*defs_object)[std::string_view("TypeDeclaration")].as_object();
+    ASSERT_TRUE(type_def.has_value());
+    auto type_no_extra =
+        (*type_def)[std::string_view("additionalProperties")].as_bool();
+    ASSERT_TRUE(type_no_extra.has_value());
+    EXPECT_FALSE(*type_no_extra);
+    std::set<std::string> type_required;
+    auto                  type_required_array =
+        (*type_def)[std::string_view("required")].as_array();
+    ASSERT_TRUE(type_required_array.has_value());
+    for (const auto& item : *type_required_array)
+    {
+        type_required.insert(std::string(item.as_string().value()));
+    }
+    EXPECT_EQ(type_required, (std::set<std::string>{"name"}));
+
+    auto type_properties =
+        (*type_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(type_properties.has_value());
+    auto name_definition =
+        (*type_properties)[std::string_view("name")].as_object();
+    ASSERT_TRUE(name_definition.has_value());
+    EXPECT_EQ(
+        (*name_definition)[std::string_view("type")].as_string().value(),
+        "string");
+    EXPECT_EQ(
+        (*name_definition)[std::string_view("minLength")].as_sint().value(),
+        1);
+    EXPECT_EQ(
+        (*name_definition)[std::string_view("maxLength")].as_sint().value(),
+        100);
+    EXPECT_EQ(
+        (*name_definition)[std::string_view("pattern")].as_string().value(),
+        "^[^$].*$");
+
+    auto compatible_definition =
+        (*type_properties)[std::string_view("compatibleWith")].as_object();
+    ASSERT_TRUE(compatible_definition.has_value());
+    EXPECT_EQ(
+        (*compatible_definition)[std::string_view("type")].as_string().value(),
+        "array");
+    auto compatible_items =
+        (*compatible_definition)[std::string_view("items")].as_object();
+    ASSERT_TRUE(compatible_items.has_value());
+    EXPECT_EQ(
+        (*compatible_items)[std::string_view("type")].as_string().value(),
+        "string");
+    EXPECT_EQ(
+        (*compatible_items)[std::string_view("minLength")].as_sint().value(),
+        1);
 }
 
 // GraphNodePort 可选 dynamic 键：布尔真值放行（engaged-only——呈现层只在
