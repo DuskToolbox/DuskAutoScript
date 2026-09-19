@@ -189,59 +189,6 @@ namespace Plugins::DasMaaPi
             }
             return true;
         }
-
-        // 把 port derivation 写入 acceptedProperties（Provider 私有运行期派生，
-        // 不进入 document UI IR）。基于 settings_.pi.tasks[0] 计算。
-        // 84-07 修复：端口派生不写入 envelope 根（违反 84-01
-        // ApplyResult 严格 schema）；portDefinitions/portMap 已经在
-        // acceptedProperties 内，是 Provider-owned runtime state。
-        void InjectPortDerivations(
-            yyjson::value&                  result_json,
-            const AcceptedSettingsDto&      settings,
-            const std::optional<PiCatalog>& catalog)
-        {
-            if (!catalog || settings.pi.tasks.empty())
-            {
-                return;
-            }
-            const auto& task_name = settings.pi.tasks[0].task_name;
-            if (task_name.empty())
-            {
-                return;
-            }
-            auto port_definitions = DerivePortDefinitions(*catalog, task_name);
-            auto port_map = DerivePortMap(*catalog, task_name);
-
-            auto result_obj_opt = result_json.as_object();
-            if (!result_obj_opt)
-            {
-                return;
-            }
-            auto result_obj = *result_obj_opt;
-            if (!result_obj.contains(std::string_view("acceptedProperties")))
-            {
-                return;
-            }
-            auto accepted_opt =
-                result_obj[std::string_view("acceptedProperties")].as_object();
-            if (!accepted_opt)
-            {
-                return;
-            }
-            auto accepted = *accepted_opt;
-            accepted[std::string_view("portDefinitions")] =
-                BuildPortDefinitionsJson(port_definitions);
-
-            yyjson::value port_map_json(Das::Utils::MakeYyjsonObject());
-            auto          pm_obj = port_map_json.as_object();
-            for (const auto& [port_id, param_name] : port_map)
-            {
-                (*pm_obj)[std::string_view(port_id)] = std::make_pair(
-                    std::string_view(param_name),
-                    yyjson::copy_string);
-            }
-            accepted[std::string_view("portMap")] = std::move(port_map_json);
-        }
     } // namespace
 
     MaapiAuthoringSession::MaapiAuthoringSession(
@@ -356,13 +303,12 @@ namespace Plugins::DasMaaPi
         // 3) Dispatch。成功时把 candidate 写回 settings_ 并 ++revision_。
         //    失败时 settings_ 原样保留，revision_ 不变。
         int64_t result_revision = revision_;
-        // invokeCommand 业务结果回传（checkUpdate 填 {commandId, data:
+        // invokeCommand业务结果回传（checkUpdate 填 {commandId, data:
         // {progressKey}}；其它命令 nullopt）。原 ApplyInvokeCommandChange
         // 内部自填（不再由本函数硬编码 checkUpdate 特例）。
         std::optional<yyjson::value> command_result;
         if (request_ok && revision_ok)
         {
-            const auto          path_before = settings_.adapter.interface_path;
             AcceptedSettingsDto candidate = settings_;
             bool                dispatch_ok = false;
             if (kind == "invokeCommand")
@@ -418,24 +364,17 @@ namespace Plugins::DasMaaPi
                     ++revision_;
                     result_revision = revision_;
                 }
-                // WR-06: interface_path 变更后按新 settings_ 重新解析 catalog，
-                // 否则 InjectPortDerivations 沿用旧路径解析的 catalog（旧路径
-                // 失效时为 null 直接跳过），返回的 acceptedProperties 的
-                // portDefinitions/portMap 与 document 所用的新 interface.json
-                // 不一致（BuildApplyResult 内部已用新路径重解析，document
-                // 正确）。
-                if (settings_.adapter.interface_path != path_before)
-                {
-                    catalog = TryParseCatalog(settings_, diagnostics);
-                }
             }
         }
 
         // 4) 构建严格 Apply envelope {acceptedProperties, document,
         //    diagnostics}。失败请求也返回 envelope，但 document.revision
-        //    保持原 revision_（无递增），acceptedProperties 反映未变的
-        //    settings_。diagnostics 内含 error severity 条目。checkUpdate
-        //    成功时附带可选 commandResult（无业务结果的命令不带）。
+        // 保持原 revision_（无递增），acceptedProperties 反映未变的
+        // settings_。diagnostics 内含 error severity 条目。checkUpdate
+        // 成功时附带可选 commandResult（无业务结果的命令不带）。
+        // D-A3（110.1 D-01③ 翻案）：acceptedProperties 不再写
+        // portDefinitions/portMap——PI 派生端口隐式注入摘除，PI 声明输入域
+        // 改经 AuthoringProjector 的 fields[] 候选流显式可见（111-03 Task 2）。
         auto result_json = BuildApplyResult(
             settings_,
             result_revision,
@@ -443,10 +382,6 @@ namespace Plugins::DasMaaPi
             /*project_document=*/kind != "uiEvent",
             command_result ? &*command_result : nullptr,
             &device_cache_);
-
-        // 5) 注入 portDefinitions/portMap 到 acceptedProperties（Provider 私有
-        //    运行期派生，不属于 document UI IR）。
-        InjectPortDerivations(result_json, settings_, catalog);
 
         auto wrapped = WrapJson(std::move(result_json));
         *pp_out_result_json = wrapped.Get();

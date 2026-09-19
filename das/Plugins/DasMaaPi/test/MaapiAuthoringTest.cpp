@@ -1361,7 +1361,9 @@ TEST(PortDerivationTest, BuildPortDefinitionsJsonProducesValidArray)
         (*first)[std::string_view("isRequired")].as_bool().value_or(false));
 }
 
-TEST_F(MaapiAuthoringFixture, ApplyChangeReturnsDynamicPortsInResultJson)
+TEST_F(
+    MaapiAuthoringFixture,
+    ApplyChangeOmitsPortDerivationsFromAcceptedProperties)
 {
     auto interface_path =
         Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
@@ -1387,22 +1389,19 @@ TEST_F(MaapiAuthoringFixture, ApplyChangeReturnsDynamicPortsInResultJson)
     ASSERT_TRUE(obj.has_value());
     // D-84-08/11: 严格 Apply envelope = {acceptedProperties, document,
     // diagnostics}；dynamic_ports 不再出现在 envelope 根（违反 84-01 strict
-    // ApplyResult schema）。portDefinitions/portMap 作为 Provider 私有运行期
-    // 派生写入 acceptedProperties。
+    // ApplyResult schema）。
     EXPECT_FALSE(obj->contains(std::string_view("dynamic_ports")));
 
     auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(accepted.has_value());
-    ASSERT_TRUE(accepted->contains(std::string_view("portDefinitions")));
-    auto port_definitions =
-        (*accepted)[std::string_view("portDefinitions")].as_array();
-    ASSERT_TRUE(port_definitions.has_value());
-    EXPECT_FALSE(port_definitions->empty());
-
-    ASSERT_TRUE(accepted->contains(std::string_view("portMap")));
-    auto port_map = (*accepted)[std::string_view("portMap")].as_object();
-    ASSERT_TRUE(port_map.has_value());
-    EXPECT_FALSE(port_map->empty());
+    // D-A3（111-03，110.1 D-01③ 翻案）：InjectPortDerivations 摘除后
+    // acceptedProperties 不再写 portDefinitions/portMap（隐式注入死代码清退，
+    // 反向断言锁定无残留写入路径）。存量 acceptedProperties 残留两键无害
+    // （生产零读取方），不做数据迁移（RESEARCH Runtime State ② 裁决）。PI
+    // 声明输入域改经 document fields[] 候选流（input.<optionKey>，见
+    // ProjectsPiInputDomainAsCandidateFields）。
+    EXPECT_FALSE(accepted->contains(std::string_view("portDefinitions")));
+    EXPECT_FALSE(accepted->contains(std::string_view("portMap")));
 }
 
 // ---------------------------------------------------------------------------
@@ -6718,6 +6717,204 @@ TEST(MaapiProjectionTest, ApplyDocumentSetValueOnSettingsFieldPersistsGlobal)
     ASSERT_NE(it, settings.pi.global_options.end());
     ASSERT_EQ(it->selected_cases.size(), 1u);
     EXPECT_EQ(it->selected_cases[0], "1-2");
+}
+
+namespace
+{
+    // D-A3（111-03）PI 输入域投影测试的 mock catalog：首个 task 声明四类
+    // option（select / input(int) / checkbox / switch），覆盖 MapOptionType
+    // 的声明形态映射面。
+    PiCatalog MakePiInputDomainMockCatalog()
+    {
+        using namespace Das::Plugins::DasMaaPi;
+        PiCatalog catalog;
+        catalog.name = "PiInputDomain";
+        catalog.version = "1.0";
+
+        PiTask task;
+        task.dto.name = "DailyFarm";
+        task.dto.entry = "StartDaily";
+        task.dto.option = {"stage", "retry", "use-medicine", "notify"};
+        catalog.tasks.push_back(std::move(task));
+
+        auto make_option = [](std::string name, std::string type) -> PiOption
+        {
+            PiOption o;
+            o.dto.name = std::move(name);
+            o.dto.type = std::move(type);
+            PiCaseDto c;
+            c.name = "1-1";
+            o.dto.cases.push_back(std::move(c));
+            return o;
+        };
+
+        PiOption stage = make_option("stage", "select");
+        PiOption medicine = make_option("use-medicine", "checkbox");
+        PiOption notify = make_option("notify", "switch");
+
+        PiOption retry;
+        retry.dto.name = "retry";
+        retry.dto.type = "input";
+        PiInputDto times;
+        times.name = "times";
+        times.default_value = "3";
+        times.pipeline_type = "int";
+        retry.dto.inputs.push_back(std::move(times));
+
+        catalog.options.push_back(std::move(stage));
+        catalog.options.push_back(std::move(retry));
+        catalog.options.push_back(std::move(medicine));
+        catalog.options.push_back(std::move(notify));
+        return catalog;
+    }
+
+    AcceptedSettingsDto MakePiInputDomainSettings()
+    {
+        using namespace Das::Plugins::DasMaaPi;
+        AcceptedSettingsDto    settings;
+        MaapiPiTaskSettingsDto task_settings;
+        task_settings.item_id = "item_daily_farm";
+        task_settings.task_name = "DailyFarm";
+        task_settings.enabled = true;
+        settings.pi.tasks.push_back(std::move(task_settings));
+        return settings;
+    }
+} // namespace
+
+// D-A3（111-03）：PI 声明输入域（首个 task 声明的 option）投影为 root 候选
+// 字段 input.<optionKey>——与 config 域字段同一 fields[] 候选流（隐式注入
+// 摘除后的显式可见通道，111-04/111-06 暴露面板零特判消费）。类型经
+// MapOptionType 声明形态：select→(4,1)、input(int)→(0,0)、checkbox→(32,2)、
+// switch→(8,0)。
+TEST(MaapiProjectionTest, ProjectsPiInputDomainAsCandidateFields)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakePiInputDomainMockCatalog();
+    AcceptedSettingsDto settings = MakePiInputDomainSettings();
+
+    std::vector<PiDiagnosticDto> diags;
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    // 四类 option 各一候选（option 粒度；select case 不拆子字段）。
+    EXPECT_EQ(CountFieldsWithName(document, "input.stage"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "input.retry"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "input.use-medicine"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "input.notify"), 1u);
+
+    // 类型映射断言（照既有 valueType/inputType 断言形态）。
+    auto stage_field = FindRootField(document, "input.stage");
+    ASSERT_TRUE(stage_field.has_value());
+    auto stage_obj = stage_field->as_object();
+    ASSERT_TRUE(stage_obj);
+    EXPECT_EQ(
+        (*stage_obj)[std::string_view("valueType")].as_sint().value_or(-1),
+        4); // select → string
+    EXPECT_EQ(
+        (*stage_obj)[std::string_view("inputType")].as_sint().value_or(-1),
+        1);
+
+    auto retry_field = FindRootField(document, "input.retry");
+    ASSERT_TRUE(retry_field.has_value());
+    auto retry_obj = retry_field->as_object();
+    ASSERT_TRUE(retry_obj);
+    EXPECT_EQ(
+        (*retry_obj)[std::string_view("valueType")].as_sint().value_or(-1),
+        0); // input pipeline_type=int → int
+    EXPECT_EQ(
+        (*retry_obj)[std::string_view("inputType")].as_sint().value_or(-1),
+        0);
+
+    auto medicine_field = FindRootField(document, "input.use-medicine");
+    ASSERT_TRUE(medicine_field.has_value());
+    auto medicine_obj = medicine_field->as_object();
+    ASSERT_TRUE(medicine_obj);
+    EXPECT_EQ(
+        (*medicine_obj)[std::string_view("valueType")].as_sint().value_or(-1),
+        32); // checkbox → array<string>
+    EXPECT_EQ(
+        (*medicine_obj)[std::string_view("inputType")].as_sint().value_or(-1),
+        2);
+
+    auto notify_field = FindRootField(document, "input.notify");
+    ASSERT_TRUE(notify_field.has_value());
+    auto notify_obj = notify_field->as_object();
+    ASSERT_TRUE(notify_obj);
+    EXPECT_EQ(
+        (*notify_obj)[std::string_view("valueType")].as_sint().value_or(-1),
+        8); // switch → bool
+    EXPECT_EQ(
+        (*notify_obj)[std::string_view("inputType")].as_sint().value_or(-1),
+        0);
+
+    // 值默认链：select 无存储回退首 case；input 无存储回退 PI default（int
+    // 3）；switch 无存储回退 true（MaaPI 约定）。
+    auto stage_value = FieldValueOf(document, "input.stage");
+    ASSERT_TRUE(stage_value.is_string());
+    EXPECT_EQ(stage_value.as_string().value_or(""), "1-1");
+    auto retry_value = FieldValueOf(document, "input.retry");
+    ASSERT_TRUE(retry_value.is_sint() || retry_value.is_uint());
+    EXPECT_EQ(retry_value.as_sint().value_or(-1), 3);
+    auto notify_value = FieldValueOf(document, "input.notify");
+    ASSERT_TRUE(notify_value.is_bool());
+    EXPECT_TRUE(notify_value.as_bool().value_or(false));
+}
+
+// D-A3（111-03）：input.<optionKey> 静态编辑路由——setValue 持久化到首个
+// PI task 的 options 存储（与 formSequence item 的 options.* 同一存储），
+// 重投影反映新值；未声明 option fail-closed（error 诊断，不落错存储）。
+TEST(MaapiProjectionTest, ApplyDocumentSetValueOnPiInputFieldPersistsToTask)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakePiInputDomainMockCatalog();
+    AcceptedSettingsDto settings = MakePiInputDomainSettings();
+
+    {
+        std::vector<PiDiagnosticDto> diagnostics;
+        auto       payload = Das::Utils::ParseYyjsonFromString(
+                                 R"({"target":{"kind":"document"},)"
+                                 R"("fieldName":"input.stage","value":"1-1"})")
+                                 .value_or(yyjson::value(nullptr));
+        const bool ok =
+            ApplyStrictSetValueChange(settings, payload, &catalog, diagnostics);
+        EXPECT_TRUE(ok);
+        EXPECT_TRUE(diagnostics.empty());
+    }
+
+    // 持久化路径：tasks[0].options。
+    ASSERT_EQ(settings.pi.tasks.size(), 1u);
+    const auto& task_options = settings.pi.tasks.front().options;
+    auto        it = std::find_if(
+        task_options.begin(),
+        task_options.end(),
+        [&](const MaapiPiOptionSettingsDto& o)
+        { return o.option_name == "stage"; });
+    ASSERT_NE(it, task_options.end());
+    ASSERT_EQ(it->selected_cases.size(), 1u);
+    EXPECT_EQ(it->selected_cases[0], "1-1");
+
+    // 重投影：input.stage value 反映用户选择（静态编辑闭环）。
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto value = FieldValueOf(document, "input.stage");
+    ASSERT_TRUE(value.is_string());
+    EXPECT_EQ(value.as_string().value_or(""), "1-1");
+
+    // fail-closed：首个 task 未声明的 option 键 → error 诊断 + 拒绝。
+    std::vector<PiDiagnosticDto> diagnostics;
+    auto       bad_payload = Das::Utils::ParseYyjsonFromString(
+                                 R"({"target":{"kind":"document"},)"
+                                 R"("fieldName":"input.not-declared","value":"x"})")
+                                 .value_or(yyjson::value(nullptr));
+    const bool bad_ok =
+        ApplyStrictSetValueChange(settings, bad_payload, &catalog, diagnostics);
+    EXPECT_FALSE(bad_ok);
+    ASSERT_FALSE(diagnostics.empty());
+    EXPECT_EQ(diagnostics.front().severity, "error");
 }
 
 // Round-trip 持久化 RED: settings.pi.pretasks 序列化→parse→project 必须

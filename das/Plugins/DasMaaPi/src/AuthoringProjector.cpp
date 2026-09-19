@@ -3343,6 +3343,46 @@ namespace Das::Plugins::DasMaaPi
             }
         }
 
+        // D-A3（111-03）：PI 声明输入域候选字段（input.<optionKey>）。
+        // 110.1 D-01③ 的 acceptedProperties 隐式注入（InjectPortDerivations）
+        // 已摘除——PI 输入改走与 config 域字段同一 fields[] 候选流（单一通道，
+        // 不造第二候选流）：静态可编辑（setValue 路由到 tasks[0].options，
+        // 与 formSequence item 的 options.* 同一存储）+ 111-04/111-06 暴露机制
+        // 勾选为端口（机制单条，暴露侧零 PI 特判）。域与旧注入一致 = 首个
+        // PI task 声明的 option（DerivePortDefinitions 同域数据源）；类型经
+        // MakeOptionPropertyField 内的 MapOptionType 声明形态（select→string /
+        // checkbox→array<string> / switch→bool / input→int|float|string），
+        // 值/label/candidates 复用 option 字段投影既有链（双语沿用现状）。
+        if (catalog != nullptr && !settings.pi.tasks.empty())
+        {
+            const auto& first_task = settings.pi.tasks.front();
+            const auto* catalog_task = FindTask(*catalog, first_task.task_name);
+            if (catalog_task != nullptr)
+            {
+                std::set<std::string> emitted_input_keys;
+                for (const auto& option_name : catalog_task->dto.option)
+                {
+                    if (!emitted_input_keys.insert(option_name).second)
+                    {
+                        continue;
+                    }
+                    const auto* option_dto = FindOption(*catalog, option_name);
+                    if (option_dto == nullptr)
+                    {
+                        continue;
+                    }
+                    const auto* current =
+                        FindOptionSettings(first_task.options, option_name);
+                    fields.as_array()->emplace_back(MakeOptionPropertyField(
+                        std::string{"input."} + option_name,
+                        option_dto->dto,
+                        current,
+                        catalog,
+                        current_language));
+                }
+            }
+        }
+
         // 根级 fieldLayout 必须在 fields 移走前构建（按 const ref 读 fields）。
         // 检查结果表有条目 → 更新 section 置顶（用户点检查即期待看到反馈，
         // Checking 期置顶是稳定状态——条目无 TTL 不闪烁；与五字段门同源
@@ -4690,6 +4730,74 @@ namespace Das::Plugins::DasMaaPi
                     *catalog,
                     std::string_view(field).substr(setting_prefix.size()),
                     value);
+                return true;
+            }
+            // D-A3（111-03）：input.{name} 路由到首个 PI task 的 options 存储
+            // （PI 声明输入域候选字段的静态编辑通道——与 formSequence item 的
+            // options.* 同一存储同一 ParseOptionValue 校验；暴露机制勾选为端口
+            // 后连线值经同一通道回流）。catalog 缺该 option / 首个 task 未声明
+            // 该 option → error 诊断（fail-closed，不静默落错存储）。
+            constexpr std::string_view pi_input_prefix = "input.";
+            if (field.starts_with(pi_input_prefix) && catalog)
+            {
+                const auto option_name =
+                    std::string_view(field).substr(pi_input_prefix.size());
+                if (settings.pi.tasks.empty())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        Translate(
+                            "diagnostic.setValueFieldNotDeclaredOnThisTask"),
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                auto&       first_task = settings.pi.tasks.front();
+                const auto* catalog_task =
+                    FindTask(*catalog, first_task.task_name);
+                if (!catalog_task
+                    || !ContainsName(catalog_task->dto.option, option_name))
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        Translate(
+                            "diagnostic.setValueFieldNotDeclaredOnThisTask"),
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                const auto* option = FindOption(*catalog, option_name);
+                if (!option)
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        Translate(
+                            "diagnostic.setValueFieldReferencesUnknownOption"),
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                if (value.is_null())
+                {
+                    RemoveOption(first_task.options, option_name);
+                    return true;
+                }
+                auto parsed = ParseOptionValue(*option, value);
+                if (!parsed)
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        Translate("diagnostic.setValueValueTypeIncompatible"),
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                RemoveOption(first_task.options, option_name);
+                UpsertOption(first_task.options, std::move(*parsed));
                 return true;
             }
             // D-86-03/06: pretask.{name} 路由到 acceptedProperties.pi.pretasks
