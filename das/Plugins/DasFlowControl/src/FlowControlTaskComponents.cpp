@@ -27,6 +27,7 @@ DAS_IGNORE_BOOST_PROCESS_WARNING
 #include <boost/asio/io_context.hpp>
 #include <boost/process/v2/environment.hpp>
 #include <boost/process/v2/process.hpp>
+#include <boost/process/v2/shell.hpp>
 #include <boost/process/v2/start_dir.hpp>
 #include <boost/process/v2/stdio.hpp>
 #include <boost/system/system_error.hpp>
@@ -957,6 +958,61 @@ namespace
         return quoted;
     }
 #endif
+
+    // launch args 命令文本（D-A9 string 形态）→ argv token 序列：仅借
+    // boost::process v2::shell 的解析器（Windows=CommandLineToArgvW/
+    // MSVCRT 规则），绝不经 shell 执行——token 回喂既有 vector 逐参
+    // spawner，参数注入面不劣于既有 bp2 spawn 路径。exe 前缀经既有引号
+    // 规则（QuoteElevatedLaunchArgument）保护：含空白的 exe 不被误分
+    // 词；argv()[0] 是 exe 锚，参数 token 从 [1, argc) 取。空文本 = 空
+    // token 序列。
+    std::vector<std::string> ParseLaunchArgumentCommandText(
+        const std::string& exe_path_utf8,
+        const std::string& arguments_text_utf8)
+    {
+        std::vector<std::string> tokens;
+#ifdef _WIN32
+        std::wstring command_line = QuoteElevatedLaunchArgument(
+            Das::Utils::PathFromUtf8(exe_path_utf8).wstring());
+        if (!arguments_text_utf8.empty())
+        {
+            command_line.push_back(L' ');
+            command_line +=
+                Das::Utils::PathFromUtf8(arguments_text_utf8).wstring();
+        }
+        // wcstring_ref 构造不拷贝（input_ 借用 command_line 数据）——
+        // command_line 生存期覆盖 parsed_command，安全。
+        const boost::process::v2::shell parsed_command{
+            boost::process::v2::wcstring_ref{command_line}};
+        if (parsed_command.argc() > 1)
+        {
+            tokens.reserve(static_cast<std::size_t>(parsed_command.argc() - 1));
+        }
+        for (int index = 1; index < parsed_command.argc(); ++index)
+        {
+            tokens.emplace_back(
+                Das::Utils::PathToUtf8(
+                    std::filesystem::path{
+                        std::wstring{parsed_command.argv()[index]}}));
+        }
+#else
+        // manifest 声明 supportedSystem=Windows；POSIX 仅保可编译——窄
+        // UTF-8 直构造（char_type=char），token 即 UTF-8 原文。
+        std::string command_line = exe_path_utf8;
+        if (!arguments_text_utf8.empty())
+        {
+            command_line.push_back(' ');
+            command_line += arguments_text_utf8;
+        }
+        const boost::process::v2::shell parsed_command{
+            boost::process::v2::cstring_ref{command_line}};
+        for (int index = 1; index < parsed_command.argc(); ++index)
+        {
+            tokens.emplace_back(std::string{parsed_command.argv()[index]});
+        }
+#endif
+        return tokens;
+    }
 
     // 生产提权回退启动缝：ShellExecuteExW。成功后取 pid 立即关句柄——
     // 不 WAIT 不持有（launch 语义 spawn 即完成）；失败路径无句柄产生。
@@ -2514,9 +2570,39 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
         {
             exe_path = *configured_exe_path;
         }
-        if (const auto configured_arguments =
+        if (const auto configured_arguments_text =
+                FindObjectString(*settings_object, "args"))
+        {
+            // D-A9：args 声明改 string——命令文本直读，经 v2::shell 解析
+            // 为 token 序列（exe 前缀引号保护；见
+            // ParseLaunchArgumentCommandText）。解析失败显性失败，不静默
+            // 丢参（错误吞掉后半段参数比启动失败更伤）。
+            try
+            {
+                arguments = ParseLaunchArgumentCommandText(
+                    exe_path,
+                    *configured_arguments_text);
+            }
+            catch (const std::exception& parse_error)
+            {
+                DAS_LOG_WARNING(
+                    DAS_FMT_NS::format(
+                        "Launch args command text parse failed: {}",
+                        parse_error.what())
+                        .c_str());
+                return BuildLaunchFailedPortMap(
+                    "launch-spawn-failed",
+                    Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_SPAWN_FAILED,
+                    pp_out_port_map);
+            }
+        }
+        else if (
+            const auto configured_arguments =
                 FindObjectArray(*settings_object, "args"))
         {
+            // 宽容读：array<string> 时期写入的存量条目原样逐元素读（数据
+            // 不迁移）；非 string 非 array 形态落既有缺失处理（空参，不
+            // 猜测）。
             for (const auto& argument : *configured_arguments)
             {
                 if (const auto argument_text = argument.as_string())

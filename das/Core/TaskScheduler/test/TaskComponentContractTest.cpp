@@ -1325,8 +1325,8 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     // config_field_count = config 对象的声明字段数（空 config 计 0）。
     const std::array<ManifestSpec, 3> manifests{
         ManifestSpec{"DasFlowControl", 16, 45, 27},
-        ManifestSpec{"DasMaaPi", 1, 8, 2},
-        ManifestSpec{"DasGraphTask", 3, 4, 0},
+        ManifestSpec{"DasMaaPi", 1, 9, 2},
+        ManifestSpec{"DasGraphTask", 4, 7, 5},
     };
 
     const auto expect_label_map =
@@ -1433,9 +1433,9 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
         total_ports += ports_with_label;
         total_config_fields += config_fields_with_label;
     }
-    EXPECT_EQ(total_definitions, 20u);
-    EXPECT_EQ(total_ports, 57u);
-    EXPECT_EQ(total_config_fields, 29u);
+    EXPECT_EQ(total_definitions, 21u);
+    EXPECT_EQ(total_ports, 61u);
+    EXPECT_EQ(total_config_fields, 34u);
 }
 
 TEST_F(
@@ -2153,6 +2153,144 @@ TEST_F(TaskComponentContractTest, LaunchDoPassesConfigToSpawner)
     EXPECT_EQ(spawned_arguments[1], "value");
     EXPECT_EQ(spawned_working_directory, "C:/test/work");
     EXPECT_FALSE(spawned_capture_output); // 缺省 captureOutput = 关
+}
+
+// D-A9：args string 形态经 boost::process v2::shell 解析（MSVCRT/
+// CommandLineToArgvW 规则）：引号包裹的含空格路径保形为单 token，恰 3
+// 参——解析正确性是 boost 的责任，本用例锚定接线（token 序列原样到
+// spawn 缝）。
+TEST_F(TaskComponentContractTest, LaunchDoParsesStringArgsViaShellTokenizer)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    std::vector<std::string> spawned_arguments;
+    component->SetProcessSpawnerForTest(
+        [&spawned_arguments](
+            const std::string&,
+            const std::vector<std::string>& arguments,
+            const std::string&,
+            bool) -> bool
+        {
+            spawned_arguments = arguments;
+            return true;
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({
+            "exePath": "C:/test/app.exe",
+            "args": "--path \"C:\\Program Files\\x\" -v"
+        })json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    ASSERT_EQ(spawned_arguments.size(), 3u);
+    EXPECT_EQ(spawned_arguments[0], "--path");
+    EXPECT_EQ(spawned_arguments[1], "C:\\Program Files\\x");
+    EXPECT_EQ(spawned_arguments[2], "-v");
+}
+
+// 逗号通道退役锚点：含逗号参数是单 token（旧 array<string> UI 逗号切分
+// 会破坏 a,b.csv 这类值；string 形态 + shell 解析下保形）。
+TEST_F(TaskComponentContractTest, LaunchDoKeepsCommaArgumentAsSingleToken)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    std::vector<std::string> spawned_arguments;
+    component->SetProcessSpawnerForTest(
+        [&spawned_arguments](
+            const std::string&,
+            const std::vector<std::string>& arguments,
+            const std::string&,
+            bool) -> bool
+        {
+            spawned_arguments = arguments;
+            return true;
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({
+            "exePath": "C:/test/app.exe",
+            "args": "-o a,b.csv"
+        })json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    ASSERT_EQ(spawned_arguments.size(), 2u);
+    EXPECT_EQ(spawned_arguments[0], "-o");
+    EXPECT_EQ(spawned_arguments[1], "a,b.csv");
+}
+
+// D-A9 边界：args 空串 = 空 token 序列（行为等价空 vector，不落哑参）。
+TEST_F(TaskComponentContractTest, LaunchDoTreatsEmptyStringArgsAsNoArguments)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    std::vector<std::string> spawned_arguments;
+    // 故意预置哨兵值：空串形态应清空为 0 参而非保留预置。
+    spawned_arguments.emplace_back("stale");
+    component->SetProcessSpawnerForTest(
+        [&spawned_arguments](
+            const std::string&,
+            const std::vector<std::string>& arguments,
+            const std::string&,
+            bool) -> bool
+        {
+            spawned_arguments = arguments;
+            return true;
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({
+            "exePath": "C:/test/app.exe",
+            "args": ""
+        })json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    EXPECT_TRUE(spawned_arguments.empty());
+}
+
+// 宽容读锚点：array<string> 时期写入的存量条目（数据不迁移）逐元素兼容
+// 读，等价 vector——与 LaunchDoPassesConfigToSpawner 同形态独立锚定。
+TEST_F(TaskComponentContractTest, LaunchDoReadsLegacyArrayArgsForm)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    std::vector<std::string> spawned_arguments;
+    component->SetProcessSpawnerForTest(
+        [&spawned_arguments](
+            const std::string&,
+            const std::vector<std::string>& arguments,
+            const std::string&,
+            bool) -> bool
+        {
+            spawned_arguments = arguments;
+            return true;
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({
+            "exePath": "C:/test/app.exe",
+            "args": ["--flag", "value with space"]
+        })json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    ASSERT_EQ(spawned_arguments.size(), 2u);
+    EXPECT_EQ(spawned_arguments[0], "--flag");
+    EXPECT_EQ(spawned_arguments[1], "value with space");
 }
 
 // 生产 spawn 冒烟（无注入缝，走真实 boost::process 路径）：以「自 spawn

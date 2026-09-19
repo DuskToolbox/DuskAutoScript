@@ -593,7 +593,7 @@
               "required": true
             },
             "args": {
-              "type": "array<string>",
+              "type": "string",
               "label": { "en": "Arguments", "zh-cn": "启动参数" }
             },
             "workingDirectory": {
