@@ -1502,7 +1502,28 @@ namespace Das::Core::TaskScheduler
                         "FormSequenceItem.id duplicate");
                 }
             }
-            if (!OnlyKeys(obj, {"items"}))
+            // chrome 三键（engaged-only）：addButtonLabel/emptyStateHint/
+            // listTitle——列表 UI 文案文档化（替代前端硬编码）。出现即必须
+            // 为非空字符串；缺省合法（UI 内置兜底，现投影零破坏过渡）。
+            for (const std::string_view chrome_key :
+                 {"addButtonLabel", "emptyStateHint", "listTitle"})
+            {
+                if (!obj.contains(chrome_key))
+                {
+                    continue;
+                }
+                if (!HasStringField(obj, chrome_key)
+                    || obj[chrome_key].as_string().value().empty())
+                {
+                    return Fail(
+                        "invalidValue",
+                        "formSequence." + std::string{chrome_key}
+                            + " must be a non-empty string when present");
+                }
+            }
+            if (!OnlyKeys(
+                    obj,
+                    {"items", "addButtonLabel", "emptyStateHint", "listTitle"}))
             {
                 return Fail(
                     "unknownField",

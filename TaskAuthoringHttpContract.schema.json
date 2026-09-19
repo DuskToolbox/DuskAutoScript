@@ -396,10 +396,26 @@
       "type": "object",
       "required": ["items"],
       "additionalProperties": false,
+      "$comment": "List-editor view object. The three chrome keys (addButtonLabel/emptyStateHint/listTitle) document the list UI copy that used to be hardcoded client-side; they are engaged-only — present means a non-empty string, absent means the client falls back to its built-in defaults (existing projections without them stay byte-identical).",
       "properties": {
         "items": {
           "type": "array",
           "items": { "$ref": "#/$defs/FormSequenceItem" }
+        },
+        "addButtonLabel": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Optional add-button label; defaults to the client's built-in copy when omitted."
+        },
+        "emptyStateHint": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Optional empty-state hint; defaults to the client's built-in copy when omitted."
+        },
+        "listTitle": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Optional list title; defaults to the client's built-in copy when omitted."
         }
       }
     },

@@ -906,7 +906,7 @@ TEST(TaskAuthoringContractTest, FormSequenceChromeEmptyStringRejected)
         return ParseJson(
             std::string{
                 R"({"contractVersion":1,"viewKind":"formSequence","revision":0,"formSequence":{"items":[],")"}
-            + std::string{key} + R"("")}})");
+            + std::string{key} + "\":\"\"}}");
     };
     for (const std::string_view key :
          {"addButtonLabel", "emptyStateHint", "listTitle"})
@@ -926,7 +926,7 @@ TEST(TaskAuthoringContractTest, FormSequenceChromeNonStringRejected)
         return ParseJson(
             std::string{
                 R"({"contractVersion":1,"viewKind":"formSequence","revision":0,"formSequence":{"items":[],")"}
-            + std::string{key} + R"(:7}})");
+            + std::string{key} + "\":7}}");
     };
     for (const std::string_view key :
          {"addButtonLabel", "emptyStateHint", "listTitle"})
