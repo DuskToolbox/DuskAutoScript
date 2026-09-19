@@ -81,6 +81,11 @@
               "id": "值",
               "type": "int",
               "label": { "en": "Value", "zh-cn": "值" }
+            },
+            {
+              "id": "下次时间",
+              "type": "string",
+              "label": { "en": "Next Time", "zh-cn": "下次时间" }
             }
           ],
           "outputs": [
@@ -88,9 +93,34 @@
               "id": "值",
               "type": "int",
               "label": { "en": "Value", "zh-cn": "值" }
+            },
+            {
+              "id": "下次时间",
+              "type": "string",
+              "label": { "en": "Next Time", "zh-cn": "下次时间" }
             }
           ],
-          "config": {},
+          "config": {
+            "nextInterval": {
+              "type": "int",
+              "label": { "en": "Next Interval", "zh-cn": "下次间隔" },
+              "default": 1
+            },
+            "nextUnit": {
+              "type": "string",
+              "label": { "en": "Interval Unit", "zh-cn": "间隔单位" },
+              "default": "day",
+              "options": ["minute", "hour", "day", "week", "month", "year"]
+            },
+            "nextAnchorTime": {
+              "type": "time",
+              "label": { "en": "Anchor Time (empty = follow this run)", "zh-cn": "锚定钟点（留空=跟随本次）" },
+              "description": {
+                "en": "Leave empty to keep this run's clock time; set to land on a fixed time like next-day 08:00.",
+                "zh-cn": "留空=钟点跟随本次执行时刻；填写=落到指定时刻（如次日 08:00）。"
+              }
+            }
+          },
           "diagnostics": []
         }
       },

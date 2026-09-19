@@ -1176,6 +1176,73 @@ namespace
             0);
     }
 
+    // The "time" config type word maps onto the TimePicker channel
+    // (valueType=4 string + inputType=8) — the manifest-config producer for
+    // the inputType 8 vocabulary whose contract the TaskScheduler validator
+    // already enforces ("inputType 8 (time) requires valueType=4"). The
+    // projection and the wire emission carry the pair in lockstep; a sibling
+    // plain string field keeps {4,0} (zero regression).
+    TEST(
+        AuthoringDocContractTest,
+        ConfigProjection_TimeTypeWordMapsToTimePicker)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "das.graph.end";
+        entry.config_fields.push_back(
+            MakeConfigField("nextAnchorTime", "time"));
+        entry.config_fields.push_back(MakeConfigField("note", "string"));
+        catalog.entries.push_back(entry);
+
+        const auto  out = ToAuthoringDocument(doc, catalog);
+        const auto& fields = out.graph->nodes[0].fields;
+        ASSERT_EQ(fields.size(), 2u);
+
+        // Time word: string value channel + TimePicker input channel.
+        EXPECT_EQ(fields[0].name, "nextAnchorTime");
+        EXPECT_EQ(fields[0].value_type, 4);
+        EXPECT_EQ(fields[0].input_type, 8);
+        EXPECT_EQ(fields[0].type_word.value_or(""), "time");
+
+        // Sibling plain string keeps the TextBox projection.
+        EXPECT_EQ(fields[1].name, "note");
+        EXPECT_EQ(fields[1].value_type, 4);
+        EXPECT_EQ(fields[1].input_type, 0);
+
+        // Wire emission mirrors the pair.
+        const auto wire = SerializeDocument(doc, catalog);
+        auto       wire_obj = wire.as_object();
+        ASSERT_TRUE(wire_obj.has_value());
+        auto graph = (*wire_obj)[std::string_view("graph")].as_object();
+        ASSERT_TRUE(graph.has_value());
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        ASSERT_TRUE(nodes.has_value());
+        auto node_obj = (*nodes)[0].as_object();
+        ASSERT_TRUE(node_obj.has_value());
+        auto wire_fields = (*node_obj)[std::string_view("fields")].as_array();
+        ASSERT_TRUE(wire_fields.has_value());
+        ASSERT_EQ(wire_fields->size(), 2u);
+
+        auto time_wire = (*wire_fields)[0].as_object();
+        ASSERT_TRUE(time_wire.has_value());
+        EXPECT_EQ(
+            (*time_wire)[std::string_view("valueType")].as_int().value_or(-1),
+            4);
+        EXPECT_EQ(
+            (*time_wire)[std::string_view("inputType")].as_int().value_or(-1),
+            8);
+
+        auto note_wire = (*wire_fields)[1].as_object();
+        ASSERT_TRUE(note_wire.has_value());
+        EXPECT_EQ(
+            (*note_wire)[std::string_view("inputType")].as_int().value_or(-1),
+            0);
+    }
+
     // The formSequence projection merges config declarations the same way
     // (items of a linear document reference components too).
     TEST(AuthoringDocContractTest, ConfigProjection_FormSequenceItemsMerge)

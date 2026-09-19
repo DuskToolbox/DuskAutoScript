@@ -3186,4 +3186,129 @@ namespace
         }
     }
 
+    // end 组件 manifest 钉值（D-B1/D-B2/D-B5）：config 三件套在场——
+    // nextInterval(int) / nextUnit(string, options 恰为六词) /
+    // nextAnchorTime(time, description 双语键——留空语义进文案)；inputs 与
+    // outputs 各含镜像 string 日期口对（id「下次时间」）。
+    TEST(DasGraphTaskTest, EndManifestDeclaresNextTimeConfigAndMirrorPorts)
+    {
+        const auto manifest_path =
+            std::filesystem::path(DAS_PATH_LITERAL(__FILE__))
+                .parent_path()
+                .parent_path()
+            / DAS_PATH_LITERAL("DasGraphTask.json");
+        std::ifstream manifest_file(manifest_path);
+        ASSERT_TRUE(manifest_file.is_open())
+            << Das::Utils::PathToUtf8(manifest_path);
+
+        std::ostringstream manifest_buffer;
+        manifest_buffer << manifest_file.rdbuf();
+        yyjson::value manifest_root = yyjson::read(manifest_buffer.str());
+        auto          manifest_object = manifest_root.as_object();
+        ASSERT_TRUE(manifest_object.has_value());
+
+        const auto task_components =
+            (*manifest_object)[std::string_view("taskComponents")].as_object();
+        ASSERT_TRUE(task_components.has_value());
+        const auto components =
+            (*task_components)[std::string_view("components")].as_object();
+        ASSERT_TRUE(components.has_value());
+
+        ASSERT_TRUE(components->contains(END_COMPONENT_GUID_TEXT));
+        const auto component_entry =
+            (*components)[END_COMPONENT_GUID_TEXT].as_object();
+        ASSERT_TRUE(component_entry.has_value());
+        const auto definition =
+            (*component_entry)[std::string_view("definition")].as_object();
+        ASSERT_TRUE(definition.has_value());
+
+        // --- config 三件套 ---
+        const auto config =
+            (*definition)[std::string_view("config")].as_object();
+        ASSERT_TRUE(config.has_value());
+
+        ASSERT_TRUE(config->contains(std::string_view("nextInterval")));
+        {
+            const auto entry =
+                (*config)[std::string_view("nextInterval")].as_object();
+            ASSERT_TRUE(entry.has_value());
+            const auto type = (*entry)[std::string_view("type")].as_string();
+            ASSERT_TRUE(type.has_value());
+            EXPECT_EQ(*type, "int");
+        }
+
+        ASSERT_TRUE(config->contains(std::string_view("nextUnit")));
+        {
+            const auto entry =
+                (*config)[std::string_view("nextUnit")].as_object();
+            ASSERT_TRUE(entry.has_value());
+            const auto type = (*entry)[std::string_view("type")].as_string();
+            ASSERT_TRUE(type.has_value());
+            EXPECT_EQ(*type, "string");
+            const auto options =
+                (*entry)[std::string_view("options")].as_array();
+            ASSERT_TRUE(options.has_value());
+            const std::vector<std::string_view> expected_units{
+                "minute",
+                "hour",
+                "day",
+                "week",
+                "month",
+                "year"};
+            ASSERT_EQ(options->size(), expected_units.size());
+            for (std::size_t index = 0; index < expected_units.size(); ++index)
+            {
+                const auto option = (*options)[index].as_string();
+                ASSERT_TRUE(option.has_value());
+                EXPECT_EQ(*option, expected_units[index]);
+            }
+        }
+
+        ASSERT_TRUE(config->contains(std::string_view("nextAnchorTime")));
+        {
+            const auto entry =
+                (*config)[std::string_view("nextAnchorTime")].as_object();
+            ASSERT_TRUE(entry.has_value());
+            const auto type = (*entry)[std::string_view("type")].as_string();
+            ASSERT_TRUE(type.has_value());
+            EXPECT_EQ(*type, "time");
+            // 留空语义写进 description 双语键（D-B2）。
+            const auto description =
+                (*entry)[std::string_view("description")].as_object();
+            ASSERT_TRUE(description.has_value());
+            ASSERT_TRUE(description->contains(std::string_view("en")));
+            ASSERT_TRUE(description->contains(std::string_view("zh-cn")));
+        }
+
+        // --- 镜像 string 日期口对（inputs / outputs 各一）---
+        const auto assert_mirror_port = [&](const std::string_view list_key)
+        {
+            const auto ports =
+                (*definition)[std::string_view(list_key)].as_array();
+            ASSERT_TRUE(ports.has_value());
+            bool found = false;
+            for (const auto& port : *ports)
+            {
+                auto port_obj = port.as_object();
+                if (!port_obj.has_value())
+                {
+                    continue;
+                }
+                const auto id = (*port_obj)[std::string_view("id")].as_string();
+                if (!id.has_value() || *id != std::string_view("下次时间"))
+                {
+                    continue;
+                }
+                const auto type =
+                    (*port_obj)[std::string_view("type")].as_string();
+                ASSERT_TRUE(type.has_value());
+                EXPECT_EQ(*type, "string");
+                found = true;
+            }
+            EXPECT_TRUE(found) << list_key;
+        };
+        assert_mirror_port(std::string_view("inputs"));
+        assert_mirror_port(std::string_view("outputs"));
+    }
+
 } // namespace

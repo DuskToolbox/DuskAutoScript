@@ -166,6 +166,14 @@ namespace Contract
             {
                 return {4, 0};
             }
+            if (type == std::string_view("time"))
+            {
+                // HH:MM 钟点字（string 值 + TimePicker 通道）：契约自洽依据
+                // TaskAuthoringContract validator「inputType 8 (time)
+                // requires valueType=4」——Core 只强制类型契约，留空语义由
+                // manifest description 文案承载（D-B2 零新机制）。
+                return {4, 8};
+            }
             if (type == std::string_view("bool"))
             {
                 return {8, 0};
