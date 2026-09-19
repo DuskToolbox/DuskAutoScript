@@ -857,6 +857,103 @@ TEST(TaskAuthoringContractTest, FormSequenceUsesItemsNotSequence)
     EXPECT_TRUE(modern_r.error_kind.empty()) << modern_r.message;
 }
 
+// ===== formSequence chrome 三键（engaged-only：addButtonLabel/
+// emptyStateHint/listTitle——出现即非空字符串、未知键拒绝、缺省=UI 内置
+// 兜底）=====
+
+TEST(TaskAuthoringContractTest, FormSequenceChromeKeysAbsentPasses)
+{
+    // formSequence 仅 items：通过（MaaPI 现投影不带三键，逐字节不变——
+    // 缺省回落 UI 内置文案的零破坏过渡）。
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 5,
+        "formSequence": {"items": []}
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
+}
+
+TEST(TaskAuthoringContractTest, FormSequenceChromeThreeKeysPass)
+{
+    // 三键齐带合法值（示例值=UI 三处硬编码现值，缺省回落目标）。
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "formSequence": {
+            "items": [],
+            "addButtonLabel": "＋ 添加端口",
+            "emptyStateHint": "（空）",
+            "listTitle": "端口"
+        }
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
+}
+
+TEST(TaskAuthoringContractTest, FormSequenceChromeEmptyStringRejected)
+{
+    const auto make_document = [](std::string_view key)
+    {
+        return ParseJson(
+            std::string{
+                R"({"contractVersion":1,"viewKind":"formSequence","revision":0,"formSequence":{"items":[],")"}
+            + std::string{key} + R"("")}})");
+    };
+    for (const std::string_view key :
+         {"addButtonLabel", "emptyStateHint", "listTitle"})
+    {
+        auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+            make_document(key));
+        EXPECT_FALSE(result.valid) << key;
+        EXPECT_EQ(result.error_kind, "invalidValue")
+            << key << ": " << result.message;
+    }
+}
+
+TEST(TaskAuthoringContractTest, FormSequenceChromeNonStringRejected)
+{
+    const auto make_document = [](std::string_view key)
+    {
+        return ParseJson(
+            std::string{
+                R"({"contractVersion":1,"viewKind":"formSequence","revision":0,"formSequence":{"items":[],")"}
+            + std::string{key} + R"(:7}})");
+    };
+    for (const std::string_view key :
+         {"addButtonLabel", "emptyStateHint", "listTitle"})
+    {
+        auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+            make_document(key));
+        EXPECT_FALSE(result.valid) << key;
+        EXPECT_EQ(result.error_kind, "invalidValue")
+            << key << ": " << result.message;
+    }
+}
+
+TEST(TaskAuthoringContractTest, FormSequenceChromeUnknownKeyRejected)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "formSequence": {"items": [], "foo": "bar"}
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "unknownField") << result.message;
+}
+
 TEST(TaskAuthoringContractTest, FieldDescriptorRejectsLegacyExtensions)
 {
     auto document = ParseJson(R"json({
@@ -3149,6 +3246,68 @@ TEST(TaskAuthoringContractTest, SchemaJsonPortsTypesSectionsLocked)
     EXPECT_EQ(
         (*compatible_items)[std::string_view("minLength")].as_sint().value(),
         1);
+}
+
+// schema formSequence chrome 三键对账（Core/schema 两层 lockstep）：
+// addButtonLabel/emptyStateHint/listTitle 三键进 properties（string、
+// minLength 1）且均不在 required 集（engaged-only）；required 仍只有
+// items；additionalProperties 保持 false（未知键拒绝）。
+TEST(TaskAuthoringContractTest, SchemaJsonFormSequenceChromeKeysLocked)
+{
+    const auto schema_path = ResolveSchemaJsonPath();
+    ASSERT_TRUE(schema_path.has_value())
+        << "TaskAuthoringHttpContract.schema.json not found above "
+        << std::filesystem::current_path();
+    const auto schema_text = ReadFileText(*schema_path);
+    ASSERT_TRUE(schema_text.has_value());
+
+    auto schema = ParseJson(*schema_text);
+    auto schema_object = schema.as_object();
+    ASSERT_TRUE(schema_object.has_value());
+    auto defs_value = (*schema_object)[std::string_view("$defs")];
+    auto defs_object = defs_value.as_object();
+    ASSERT_TRUE(defs_object.has_value());
+
+    auto form_def =
+        (*defs_object)[std::string_view("FormSequence")].as_object();
+    ASSERT_TRUE(form_def.has_value());
+
+    auto no_extra_fields =
+        (*form_def)[std::string_view("additionalProperties")].as_bool();
+    ASSERT_TRUE(no_extra_fields.has_value());
+    EXPECT_FALSE(*no_extra_fields);
+
+    std::set<std::string> required_fields;
+    auto required_array = (*form_def)[std::string_view("required")].as_array();
+    ASSERT_TRUE(required_array.has_value());
+    for (const auto& item : *required_array)
+    {
+        required_fields.insert(std::string(item.as_string().value()));
+    }
+    EXPECT_EQ(required_fields, (std::set<std::string>{"items"}));
+
+    auto properties = (*form_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(properties.has_value());
+    for (const std::string_view chrome :
+         {"addButtonLabel", "emptyStateHint", "listTitle"})
+    {
+        ASSERT_TRUE(properties->contains(std::string_view(chrome))) << chrome;
+        auto chrome_definition =
+            (*properties)[std::string_view(chrome)].as_object();
+        ASSERT_TRUE(chrome_definition.has_value()) << chrome;
+        EXPECT_EQ(
+            (*chrome_definition)[std::string_view("type")].as_string().value(),
+            "string")
+            << chrome;
+        EXPECT_EQ(
+            (*chrome_definition)[std::string_view("minLength")]
+                .as_sint()
+                .value(),
+            1)
+            << chrome;
+        // engaged-only：三键均非 required（缺省=UI 内置兜底）。
+        EXPECT_FALSE(required_fields.count(std::string(chrome))) << chrome;
+    }
 }
 
 // GraphNodePort 可选 dynamic 键：布尔真值放行（engaged-only——呈现层只在
