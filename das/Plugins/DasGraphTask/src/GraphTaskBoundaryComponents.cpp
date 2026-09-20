@@ -200,6 +200,61 @@ namespace Das::Plugins::DasGraphTask
         return DAS_S_OK;
     }
 
+    // === GraphTaskBoundaryHostTask（capability 托管载体）===
+
+    GraphTaskBoundaryHostTask::GraphTaskBoundaryHostTask(DasGuid component_guid)
+        : component_guid_(component_guid)
+    {
+    }
+
+    DasResult GraphTaskBoundaryHostTask::GetGuid(DasGuid* p_out_guid)
+    {
+        if (p_out_guid == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        // 组件身份 = begin/end 边界组件 GUID（Core GraphBoundaryComponents.h
+        // 单一事实源经构造传入）——capability 注册面按此 guid 建 record 并
+        // 供 QI 链命中。
+        *p_out_guid = component_guid_;
+        return DAS_S_OK;
+    }
+
+    DasResult GraphTaskBoundaryHostTask::GetRuntimeClassName(
+        IDasReadOnlyString** pp_out_name)
+    {
+        if (pp_out_name == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        return CreateIDasReadOnlyStringFromUtf8(
+            "Das.Plugins.DasGraphTask.GraphTaskBoundaryHostTask",
+            pp_out_name);
+    }
+
+    DasResult GraphTaskBoundaryHostTask::Do(
+        Das::PluginInterface::IDasStopToken* stop_token,
+        Das::ExportInterface::IDasJson*      p_environment_json,
+        Das::ExportInterface::IDasJson*      p_task_settings_json)
+    {
+        // 结构组件不可作为顶层任务执行——确定性拒绝（无副作用）。
+        std::ignore = stop_token;
+        std::ignore = p_environment_json;
+        std::ignore = p_task_settings_json;
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    DasResult GraphTaskBoundaryHostTask::GetNextExecutionTime(
+        Das::ExportInterface::IDasJson* p_task_settings_json,
+        Das::ExportInterface::DasDate*  p_out_date)
+    {
+        // 结构组件不参与排程——无下次执行时间语义（既有「不排程」返回码
+        // 形态，调度器按无排程处理）。
+        std::ignore = p_task_settings_json;
+        std::ignore = p_out_date;
+        return DAS_E_NO_IMPLEMENTATION;
+    }
+
     DasResult GraphTaskBoundaryComponent::Do(
         Das::PluginInterface::IDasStopToken*       stop_token,
         Das::ExportInterface::IDasReadOnlyPortMap* p_input_port_map,

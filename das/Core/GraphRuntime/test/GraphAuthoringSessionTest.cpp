@@ -1,14 +1,20 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
+#include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 #include <das/Core/TaskScheduler/TaskAuthoringContract.h>
+#include <das/Core/TaskScheduler/TaskCapabilityRegistry.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
 
 #include <array>
+#include <filesystem>
+#include <fstream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -3903,5 +3909,86 @@ namespace
             (*first_port)[std::string_view("direction")].as_string();
         ASSERT_TRUE(direction.has_value());
         EXPECT_EQ(*direction, "output");
+    }
+
+    // ------------------------------------------------------------------
+    // begin/end capability 注册面（DasGraphTask 插件托管）的 registry 级
+    // 单元验证：manifest tasks 条目（authoring.factoryGuid +
+    // executionComponent.componentGuid=组件自身）经既有解析器进
+    // TaskDescriptor、既有 AddTaskDescriptor 建 record——registry 现有查
+    // 询面按 begin/end 组件 guid 命中（capability QI 链的发现前提；组件
+    // guid→record 的反查查询面属后续 plan）。
+    // ------------------------------------------------------------------
+
+    TEST(
+        BoundaryAuthoringSessionTest,
+        BoundaryCapabilityRecordsReachableViaRegistry)
+    {
+        // 插件 manifest 跨模块钉值契约：注册面输入在 DasGraphTask 插件的
+        // manifest 里（本测试在 Core 测试二进制内直读该文件）。
+        const auto manifest_path =
+            std::filesystem::path(DAS_PATH_LITERAL(__FILE__))
+                .parent_path()
+                .parent_path()
+                .parent_path()
+                .parent_path()
+                .parent_path()
+            / DAS_PATH_LITERAL("das") / DAS_PATH_LITERAL("Plugins")
+            / DAS_PATH_LITERAL("DasGraphTask")
+            / DAS_PATH_LITERAL("DasGraphTask.json");
+        std::ifstream manifest_file(manifest_path);
+        ASSERT_TRUE(manifest_file.is_open())
+            << Das::Utils::PathToUtf8(manifest_path);
+        std::ostringstream manifest_buffer;
+        manifest_buffer << manifest_file.rdbuf();
+        yyjson::value manifest_root = yyjson::read(manifest_buffer.str());
+        auto          manifest_object = manifest_root.as_object();
+        ASSERT_TRUE(manifest_object.has_value());
+        const auto tasks =
+            (*manifest_object)[std::string_view("tasks")].as_object();
+        ASSERT_TRUE(tasks.has_value());
+
+        constexpr std::string_view kPluginGuidText =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        constexpr std::string_view kAuthoringFactoryGuidText =
+            "EFC3D51E-B707-4702-97ED-8ADA923E2BF0";
+
+        Das::Core::TaskScheduler::TaskCapabilityRegistry registry;
+        uint64_t                                         feature_index = 3;
+        for (const std::string_view guid_text :
+             {kBoundaryBeginGuidText, kBoundaryEndGuidText})
+        {
+            ASSERT_TRUE(tasks->contains(guid_text));
+            const auto entry = (*tasks)[guid_text].as_object();
+            ASSERT_TRUE(entry.has_value());
+            Das::Core::ForeignInterfaceHost::TaskDescriptor descriptor;
+            ASSERT_NO_THROW(
+                Das::Core::ForeignInterfaceHost::ParseTaskDescriptorFromJson(
+                    *entry,
+                    descriptor));
+            registry.AddTaskDescriptor(
+                BoundaryGuidOf(kPluginGuidText),
+                BoundaryGuidOf(guid_text),
+                feature_index,
+                descriptor);
+            ++feature_index;
+        }
+
+        const auto factory_guid = BoundaryGuidOf(kAuthoringFactoryGuidText);
+        const auto plugin_guid = BoundaryGuidOf(kPluginGuidText);
+        for (const std::string_view guid_text :
+             {kBoundaryBeginGuidText, kBoundaryEndGuidText})
+        {
+            const auto component_guid = BoundaryGuidOf(guid_text);
+            ASSERT_NE(registry.FindTask(component_guid), nullptr);
+            const auto* authoring = registry.FindAuthoring(component_guid);
+            ASSERT_NE(authoring, nullptr);
+            EXPECT_TRUE(authoring->authoring_factory_guid == factory_guid);
+            EXPECT_TRUE(authoring->plugin_guid == plugin_guid);
+            const auto* execution =
+                registry.FindExecutionComponent(component_guid);
+            ASSERT_NE(execution, nullptr);
+            EXPECT_TRUE(*execution == component_guid);
+        }
     }
 } // namespace

@@ -154,14 +154,17 @@ namespace Das::Plugins::DasGraphTask
         }
 
         // Mirrors DasMaaPi: TASK (IDasTask entry) + AUTHORING_FACTORY +
-        // COMPONENT_FACTORY (graph-node path). Index order must stay aligned
-        // with CreateFeatureInterface below.
-        static constexpr std::array<Das::PluginInterface::DasPluginFeature, 3>
+        // COMPONENT_FACTORY (graph-node path), plus two appended boundary-host
+        // TASK entries (begin/end capability carriers). Index order must stay
+        // aligned with CreateFeatureInterface below; 0/1/2 keep their
+        // historical indices (tests pin them).
+        static constexpr std::array<Das::PluginInterface::DasPluginFeature, 5>
             features{
                 Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK,
                 Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY,
-                Das::PluginInterface::
-                    DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY};
+                Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY,
+                Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK,
+                Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK};
         if (index >= features.size())
         {
             return DAS_E_OUT_OF_RANGE;
@@ -215,6 +218,30 @@ namespace Das::Plugins::DasGraphTask
                 factory->AddRef();
                 *pp_out_interface = static_cast<
                     Das::PluginInterface::IDasTaskComponentFactory*>(factory);
+                return DAS_S_OK;
+            }
+            if (index == 3 || index == 4)
+            {
+                // TASK -> IDasTask（begin/end capability 托管载体）：供
+                // SchedulerService 既有能力注册面按 begin/end 组件 guid 建
+                // record——QI 链据此把 CreateSession(组件 guid) 路由到本插
+                // 件会话工厂（其 begin/end 分支包装 Core 边界会话）。结构
+                // 组件不可调度（Do/排程一律拒绝）。
+                DasGuid                boundary_guid{};
+                const std::string_view boundary_kind =
+                    index == 3
+                        ? Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID
+                        : Das::Core::GraphRuntime::GRAPH_END_COMPONENT_GUID;
+                if (DAS::IsFailed(DasMakeDasGuid(
+                        std::string(boundary_kind).c_str(),
+                        &boundary_guid)))
+                {
+                    return DAS_E_FAIL;
+                }
+                auto* task = new GraphTaskBoundaryHostTask{boundary_guid};
+                task->AddRef();
+                *pp_out_interface =
+                    static_cast<Das::PluginInterface::IDasTask*>(task);
                 return DAS_S_OK;
             }
         }

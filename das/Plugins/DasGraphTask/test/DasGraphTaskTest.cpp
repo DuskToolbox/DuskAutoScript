@@ -24,6 +24,7 @@
 #include "../src/GraphTaskFocusLog.h"
 #include "../src/GraphTaskFocusLogComponent.h"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -1824,6 +1825,132 @@ TEST(DasGraphTaskTest, FactoryCreateSessionKeepsGraphPathForGraphTaskGuid)
     ASSERT_FALSE(text.empty());
     const auto compacted = CompactText(text);
     EXPECT_NE(compacted.find("\"viewKind\":\"graph\""), std::string::npos);
+}
+
+// ---------------------------------------------------------------------
+// begin/end capability 注册面（既有机制端到端）：插件 TASK feature（GetGuid
+// =组件 guid）+ manifest tasks 条目（authoring.factoryGuid +
+// executionComponent.componentGuid）→ 既有 TaskCapabilityRegistry 查询面
+// 可查——SchedulerService 的 capability QI 链据此按 begin/end 组件 guid
+// 命中本插件会话工厂（无 Core 直调特例）。
+// ---------------------------------------------------------------------
+
+namespace
+{
+    constexpr std::string_view GRAPH_TASK_PLUGIN_GUID_TEXT =
+        "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+    constexpr std::string_view AUTHORING_FACTORY_GUID_TEXT =
+        "EFC3D51E-B707-4702-97ED-8ADA923E2BF0";
+
+    // 读插件 manifest 根对象（具名持有：视图绑在文档上，临时值销毁会让
+    // 嵌套视图悬垂）。
+    yyjson::value ReadPluginManifestRoot()
+    {
+        const auto manifest_path =
+            std::filesystem::path(DAS_PATH_LITERAL(__FILE__))
+                .parent_path()
+                .parent_path()
+            / DAS_PATH_LITERAL("DasGraphTask.json");
+        std::ifstream manifest_file(manifest_path);
+        EXPECT_TRUE(manifest_file.is_open())
+            << Das::Utils::PathToUtf8(manifest_path);
+        std::ostringstream manifest_buffer;
+        manifest_buffer << manifest_file.rdbuf();
+        return yyjson::read(manifest_buffer.str());
+    }
+} // namespace
+
+// 插件包 feature 面：0-4 五 feature（TASK/AUTH/COMP/TASK/TASK），追加的
+// 3/4 是 begin/end 托管载体——QI IDasTask 成功、GetGuid=组件 guid、Do 与
+// 排程查询结构化拒绝（结构组件不可调度）。
+TEST(DasGraphTaskTest, BoundaryHostTaskFeaturesExposeComponentGuids)
+{
+    auto package = DasGraphTaskPluginPackage::Make();
+    ASSERT_NE(package.Get(), nullptr);
+
+    const std::array<Das::PluginInterface::DasPluginFeature, 5> expected{
+        Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK,
+        Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY,
+        Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY,
+        Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK,
+        Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK};
+    for (std::size_t index = 0; index < expected.size(); ++index)
+    {
+        Das::PluginInterface::DasPluginFeature feature{};
+        ASSERT_EQ(package->EnumFeature(index, &feature), DAS_S_OK);
+        EXPECT_EQ(feature, expected[index]);
+    }
+    Das::PluginInterface::DasPluginFeature overflow_feature{};
+    EXPECT_EQ(
+        package->EnumFeature(expected.size(), &overflow_feature),
+        DAS_E_OUT_OF_RANGE);
+
+    const std::array<std::pair<std::size_t, std::string_view>, 2> host_slots{
+        {{3, BEGIN_COMPONENT_GUID_TEXT}, {4, END_COMPONENT_GUID_TEXT}}};
+    for (const auto& [index, guid_text] : host_slots)
+    {
+        DasPtr<IDasBase> feature_base;
+        ASSERT_EQ(
+            package->CreateFeatureInterface(index, feature_base.Put()),
+            DAS_S_OK);
+        DasPtr<Das::PluginInterface::IDasTask> task;
+        ASSERT_EQ(feature_base.As(task.Put()), DAS_S_OK);
+        ASSERT_NE(task.Get(), nullptr);
+
+        DasGuid reported_guid{};
+        ASSERT_EQ(task->GetGuid(&reported_guid), DAS_S_OK);
+        EXPECT_TRUE(reported_guid == GuidOfText(guid_text))
+            << "host feature index " << index;
+
+        // 结构组件不可调度：Do 与排程查询确定性拒绝。
+        EXPECT_EQ(task->Do(nullptr, nullptr, nullptr), DAS_E_INVALID_ARGUMENT);
+        Das::ExportInterface::DasDate date{};
+        EXPECT_EQ(
+            task->GetNextExecutionTime(nullptr, &date),
+            DAS_E_NO_IMPLEMENTATION);
+    }
+}
+
+// manifest 声明钉值：begin/end 组件 guid 各有 tasks 条目，authoring 工厂
+// 指向本插件会话工厂、executionComponent 即组件自身、pluginGuid 一致。
+TEST(DasGraphTaskTest, ManifestDeclaresBoundaryAuthoringCapabilities)
+{
+    yyjson::value manifest_root = ReadPluginManifestRoot();
+    auto          manifest_object = manifest_root.as_object();
+    ASSERT_TRUE(manifest_object.has_value());
+    const auto tasks =
+        (*manifest_object)[std::string_view("tasks")].as_object();
+    ASSERT_TRUE(tasks.has_value());
+
+    for (const std::string_view guid_text :
+         {BEGIN_COMPONENT_GUID_TEXT, END_COMPONENT_GUID_TEXT})
+    {
+        ASSERT_TRUE(tasks->contains(guid_text));
+        const auto entry = (*tasks)[guid_text].as_object();
+        ASSERT_TRUE(entry.has_value());
+
+        const auto plugin_guid =
+            (*entry)[std::string_view("pluginGuid")].as_string();
+        ASSERT_TRUE(plugin_guid.has_value());
+        EXPECT_EQ(*plugin_guid, GRAPH_TASK_PLUGIN_GUID_TEXT);
+
+        const auto authoring =
+            (*entry)[std::string_view("authoring")].as_object();
+        ASSERT_TRUE(authoring.has_value());
+        const auto factory_guid =
+            (*authoring)[std::string_view("factoryGuid")].as_string();
+        ASSERT_TRUE(factory_guid.has_value());
+        EXPECT_EQ(*factory_guid, AUTHORING_FACTORY_GUID_TEXT);
+
+        const auto execution_component =
+            (*entry)[std::string_view("executionComponent")].as_object();
+        ASSERT_TRUE(execution_component.has_value());
+        const auto component_guid =
+            (*execution_component)[std::string_view("componentGuid")]
+                .as_string();
+        ASSERT_TRUE(component_guid.has_value());
+        EXPECT_EQ(*component_guid, guid_text);
+    }
 }
 
 // begin 组件经真工厂实例化：GetGuid 按 kind 分派 begin GUID；Do 把输入

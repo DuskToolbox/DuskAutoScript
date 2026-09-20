@@ -24,6 +24,36 @@
         "componentGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3"
       },
       "descriptors": []
+    },
+    "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E": {
+      "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D",
+      "name": "das.graph.begin",
+      "description": "图边界 begin 组件的 authoring 会话托管（图内结构组件，不可作为任务调度执行）",
+      "authoring": {
+        "factoryGuid": "EFC3D51E-B707-4702-97ED-8ADA923E2BF0",
+        "supportedKinds": [
+          "formSequence"
+        ]
+      },
+      "executionComponent": {
+        "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E"
+      },
+      "descriptors": []
+    },
+    "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D": {
+      "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D",
+      "name": "das.graph.end",
+      "description": "图边界 end 组件的 authoring 会话托管（图内结构组件，不可作为任务调度执行）",
+      "authoring": {
+        "factoryGuid": "EFC3D51E-B707-4702-97ED-8ADA923E2BF0",
+        "supportedKinds": [
+          "formSequence"
+        ]
+      },
+      "executionComponent": {
+        "componentGuid": "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D"
+      },
+      "descriptors": []
     }
   },
   "taskComponents": {
