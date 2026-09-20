@@ -2606,7 +2606,8 @@ namespace
 
     // 动态口方向门：begin 的动态口只可作连线源（口对的值来源是调用方图
     // 输入，图内入边会静默顶掉它），end 的动态口只可作连线目标（out 侧是
-    // 图输出坐标，不向图内发值）——错向连线在分派层拒绝并出诊断。
+    // 图输出坐标，不向图内发值）——错向连线在分派层拒绝并出诊断。口 id=
+    // 口名（边界条目单 id 形态）。
     TEST(
         GraphAuthoringSessionTest,
         ConnectRejectsBoundaryDynamicPortDirectionViolation)
@@ -2628,32 +2629,17 @@ namespace
             R"({"nodeId":"n_1","name":"右值","direction":"output","valueType":"int"})");
         ApplyChangeExpectOk(s.p, "addGraphNode", R"({"actionId":"{g1}"})");
 
-        const auto document = DocumentOf(s.p);
-        const auto begin_port_id = DynamicPortFieldOfComponent(
-            document,
-            std::string_view(BOUNDARY_BEGIN_GUID),
-            std::string_view("portId"));
-        const auto end_port_id = DynamicPortFieldOfComponent(
-            document,
-            std::string_view(BOUNDARY_END_GUID),
-            std::string_view("portId"));
-        ASSERT_FALSE(begin_port_id.empty());
-        ASSERT_FALSE(end_port_id.empty());
-
         // 错向一：图内边指向 begin 的动态口。
         ApplyChangeExpectRejected(
             s.p,
             "connectGraphPorts",
-            std::string(
-                R"({"fromNodeId":"n_2","fromPortId":"result","toNodeId":"n_0","toPortId":")")
-                + begin_port_id + R"("})");
+            R"({"fromNodeId":"n_2","fromPortId":"result","toNodeId":"n_0","toPortId":"左值"})");
 
         // 错向二：图内边从 end 的动态口发出。
         ApplyChangeExpectRejected(
             s.p,
             "connectGraphPorts",
-            std::string(R"({"fromNodeId":"n_1","fromPortId":")") + end_port_id
-                + R"(","toNodeId":"n_2","toPortId":"seed"})");
+            R"({"fromNodeId":"n_1","fromPortId":"右值","toNodeId":"n_2","toPortId":"seed"})");
     }
 
     // 调用节点签名口物化通道（addNodePort portId 稳定物化 id）已随图文档
@@ -2705,25 +2691,23 @@ namespace
             << "preset empty graph must not derive phantom boundary inputs";
     }
 
-    // 会话级 Get 投影：动态口 merge 进呈现面（方向翻转 + dynamic 键），
-    // 且整份文档过严格 wire 校验（validator 词表含 dynamic）。
+    // 会话级 Get 投影（faces 通道形态）：注入的文档口面 merge 进呈现面
+    // （方向按 face 条目原样 + dynamic 键），且整份文档过严格 wire 校验
+    // （validator 词表含 dynamic）。
     TEST(
         GraphAuthoringSessionTest,
         GetProjectionCarriesDynamicPortOnSessionWire)
     {
         const SessionHandle s{WithActionCatalog(
-            "",
+            std::string(R"({"nodes":[)")
+                + RawGraphNodeOf("n_0", BOUNDARY_BEGIN_GUID) + ","
+                + RawGraphNodeOf("n_1", BOUNDARY_END_GUID)
+                + R"(],"edges":[],"nodeFaces":[)"
+                + R"({"nodeId":"n_0","ports":[{"id":"左值","type":"int","direction":"input","label":"左值"}]},)"
+                + R"({"nodeId":"n_1","ports":[{"id":"右值","type":"image","direction":"output","label":"右值"}]}]})",
             R"([{"actionId":")" + std::string(BOUNDARY_BEGIN_GUID)
                 + R"("},{"actionId":")" + std::string(BOUNDARY_END_GUID)
                 + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])")};
-        ApplyChangeExpectOk(
-            s.p,
-            "addNodePort",
-            R"({"nodeId":"n_0","name":"左值","direction":"input","valueType":"int"})");
-        ApplyChangeExpectOk(
-            s.p,
-            "addNodePort",
-            R"({"nodeId":"n_1","name":"右值","direction":"output","valueType":"image"})");
 
         const auto document = DocumentOf(s.p);
         auto       document_result =
@@ -2731,20 +2715,20 @@ namespace
         EXPECT_TRUE(document_result.valid)
             << document_result.error_kind << ": " << document_result.message;
 
-        // begin 的入参口投影在右侧 output 锚；end 的出参口投影在左侧
-        // input 锚（锚点方向=组件角色翻转）。
+        // begin 的动态口方向按 face 条目（input）；end 同款（output）——
+        // faces 是投影动态口的唯一通道。
         EXPECT_EQ(
             DynamicPortFieldOfComponent(
                 document,
                 std::string_view(BOUNDARY_BEGIN_GUID),
                 std::string_view("direction")),
-            "output");
+            "input");
         EXPECT_EQ(
             DynamicPortFieldOfComponent(
                 document,
                 std::string_view(BOUNDARY_END_GUID),
                 std::string_view("direction")),
-            "input");
+            "output");
     }
 
     // ======================================================================

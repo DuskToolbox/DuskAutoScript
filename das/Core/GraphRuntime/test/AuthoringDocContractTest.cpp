@@ -75,9 +75,12 @@ namespace
     /// Catalog-aware variant of ToJson for the merge projections.
     std::string ToJsonWithCatalog(
         const Dto::GraphDocumentDto&        doc,
-        const std::optional<ActionCatalog>& catalog)
+        const std::optional<ActionCatalog>& catalog,
+        const GraphCompiler::NodeFacesMap*  node_faces = nullptr,
+        const GraphCompiler::EntryFacesMap* entry_faces = nullptr)
     {
-        auto v = Contract::SerializeDocument(doc, catalog);
+        auto v =
+            Contract::SerializeDocument(doc, catalog, node_faces, entry_faces);
         auto str = Das::Utils::SerializeYyjsonValue(v);
         return str.value_or(std::string{});
     }
@@ -2906,9 +2909,53 @@ namespace
         return change;
     }
 
-    // add 成功：存储分区新增声明、后端分配稳定口 id（node 作用域 p_ 计
-    // 数器）、revision 恰 +1，allocated_id 回传口 id（连线与后续 remove/
-    // rename 的寻址坐标）。
+    // 读节点 settings.boundaryPorts 的 {id,type} 条目表（测试观测面——
+    // 边界口列表的存储形态）。
+    std::vector<std::pair<std::string, std::string>> BoundaryEntriesOf(
+        const GraphDocumentDto& doc,
+        std::string_view        node_id)
+    {
+        std::vector<std::pair<std::string, std::string>> entries;
+        for (const auto& node : doc.nodes)
+        {
+            if (node.node_id != node_id)
+            {
+                continue;
+            }
+            auto settings_obj = node.settings.as_object();
+            if (!settings_obj
+                || !settings_obj->contains(std::string_view("boundaryPorts")))
+            {
+                return entries;
+            }
+            auto arr =
+                (*settings_obj)[std::string_view("boundaryPorts")].as_array();
+            if (!arr)
+            {
+                return entries;
+            }
+            for (const auto& entry_value : *arr)
+            {
+                auto entry_obj = entry_value.as_object();
+                if (!entry_obj)
+                {
+                    continue;
+                }
+                entries.emplace_back(
+                    (*entry_obj)[std::string_view("id")].as_string().value_or(
+                        ""),
+                    (*entry_obj)[std::string_view("type")].as_string().value_or(
+                        ""));
+            }
+            return entries;
+        }
+        return entries;
+    }
+
+    // add 成功：边界口列表（节点 settings.boundaryPorts）追加 {id,type}
+    // 条目（id=口名，与边界会话状态域同形——方向不存储由角色固化）、
+    // revision 恰 +1，allocated_id 回传口 id（连线与后续 remove/rename
+    // 的寻址坐标）。
     TEST(
         AuthoringDocContractTest,
         NodePort_AddStoresDeclarationAndBumpsRevision)
@@ -2921,27 +2968,26 @@ namespace
             doc,
             MakeAddNodePort("n_begin", "左值", "input", "int"));
         ASSERT_TRUE(r.Ok()) << r.message;
-        ASSERT_EQ(doc.nodes[0].ports.size(), 1u);
-        EXPECT_EQ(doc.nodes[0].ports[0].id, "p_1");
-        EXPECT_EQ(doc.nodes[0].ports[0].name, "左值");
-        EXPECT_EQ(doc.nodes[0].ports[0].direction, "input");
-        EXPECT_EQ(doc.nodes[0].ports[0].value_type, "int");
+        const auto entries = BoundaryEntriesOf(doc, "n_begin");
+        ASSERT_EQ(entries.size(), 1u);
+        EXPECT_EQ(entries[0].first, "左值");
+        EXPECT_EQ(entries[0].second, "int");
         EXPECT_EQ(doc.version, 6);
         ASSERT_TRUE(r.allocated_id.has_value());
-        EXPECT_EQ(*r.allocated_id, "p_1");
+        EXPECT_EQ(*r.allocated_id, "左值");
 
-        // 同节点第二口顺延计数器。
+        // 同节点第二口追加。
         auto r2 = ApplyAuthoringChange(
             doc,
             MakeAddNodePort("n_begin", "右值", "input", "string"));
         ASSERT_TRUE(r2.Ok()) << r2.message;
-        ASSERT_EQ(doc.nodes[0].ports.size(), 2u);
-        EXPECT_EQ(doc.nodes[0].ports[1].id, "p_2");
+        EXPECT_EQ(BoundaryEntriesOf(doc, "n_begin").size(), 2u);
         EXPECT_EQ(doc.version, 7);
     }
 
-    // 角色门 fail-closed：普通组件节点不可持动态口（错误指明仅
-    // begin/end 支持），零突变。
+    // 非边界节点无口存储域（图文档零口数据）：拒绝并指认所属文档，
+    // 零突变（角色门随之退役——非边界即拒绝，不再有绑定调用节点的物化
+    // 通道豁免）。
     TEST(AuthoringDocContractTest, NodePort_AddRejectsNonBoundaryNode)
     {
         GraphDocumentDto doc;
@@ -2953,14 +2999,16 @@ namespace
             MakeAddNodePort("n_plain", "左值", "input", "int"));
         EXPECT_FALSE(r.Ok());
         EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp);
-        EXPECT_NE(r.message.find("Begin"), std::string::npos);
-        EXPECT_NE(r.message.find("End"), std::string::npos);
-        EXPECT_TRUE(doc.nodes[0].ports.empty());
+        EXPECT_NE(r.message.find("owning document"), std::string::npos);
+        // 零突变：普通节点 settings 不长出 boundaryPorts 键。
+        auto settings_obj = doc.nodes[0].settings.as_object();
+        ASSERT_TRUE(settings_obj.has_value());
+        EXPECT_FALSE(settings_obj->contains(std::string_view("boundaryPorts")));
         EXPECT_EQ(doc.version, 3);
     }
 
-    // 方向角色门：direction 是签名方向——begin 只收 input（子图入参长在
-    // begin）、end 只收 output，镜像违例拒绝。
+    // 方向门（begin/end 文档校验规则）：direction 是签名方向——begin 只
+    // 收 input（子图入参长在 begin）、end 只收 output，镜像违例拒绝。
     TEST(AuthoringDocContractTest, NodePort_AddRejectsDirectionMismatchingRole)
     {
         GraphDocumentDto doc;
@@ -2979,8 +3027,8 @@ namespace
         EXPECT_FALSE(r_end_input.Ok());
         EXPECT_EQ(r_end_input.error_kind, ChangeErrorKind::InvalidOp);
 
-        EXPECT_TRUE(doc.nodes[0].ports.empty());
-        EXPECT_TRUE(doc.nodes[1].ports.empty());
+        EXPECT_TRUE(BoundaryEntriesOf(doc, "n_begin").empty());
+        EXPECT_TRUE(BoundaryEntriesOf(doc, "n_end").empty());
     }
 
     // valueType 九词白名单之外（json/任意串）拒绝。
@@ -2997,7 +3045,7 @@ namespace
             EXPECT_FALSE(r.Ok()) << bad_type;
             EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp) << bad_type;
         }
-        EXPECT_TRUE(doc.nodes[0].ports.empty());
+        EXPECT_TRUE(BoundaryEntriesOf(doc, "n_begin").empty());
     }
 
     // 名字规则：空名/超长（>100 UTF-8 字节）/保留前缀 "$"（哨兵源命名
@@ -3043,12 +3091,35 @@ namespace
             MakeAddNodePort("n_begin", name_at_limit, "input", "int"));
         EXPECT_TRUE(r_at_limit.Ok()) << r_at_limit.message;
 
-        ASSERT_EQ(doc.nodes[0].ports.size(), 2u);
+        ASSERT_EQ(BoundaryEntriesOf(doc, "n_begin").size(), 2u);
         EXPECT_EQ(doc.version, 2);
     }
 
-    // remove：删分区项并级联删除引用该口 id 的连线（同一 change 内原
-    // 子完成）；静态 manifest 口不在分区（如 end 的「值」）→ 拒。
+    // 单 id 通道：portId 在场且与 name 分歧即拒绝（边界条目 {id,type} 形
+    // 态——口 id 与口名是同一通道，与边界会话词表一致）。
+    TEST(AuthoringDocContractTest, NodePort_AddRejectsPortIdDivergingFromName)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n_begin", BOUNDARY_BEGIN_GUID, 0.0));
+
+        AuthoringChange diverging =
+            MakeAddNodePort("n_begin", "左值", "input", "int");
+        diverging.node_port_id = "p_1";
+        auto r = ApplyAuthoringChange(doc, diverging);
+        EXPECT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp);
+        EXPECT_NE(r.message.find("must equal name"), std::string::npos);
+        EXPECT_TRUE(BoundaryEntriesOf(doc, "n_begin").empty());
+
+        // 一致在场（portId == name）照常成功。
+        AuthoringChange aligned =
+            MakeAddNodePort("n_begin", "左值", "input", "int");
+        aligned.node_port_id = "左值";
+        EXPECT_TRUE(ApplyAuthoringChange(doc, aligned).Ok());
+    }
+
+    // remove：删边界条目并级联删除引用该口 id 的连线（同一 change 内原
+    // 子完成）；静态 manifest 口不在口列表（如 end 的「值」）→ 拒。
     TEST(AuthoringDocContractTest, NodePort_RemoveCascadesEdgesAtomically)
     {
         GraphDocumentDto doc;
@@ -3066,28 +3137,28 @@ namespace
         // begin 的口对出侧是图内边源；end 的口对入侧是图内边落点——两级
         // 各挂一条引用连线。
         doc.edges.push_back(
-            MakeDataEdge("e_out", "n_begin", "p_1", "n_work", "in"));
+            MakeDataEdge("e_out", "n_begin", "左值", "n_work", "in"));
         doc.edges.push_back(
-            MakeDataEdge("e_in", "n_work", "out", "n_end", "p_1"));
+            MakeDataEdge("e_in", "n_work", "out", "n_end", "右值"));
         doc.version = 9;
 
         auto r =
-            ApplyAuthoringChange(doc, MakeRemoveNodePort("n_begin", "p_1"));
+            ApplyAuthoringChange(doc, MakeRemoveNodePort("n_begin", "左值"));
         ASSERT_TRUE(r.Ok()) << r.message;
-        EXPECT_TRUE(doc.nodes[0].ports.empty());
-        ASSERT_EQ(doc.nodes[2].ports.size(), 1u);
-        // 级联：引用 (n_begin, p_1) 的边删除，其余边保留。
+        EXPECT_TRUE(BoundaryEntriesOf(doc, "n_begin").empty());
+        ASSERT_EQ(BoundaryEntriesOf(doc, "n_end").size(), 1u);
+        // 级联：引用 (n_begin, 左值) 的边删除，其余边保留。
         ASSERT_EQ(doc.edges.size(), 1u);
         EXPECT_EQ(doc.edges[0].edge_id, "e_in");
         EXPECT_EQ(doc.version, 10);
 
         auto r_cascade =
-            ApplyAuthoringChange(doc, MakeRemoveNodePort("n_end", "p_1"));
+            ApplyAuthoringChange(doc, MakeRemoveNodePort("n_end", "右值"));
         ASSERT_TRUE(r_cascade.Ok()) << r_cascade.message;
-        EXPECT_TRUE(doc.nodes[2].ports.empty());
+        EXPECT_TRUE(BoundaryEntriesOf(doc, "n_end").empty());
         EXPECT_TRUE(doc.edges.empty());
 
-        // 静态 manifest 口不在存储分区 → 拒（end 的「值」来自 catalog
+        // 静态 manifest 口不在边界口列表 → 拒（end 的「值」来自 catalog
         // 声明，不是动态口）。
         auto r_static =
             ApplyAuthoringChange(doc, MakeRemoveNodePort("n_end", "值"));
@@ -3112,17 +3183,17 @@ namespace
         EXPECT_EQ(r_missing_port.error_kind, ChangeErrorKind::InvalidOp);
 
         auto r_missing_node =
-            ApplyAuthoringChange(doc, MakeRemoveNodePort("ghost", "p_1"));
+            ApplyAuthoringChange(doc, MakeRemoveNodePort("ghost", "左值"));
         EXPECT_FALSE(r_missing_node.Ok());
         EXPECT_EQ(r_missing_node.error_kind, ChangeErrorKind::NodeNotFound);
 
-        ASSERT_EQ(doc.nodes[0].ports.size(), 1u);
+        ASSERT_EQ(BoundaryEntriesOf(doc, "n_begin").size(), 1u);
         EXPECT_EQ(doc.version, version_before);
     }
 
-    // rename：只改 name，稳定口 id 与连线坐标不动；投影 displayLabel 已
-    // 更新（口名是显示通道，id 才是寻址坐标）。
-    TEST(AuthoringDocContractTest, NodePort_RenameKeepsIdAndEdges)
+    // rename：边界条目单 id 形态——rename 改条目 id，该节点上引用旧口 id
+    // 的连线坐标同步改写（寻址坐标与口面同步演进）；拒绝路径零突变。
+    TEST(AuthoringDocContractTest, NodePort_RenameChangesIdAndSyncsEdges)
     {
         GraphDocumentDto doc;
         doc.nodes.push_back(MakeNode("n_begin", BOUNDARY_BEGIN_GUID, 0.0));
@@ -3132,24 +3203,25 @@ namespace
                         MakeAddNodePort("n_begin", "左值", "input", "int"))
                         .Ok());
         doc.edges.push_back(
-            MakeDataEdge("e1", "n_begin", "p_1", "n_work", "in"));
+            MakeDataEdge("e1", "n_begin", "左值", "n_work", "in"));
 
         auto r = ApplyAuthoringChange(
             doc,
-            MakeRenameNodePort("n_begin", "p_1", "新名"));
+            MakeRenameNodePort("n_begin", "左值", "新名"));
         ASSERT_TRUE(r.Ok()) << r.message;
-        ASSERT_EQ(doc.nodes[0].ports.size(), 1u);
-        EXPECT_EQ(doc.nodes[0].ports[0].id, "p_1");
-        EXPECT_EQ(doc.nodes[0].ports[0].name, "新名");
-        // 连线 fromPortId 仍是原口 id——重命名不动寻址面。
+        const auto entries = BoundaryEntriesOf(doc, "n_begin");
+        ASSERT_EQ(entries.size(), 1u);
+        EXPECT_EQ(entries[0].first, "新名");
+        EXPECT_EQ(entries[0].second, "int");
+        // 连线坐标同步：fromPortId 已改写为新口 id。
         ASSERT_EQ(doc.edges.size(), 1u);
         EXPECT_EQ(doc.edges[0].source_node_id, "n_begin");
-        EXPECT_EQ(doc.edges[0].source_port_id, "p_1");
+        EXPECT_EQ(doc.edges[0].source_port_id, "新名");
 
         // rename 的名字规则与 add 同源：保留前缀/重名拒绝。
         auto r_reserved = ApplyAuthoringChange(
             doc,
-            MakeRenameNodePort("n_begin", "p_1", "$伪造"));
+            MakeRenameNodePort("n_begin", "新名", "$伪造"));
         EXPECT_FALSE(r_reserved.Ok());
         EXPECT_EQ(r_reserved.error_kind, ChangeErrorKind::InvalidOp);
 
@@ -3161,25 +3233,19 @@ namespace
         EXPECT_EQ(r_unknown.error_kind, ChangeErrorKind::InvalidOp);
     }
 
-    // 投影 merge：动态口按 wire 投影键形并入节点 ports 数组——方向按组
-    // 件角色翻转（begin 的签名入参口长在右侧 output 锚、end 的签名出参
-    // 口长在左侧 input 锚），category=data，dynamic 键只在动态口上
-    // engaged（静态 catalog 口不带该键）。
-    TEST(
-        AuthoringDocContractTest,
-        NodePort_ProjectionMergesWithFlippedDirection)
+    // 投影 merge（faces 通道）：注入的文档口面按 wire 投影键形并入节点
+    // ports 数组——方向按 face 条目原样（begin/end 的口面方向由其边界会
+    // 话角色固化产出），category=data，dynamic 键只在动态口上 engaged
+    // （静态 catalog 口不带该键）；face 胜出同名已投影口。
+    TEST(AuthoringDocContractTest, NodePort_ProjectionMergesFacesAsDynamic)
     {
         GraphDocumentDto doc;
         doc.nodes.push_back(MakeNode("n_begin", BOUNDARY_BEGIN_GUID, 0.0));
         doc.nodes.push_back(MakeNode("n_end", BOUNDARY_END_GUID, 0.0));
-        ASSERT_TRUE(ApplyAuthoringChange(
-                        doc,
-                        MakeAddNodePort("n_begin", "左值", "input", "int"))
-                        .Ok());
-        ASSERT_TRUE(ApplyAuthoringChange(
-                        doc,
-                        MakeAddNodePort("n_end", "右值", "output", "image"))
-                        .Ok());
+
+        GraphCompiler::NodeFacesMap node_faces;
+        node_faces["n_begin"] = {{"左值", "int", "左值", "input"}};
+        node_faces["n_end"] = {{"右值", "image", "右值", "output"}};
 
         ActionCatalog      catalog;
         ActionCatalogEntry end_entry;
@@ -3189,44 +3255,46 @@ namespace
             GraphNodePort{"值", "值", "int", "input", "data"});
         catalog.entries.push_back(end_entry);
 
-        const auto out = ToAuthoringDocument(doc, catalog);
+        const auto out =
+            ToAuthoringDocument(doc, catalog, &node_faces, nullptr);
         ASSERT_EQ(out.graph->nodes.size(), 2u);
 
-        // begin：动态口投影为 output 锚（方向翻转）+ dynamic:true。
+        // begin：face 口投影为 dynamic:true，方向按 face 条目。
         const auto& begin_ports = out.graph->nodes[0].ports;
         ASSERT_EQ(begin_ports.size(), 1u);
-        EXPECT_EQ(begin_ports[0].port_id, "p_1");
+        EXPECT_EQ(begin_ports[0].port_id, "左值");
         EXPECT_EQ(begin_ports[0].display_label, "左值");
         EXPECT_EQ(begin_ports[0].port_type, "int");
-        EXPECT_EQ(begin_ports[0].direction, "output");
+        EXPECT_EQ(begin_ports[0].direction, "input");
         EXPECT_EQ(begin_ports[0].category, "data");
         EXPECT_TRUE(begin_ports[0].dynamic_port);
 
-        // end：静态「值」口（无 dynamic）+ 动态口投影为 input 锚。
+        // end：静态「值」口（无 dynamic）+ face 口。
         const auto& end_ports = out.graph->nodes[1].ports;
         ASSERT_EQ(end_ports.size(), 2u);
         EXPECT_EQ(end_ports[0].port_id, "值");
         EXPECT_FALSE(end_ports[0].dynamic_port);
-        EXPECT_EQ(end_ports[1].port_id, "p_1");
+        EXPECT_EQ(end_ports[1].port_id, "右值");
         EXPECT_EQ(end_ports[1].display_label, "右值");
         EXPECT_EQ(end_ports[1].port_type, "image");
-        EXPECT_EQ(end_ports[1].direction, "input");
+        EXPECT_EQ(end_ports[1].direction, "output");
         EXPECT_TRUE(end_ports[1].dynamic_port);
 
         // wire 上 dynamic 键 engaged-only：静态口序列化不含该键。
-        const auto json = ToJsonWithCatalog(doc, catalog);
+        const auto json = ToJsonWithCatalog(doc, catalog, &node_faces, nullptr);
         EXPECT_NE(
-            json.find(R"("portId":"p_1","displayLabel":"左值")"),
+            json.find(R"("portId":"左值","displayLabel":"左值")"),
             std::string::npos);
         EXPECT_NE(json.find("\"dynamic\":true"), std::string::npos);
         EXPECT_EQ(json.find("\"dynamic\":false"), std::string::npos);
     }
 
-    // 序列化 round-trip：无动态口分区的节点 wire 不含 ports 键
-    // （engaged-only）；有则 {id,name,direction,valueType} 键形往返一致。
+    // 序列化 round-trip：节点 wire 恒不含 ports 键（图文档零口数据——口
+    // 分区 DTO 已退役）；边界口列表在 settings.boundaryPorts 里随 settings
+    // 序列化并经 source blob 往返保留。
     TEST(
         AuthoringDocContractTest,
-        NodePort_SerializedSourceEngagedOnlyRoundTrip)
+        NodePort_SerializedSourceBoundaryEntriesRoundTrip)
     {
         GraphDocumentDto doc;
         doc.nodes.push_back(MakeNode("n_plain", "{g1}", 0.0));
@@ -3247,8 +3315,7 @@ namespace
                 auto node_object = node_value.as_object();
                 ASSERT_TRUE(node_object.has_value());
                 EXPECT_FALSE(node_object->contains(std::string_view("ports")))
-                    << "engaged-only: the partition key must be absent on "
-                       "partition-less nodes";
+                    << "the node stores no port partition (zero port data)";
             }
         }
 
@@ -3265,30 +3332,40 @@ namespace
             auto plain_object = (*nodes)[0].as_object();
             ASSERT_TRUE(plain_object.has_value());
             EXPECT_FALSE(plain_object->contains(std::string_view("ports")));
+            EXPECT_FALSE(
+                plain_object->contains(std::string_view("boundaryPorts")));
             auto begin_object = (*nodes)[1].as_object();
             ASSERT_TRUE(begin_object.has_value());
-            ASSERT_TRUE(begin_object->contains(std::string_view("ports")));
+            // 口分区键不复活；口列表在 settings 里。
+            EXPECT_FALSE(begin_object->contains(std::string_view("ports")));
+            auto begin_settings =
+                (*begin_object)[std::string_view("settings")].as_object();
+            ASSERT_TRUE(begin_settings.has_value());
+            ASSERT_TRUE(
+                begin_settings->contains(std::string_view("boundaryPorts")));
             auto begin_ports =
-                (*begin_object)[std::string_view("ports")].as_array();
+                (*begin_settings)[std::string_view("boundaryPorts")].as_array();
             ASSERT_TRUE(begin_ports.has_value());
             ASSERT_EQ(begin_ports->size(), 1u);
-            auto port_object = (*begin_ports)[0].as_object();
-            ASSERT_TRUE(port_object.has_value());
-            EXPECT_TRUE(port_object->contains(std::string_view("id")));
-            EXPECT_TRUE(port_object->contains(std::string_view("name")));
-            EXPECT_TRUE(port_object->contains(std::string_view("direction")));
-            EXPECT_TRUE(port_object->contains(std::string_view("valueType")));
-            EXPECT_FALSE(port_object->contains(std::string_view("value_type")));
+            auto entry_object = (*begin_ports)[0].as_object();
+            ASSERT_TRUE(entry_object.has_value());
+            EXPECT_EQ(
+                (*entry_object)[std::string_view("id")].as_string().value_or(
+                    ""),
+                "左值");
+            EXPECT_EQ(
+                (*entry_object)[std::string_view("type")].as_string().value_or(
+                    ""),
+                "int");
 
-            // 存储分区经 source blob 往返保留。
+            // settings 经 source blob 往返保留（条目仍在）。
             auto round_tripped = yyjson::cast<GraphDocumentDto>(
                 Das::Utils::CloneYyjsonValue(source));
             ASSERT_EQ(round_tripped.nodes.size(), 2u);
-            ASSERT_EQ(round_tripped.nodes[1].ports.size(), 1u);
-            EXPECT_EQ(round_tripped.nodes[1].ports[0].id, "p_1");
-            EXPECT_EQ(round_tripped.nodes[1].ports[0].name, "左值");
-            EXPECT_EQ(round_tripped.nodes[1].ports[0].direction, "input");
-            EXPECT_EQ(round_tripped.nodes[1].ports[0].value_type, "int");
+            auto round_settings = round_tripped.nodes[1].settings.as_object();
+            ASSERT_TRUE(round_settings.has_value());
+            ASSERT_TRUE(
+                round_settings->contains(std::string_view("boundaryPorts")));
         }
     }
 
@@ -3343,12 +3420,13 @@ namespace
     }
 
     // 守卫保义回归钉：图文档尝试线性变更被拒后，viewData.positions、
-    // 节点用户 label、既有动态口分区在存储中逐字节不变。线性反向投影
+    // 节点用户 label、既有边界口列表（settings.boundaryPorts——分区退役
+    // 后的口数据存储形态）在存储中逐字节不变。线性反向投影
     // （GraphToSequence→FormSequenceProjector::Project 重建）只搬运
-    // item_id/target/settings——节点 label、动态口分区与 viewData 会被
-    // 重建路径丢弃；守卫使该路径对图文档不可达，本用例钉死拒绝后的
-    // 存储保义。注：口分区整体退役后，本用例的分区断言部分随分区
-    // DTO 的退役同步修剪。
+    // item_id/target/settings——节点 label 与 viewData 会被重建路径丢
+    // 弃；守卫使该路径对图文档不可达，本用例钉死拒绝后的存储保义。
+    // 注：口分区整体退役，本用例的口数据断言已迁移到 boundaryPorts 形
+    // 态（分区断言随分区 DTO 的退役同步修剪）。
     TEST(
         AuthoringDocContractTest,
         LinearGuard_RejectionPreservesGraphOnlyPartitions)
@@ -3359,7 +3437,7 @@ namespace
             MakeNode("n_begin", GRAPH_BEGIN_COMPONENT_GUID, 0.0));
         doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
 
-        // 图专属分区三件：viewData 坐标 + 用户 label + 动态口分区。
+        // 图专属数据三件：viewData 坐标 + 用户 label + 边界口列表。
         ASSERT_TRUE(
             ApplyAuthoringChange(doc, MakeMoveGraphNode("n1", 10.0, 20.0))
                 .Ok());
@@ -3386,15 +3464,16 @@ namespace
         add.action_id = "{g1}";
         EXPECT_FALSE(ApplyAuthoringChange(doc, add, {"{g1}"}).Ok());
 
-        // 保义：三件分区逐字节不变（既有 validate-all-then-mutate 断言
+        // 保义：三件数据逐字节不变（既有 validate-all-then-mutate 断言
         // 模式——存储 JSON 与拒绝前逐字节相等）。
         ASSERT_TRUE(ViewPositionOf(doc, "n1", "x").has_value());
         EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n1", "x"), 10.0);
         ASSERT_TRUE(doc.nodes[1].label.has_value());
         EXPECT_EQ(*doc.nodes[1].label, "my node");
-        ASSERT_EQ(doc.nodes[0].ports.size(), 1u);
-        EXPECT_EQ(doc.nodes[0].ports[0].name, "左值");
-        EXPECT_EQ(doc.nodes[0].ports[0].direction, "input");
+        const auto preserved_entries = BoundaryEntriesOf(doc, "n_begin");
+        ASSERT_EQ(preserved_entries.size(), 1u);
+        EXPECT_EQ(preserved_entries[0].first, "左值");
+        EXPECT_EQ(preserved_entries[0].second, "int");
         EXPECT_EQ(doc.version, version_before);
         EXPECT_EQ(SourceJsonOf(doc), source_before);
     }

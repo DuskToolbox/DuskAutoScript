@@ -388,6 +388,99 @@ namespace
         return false;
     }
 
+    /// 旧节点 ports 分区的会话创建兼容读取（一轮迁移）：begin/end 节点的
+    /// 分区条目 {id,name,direction,valueType} 等价迁入节点 settings
+    /// .boundaryPorts[{id,type}]（类型字段名对齐边界会话状态域；方向不
+    /// 迁——由角色固化推导，name 不迁——边界条目单 id 形态）；其余节点
+    /// 的分区数据（调用节点物化口通道/历史遗留）丢弃 + WARN（口面经
+    /// entryFaces 现算/文档口面推导，存储域已退役）。分区键随 DTO 退役
+    /// 不再进序列化——本迁移是在途图数据保全的唯一防线（caster 对未知
+    /// 键静默忽略，等价读取先于它发生）。
+    void MigrateLegacyPortPartition(
+        const yyjson::value&                        node_value,
+        Das::Core::GraphRuntime::Dto::GraphNodeDto& node)
+    {
+        auto node_obj = node_value.as_object();
+        if (!node_obj || !node_obj->contains(std::string_view("ports")))
+        {
+            return;
+        }
+        auto legacy_ports = (*node_obj)[std::string_view("ports")].as_array();
+        if (!legacy_ports)
+        {
+            return;
+        }
+        const bool is_boundary =
+            node.target.component_ref.has_value()
+            && (node.target.component_ref->component_guid
+                    == Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID
+                || node.target.component_ref->component_guid
+                       == Das::Core::GraphRuntime::GRAPH_END_COMPONENT_GUID);
+        if (!is_boundary)
+        {
+            if (!legacy_ports->empty())
+            {
+                DAS_CORE_LOG_WARN(
+                    "legacy ports partition dropped on node {} (the graph "
+                    "document stores no port data; port faces derive from "
+                    "the owning documents)",
+                    node.node_id);
+            }
+            return;
+        }
+        yyjson::value ports_array(Das::Utils::MakeYyjsonArray());
+        auto          ports_arr = ports_array.as_array();
+        std::size_t   migrated = 0;
+        for (const auto& entry_value : *legacy_ports)
+        {
+            auto entry_obj = entry_value.as_object();
+            if (!entry_obj)
+            {
+                continue;
+            }
+            const auto id = (*entry_obj)[std::string_view("id")].as_string();
+            const auto type =
+                (*entry_obj)[std::string_view("valueType")].as_string();
+            if (!id || id->empty() || !type || type->empty())
+            {
+                continue;
+            }
+            yyjson::value entry(Das::Utils::MakeYyjsonObject());
+            auto          entry_o = entry.as_object();
+            (*entry_o)[std::string_view("id")] =
+                yyjson::value(std::string(*id));
+            (*entry_o)[std::string_view("type")] =
+                yyjson::value(std::string(*type));
+            ports_arr->emplace_back(std::move(entry));
+            ++migrated;
+        }
+        if (migrated == 0)
+        {
+            return;
+        }
+        auto settings_obj = node.settings.as_object();
+        if (!settings_obj)
+        {
+            node.settings = Das::Utils::MakeYyjsonObject();
+            settings_obj = node.settings.as_object();
+        }
+        if (settings_obj->contains(std::string_view("boundaryPorts")))
+        {
+            auto existing =
+                (*settings_obj)[std::string_view("boundaryPorts")].as_array();
+            if (existing)
+            {
+                for (const auto& entry : *ports_arr)
+                {
+                    existing->emplace_back(Das::Utils::CloneYyjsonValue(entry));
+                }
+                return;
+            }
+        }
+        (*settings_obj)[std::string_view("boundaryPorts")] =
+            std::move(ports_array);
+    }
+
     /// Read a GraphDocumentDto field-by-field from a JSON object (robust manual
     /// parse at the boundary; aggregate cast would also work but this avoids
     /// throwing on partial input).
@@ -436,6 +529,7 @@ namespace
                             yyjson::cast<
                                 Das::Core::GraphRuntime::Dto::GraphNodeDto>(
                                 nv));
+                        MigrateLegacyPortPartition(nv, out.nodes.back());
                     }
                     catch (...)
                     {

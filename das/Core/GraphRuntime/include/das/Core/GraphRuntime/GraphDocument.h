@@ -45,25 +45,6 @@ namespace Dto
         std::optional<ComponentRefDto> component_ref;
     };
 
-    // Dynamic port declaration of a begin/end boundary component (D-16):
-    // the controlled exception to "the document stores no port
-    // declarations". Two key shapes coexist by contract — this storage
-    // partition carries {id, name, direction, valueType}, while the public
-    // wire projection merges the same declaration as
-    // {portId, displayLabel, portType, direction, category, dynamic}. The
-    // id is the addressing coordinate (edges store node_id::port_id and a
-    // rename only changes the name); the direction is the signature
-    // direction (input = a graph input growing on Begin, output = a graph
-    // output growing on End), which the projection flips to the anchor
-    // side.
-    struct GraphNodePortDeclarationDto
-    {
-        std::string id;
-        std::string name;
-        std::string direction;
-        std::string value_type;
-    };
-
     struct GraphNodeDto
     {
         std::string        node_id;
@@ -74,12 +55,13 @@ namespace Dto
         // renamed; the wire projection then falls back to the catalog
         // default name (componentGuid == actionId merge) before the client
         // side falls back to the node id.
+        //
+        // The node stores no dynamic port declarations: the boundary port
+        // list of a begin/end node lives in its settings.boundaryPorts
+        // value (the node's authoring-document state), and every other
+        // dynamic port face is derived (faces channel / boundary
+        // derivation) — never stored on the node.
         std::optional<std::string> label;
-        // Dynamic port declarations — begin/end components only (the
-        // controlled exception above). Engaged-only on the persisted wire:
-        // the key is absent when the partition is empty, so "no partition"
-        // and "empty partition" never blur.
-        std::vector<GraphNodePortDeclarationDto> ports;
     };
 
     struct GraphEdgeDto
@@ -109,12 +91,11 @@ namespace Dto
         // is "viewData" via the registered snake_to_camel rule.
         yyjson::value view_data;
         // The document stores only reference (componentGuid), topology (edge
-        // coordinates) and config (settings) — except the begin/end dynamic
-        // port partition on GraphNodeDto::ports (D-16 controlled exception).
-        // Port identity otherwise lives in the declared surfaces (component
-        // manifests / session catalogs) and in derivation (boundary
-        // projection); dangling is the complement of the edge set and is
-        // never stored.
+        // coordinates) and config (settings) — zero port data on nodes. Port
+        // identity lives in the declared surfaces (component manifests /
+        // session catalogs) and in derivation (document port faces of the
+        // owning authoring document, boundary projection); dangling is the
+        // complement of the edge set and is never stored.
     };
 
     namespace Detail
@@ -158,7 +139,6 @@ DAS_GRAPHRUNTIME_DTO_CASTER(ComponentRefDto);
 // GraphNodeTargetDto, GraphNodeDto and GraphDocumentDto omitted — custom
 // casters below.
 DAS_GRAPHRUNTIME_DTO_CASTER(GraphEdgeDto);
-DAS_GRAPHRUNTIME_DTO_CASTER(GraphNodePortDeclarationDto);
 
 #undef DAS_GRAPHRUNTIME_DTO_CASTER
 
@@ -266,16 +246,10 @@ struct yyjson::caster<Das::Core::GraphRuntime::Dto::GraphNodeDto>
                 }
             }
         }
-        if (object->contains(std::string_view("ports")))
-        {
-            const auto& ports_value = (*object)[std::string_view("ports")];
-            if (ports_value.is_array())
-            {
-                node.ports = yyjson::cast<std::vector<
-                    Das::Core::GraphRuntime::Dto::GraphNodePortDeclarationDto>>(
-                    ports_value);
-            }
-        }
+        // A legacy node may still carry a "ports" partition key (pre-retirement
+        // persisted docs). The session-creation read path migrates it into
+        // settings.boundaryPorts before the cast; here the unknown key is
+        // silently ignored (field-picking caster), so no crash either way.
 
         return node;
     }
@@ -387,13 +361,6 @@ struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::GraphNodeDto>
 
 template <>
 struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::GraphEdgeDto>
-{
-    using type = yyjson::snake_to_camel_transform;
-};
-
-template <>
-struct yyjson::field_name_rule<
-    Das::Core::GraphRuntime::Dto::GraphNodePortDeclarationDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

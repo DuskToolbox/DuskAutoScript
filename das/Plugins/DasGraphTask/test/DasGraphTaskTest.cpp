@@ -1317,6 +1317,31 @@ namespace
         CreateIDasReadOnlyStringFromUtf8(context.c_str(), context_string.Put());
         return context_string;
     }
+
+    // 预置 begin/end 节点 + catalog + nodeFaces 的会话创建串（预备 pass
+    // 现算注入形态）：begin 的口数据落在节点 settings.boundaryPorts（边
+    // 界口列表存储形态，apply 期端点解析的数据源），编译口面经 nodeFaces
+    // 通道注入（faces 是唯一动态口源）。
+    DasPtr<IDasReadOnlyString> BoundaryFacesSeedString(
+        const std::string& catalog,
+        const std::string& begin_boundary_ports,
+        const std::string& node_faces)
+    {
+        const std::string context =
+            std::string(R"({"nodes":[)")
+            + R"({"nodeId":"n_0","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":")"
+            + std::string(BEGIN_COMPONENT_GUID_TEXT)
+            + R"(","pluginGuid":"{p}"}},"settings":{"boundaryPorts":)"
+            + begin_boundary_ports + R"(}},)"
+            + R"({"nodeId":"n_1","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":")"
+            + std::string(END_COMPONENT_GUID_TEXT)
+            + R"(","pluginGuid":"{p}"}},"settings":{}}],)"
+            + R"("edges":[],"actionCatalog":)" + catalog + R"(,"nodeFaces":)"
+            + node_faces + "}";
+        DasPtr<IDasReadOnlyString> context_string;
+        CreateIDasReadOnlyStringFromUtf8(context.c_str(), context_string.Put());
+        return context_string;
+    }
 } // namespace
 
 // 空 context 新建 graph 会话 → 预置 begin+end 恰两节点；加探针、连线
@@ -2585,9 +2610,10 @@ namespace
     };
 } // namespace
 
-// begin 动态口「左值」(int) 直传：input map 的 p_1=77 经覆盖层物化到
-// begin，转写 → 连线 → end.值 → 返回码 77 + 边界口「值」类型化直写
-// output；result 串口退役（缺席）。
+// begin 动态口「左值」(int) 直传（faces 通道形态）：begin 的口数据在节
+// 点 settings.boundaryPorts、编译口面经 nodeFaces 注入——input map 的
+// 左值=77 经覆盖层物化到 begin，转写 → 连线 → end.值 → 返回码 77 + 边
+// 界口「值」类型化直写 output；result 串口退役（缺席）。
 TEST(DasGraphTaskTest, TypedDirectTransferCarriesIntAndRetiresResultPort)
 {
     const std::string action_catalog =
@@ -2597,34 +2623,15 @@ TEST(DasGraphTaskTest, TypedDirectTransferCarriesIntAndRetiresResultPort)
         + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])";
 
     GraphAuthoringSessionState* state = nullptr;
-    const auto catalog_seed = CatalogSeedString(action_catalog);
+    const auto                  catalog_seed = BoundaryFacesSeedString(
+        action_catalog,
+        R"([{"id":"左值","type":"int"}])",
+        R"([{"nodeId":"n_0","ports":[{"id":"左值","type":"int","direction":"input","label":"左值"}]}])");
     ASSERT_EQ(
         CreateGraphAuthoringSession(catalog_seed.Get(), &state),
         DAS_S_OK);
 
-    std::string dynamic_port_id;
-    {
-        DasPtr<Das::ExportInterface::IDasJson> apply_result;
-        const std::string                      add_port = WrapAuthoringChange(
-            "addNodePort",
-            R"({"nodeId":"n_0","name":"左值","direction":"input","valueType":"int"})");
-        DasPtr<IDasReadOnlyString> add_port_string;
-        CreateIDasReadOnlyStringFromUtf8(
-            add_port.c_str(),
-            add_port_string.Put());
-        ASSERT_EQ(
-            GraphAuthoringSessionApplyChange(
-                state,
-                add_port_string.Get(),
-                apply_result.Put()),
-            DAS_S_OK);
-        const auto apply_text = JsonTextOf(apply_result.Get());
-        ASSERT_TRUE(ResponseDiagnosticsEmpty(apply_text));
-        dynamic_port_id = FirstDynamicPortIdOfComponent(
-            apply_text,
-            BEGIN_COMPONENT_GUID_TEXT);
-        ASSERT_EQ(dynamic_port_id, "p_1");
-    }
+    const std::string dynamic_port_id = "左值";
 
     {
         DasPtr<Das::ExportInterface::IDasJson> apply_result;
@@ -2704,9 +2711,11 @@ TEST(DasGraphTaskTest, TypedDirectTransferCarriesIntAndRetiresResultPort)
     EXPECT_FALSE(has_result_port);
 }
 
-// begin 动态口 image 直传：p_1 的 image 引用经覆盖层 → begin 转写 → 图内
-// 数据边 → 直通替身 → 边界导出 → output 的「out」口——全程同一实例（跨
-// 子图引用身份，JSON 桥做不到的半段）；缺 end 宽容返回 0。
+// begin 动态口 image 直传（faces 通道形态）：begin 口数据在节点
+// settings.boundaryPorts、编译口面经 nodeFaces 注入——「帧」的 image 引
+// 用经覆盖层 → begin 转写 → 图内数据边 → 直通替身 → 边界导出 → output
+// 的「out」口——全程同一实例（跨子图引用身份，JSON 桥做不到的半段）；
+// 缺 end 宽容返回 0。
 TEST(DasGraphTaskTest, TypedDirectTransferCarriesImageReferenceAcrossSubgraph)
 {
     const std::string action_catalog =
@@ -2716,34 +2725,15 @@ TEST(DasGraphTaskTest, TypedDirectTransferCarriesImageReferenceAcrossSubgraph)
         + R"(","ports":[{"portId":"in","portType":"image","direction":"input"},{"portId":"out","portType":"image","direction":"output"}]}])";
 
     GraphAuthoringSessionState* state = nullptr;
-    const auto catalog_seed = CatalogSeedString(action_catalog);
+    const auto                  catalog_seed = BoundaryFacesSeedString(
+        action_catalog,
+        R"([{"id":"帧","type":"image"}])",
+        R"([{"nodeId":"n_0","ports":[{"id":"帧","type":"image","direction":"input","label":"帧"}]}])");
     ASSERT_EQ(
         CreateGraphAuthoringSession(catalog_seed.Get(), &state),
         DAS_S_OK);
 
-    std::string dynamic_port_id;
-    {
-        DasPtr<Das::ExportInterface::IDasJson> apply_result;
-        const std::string                      add_port = WrapAuthoringChange(
-            "addNodePort",
-            R"({"nodeId":"n_0","name":"帧","direction":"input","valueType":"image"})");
-        DasPtr<IDasReadOnlyString> add_port_string;
-        CreateIDasReadOnlyStringFromUtf8(
-            add_port.c_str(),
-            add_port_string.Put());
-        ASSERT_EQ(
-            GraphAuthoringSessionApplyChange(
-                state,
-                add_port_string.Get(),
-                apply_result.Put()),
-            DAS_S_OK);
-        const auto apply_text = JsonTextOf(apply_result.Get());
-        ASSERT_TRUE(ResponseDiagnosticsEmpty(apply_text));
-        dynamic_port_id = FirstDynamicPortIdOfComponent(
-            apply_text,
-            BEGIN_COMPONENT_GUID_TEXT);
-        ASSERT_EQ(dynamic_port_id, "p_1");
-    }
+    const std::string dynamic_port_id = "帧";
 
     // image 直通替身节点（预置占用 n_0/n_1 后顺延 n_2；end 缺席宽容）。
     std::string echo_node_id;

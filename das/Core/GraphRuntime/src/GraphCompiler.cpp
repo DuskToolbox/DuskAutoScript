@@ -1847,14 +1847,16 @@ Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
             return std::nullopt;
         };
     }
-    // begin/end 文档口面直读（不经 provider 中介）：faces 容器按节点注入，
-    // begin/end 节点在图内结构唯一（session 契约 exactly-one begin /
-    // at-most-one end），guid 定位无聚合歧义。口面按口对双侧展开——
-    // begin 输出侧/end 输入侧由推导规则排除（D-14 双机制），边界寻址
-    // 的口对语义保留在推导层。faces 条目缺席（编译宿主未跑预备 pass）
-    // =空口面 + WARN——不回退任何分区/manifest 通道（begin/end 无静态
-    // 声明，文档口面是其唯一来源）；条目在场而数组为空是合法文档态
-    // （未声明端口），不告警。
+    // begin/end 文档口面直读（动态口不经 provider 中介）：faces 容器按节
+    // 点注入，begin/end 节点在图内结构唯一（session 契约 exactly-one
+    // begin / at-most-one end），guid 定位无聚合歧义。动态口面按口对双
+    // 侧展开——begin 输出侧/end 输入侧由推导规则排除（D-14 双机制），
+    // 边界寻址的口对语义保留在推导层。faces 条目缺席（编译宿主未跑预
+    // 备 pass）=动态口面为空 + WARN——不回退任何分区/manifest 通道
+    // （begin/end 动态口无静态声明，文档口面是其唯一来源）；条目在场
+    // 而数组为空是合法文档态（未声明端口），不告警。声明面（如 end 的
+    // manifest 声明口「值」）照常经 provider 解析并与动态口面并集（同
+    // 名口 face 胜出+WARN——与 ResolveNodePorts 的合并规则一致）。
     ComponentPortSurfaceProvider face_resolving_provider =
         [this, &document, &provider](const std::string& component_guid)
         -> std::optional<ComponentPortSurface>
@@ -1874,32 +1876,53 @@ Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
             {
                 continue;
             }
-            if (node_faces_ == nullptr)
+            std::optional<ComponentPortSurface> surface;
+            if (provider)
             {
-                DAS_CORE_LOG_WARN(
-                    "boundary node {} has no injected document faces; its "
-                    "port surface derives as empty",
-                    node.node_id);
-                return std::nullopt;
+                surface = provider(component_guid);
             }
-            const auto found = node_faces_->find(node.node_id);
+            const auto found = node_faces_ == nullptr
+                                   ? node_faces_->end()
+                                   : node_faces_->find(node.node_id);
             if (found == node_faces_->end())
             {
                 DAS_CORE_LOG_WARN(
                     "boundary node {} has no injected document faces; its "
-                    "port surface derives as empty",
+                    "dynamic port face derives as empty",
                     node.node_id);
-                return std::nullopt;
+                return surface;
             }
-            ComponentPortSurface surface;
+            if (!surface.has_value())
+            {
+                surface = ComponentPortSurface{};
+            }
             for (const auto& face : found->second)
             {
+                // 同名声明口：face 胜出（双侧重投影）+ WARN。
+                for (auto* side : {&surface->inputs, &surface->outputs})
+                {
+                    const auto removed = std::remove_if(
+                        side->begin(),
+                        side->end(),
+                        [&face](const Dto::GraphPortDefinitionDto& entry)
+                        { return entry.port_id == face.port_id; });
+                    if (removed != side->end())
+                    {
+                        DAS_CORE_LOG_WARN(
+                            "boundary node {} port {} is redeclared by the "
+                            "injected document face; the face wins (type={})",
+                            node.node_id,
+                            face.port_id,
+                            face.port_type);
+                        side->erase(removed, side->end());
+                    }
+                }
                 Dto::GraphPortDefinitionDto definition;
                 definition.port_id = face.port_id;
                 definition.display_label = face.label;
                 definition.port_type = face.port_type;
-                surface.inputs.push_back(definition);
-                surface.outputs.push_back(definition);
+                surface->inputs.push_back(definition);
+                surface->outputs.push_back(definition);
             }
             return surface;
         }

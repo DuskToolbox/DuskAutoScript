@@ -480,19 +480,100 @@ namespace Contract
 
         constexpr std::size_t MAX_NODE_PORT_NAME_UTF8_BYTES = 100;
 
-        /// begin/end 组件判定——动态口分区的角色门判据（fail-closed：其
-        /// 它组件节点不可持动态口）。
+        /// begin/end 组件判定——边界口列表（节点 settings.boundaryPorts）
+        /// 的持有人判据：addNodePort 家族对图文档的 dispatch 只路由到边界
+        /// 节点，其它节点无口存储域。
         bool IsBoundaryComponent(std::string_view component_guid)
         {
             return component_guid == GRAPH_BEGIN_COMPONENT_GUID
                    || component_guid == GRAPH_END_COMPONENT_GUID;
         }
 
+        /// 边界口条目（begin/end 节点 settings.boundaryPorts 的解析形态，
+        /// 与边界会话状态域同形）。方向不存储——由节点角色固化推导。
+        struct BoundaryPortEntry
+        {
+            std::string id;
+            std::string type;
+        };
+
+        /// 读取 begin/end 节点 settings 的 boundaryPorts 数组：键缺席/
+        /// 非数组/条目缺 id/type 字符串键 → 该条目跳过（fail-closed——
+        /// 畸形不炸变更路径，口面按空处理）。
+        std::vector<BoundaryPortEntry> LoadNodeBoundaryPorts(
+            const Dto::GraphNodeDto& node)
+        {
+            std::vector<BoundaryPortEntry> entries;
+            auto settings_obj = node.settings.as_object();
+            if (!settings_obj
+                || !settings_obj->contains(std::string_view("boundaryPorts")))
+            {
+                return entries;
+            }
+            auto arr =
+                (*settings_obj)[std::string_view("boundaryPorts")].as_array();
+            if (!arr)
+            {
+                return entries;
+            }
+            for (const auto& entry_value : *arr)
+            {
+                auto entry_obj = entry_value.as_object();
+                if (!entry_obj)
+                {
+                    continue;
+                }
+                BoundaryPortEntry entry;
+                if (auto id = (*entry_obj)[std::string_view("id")].as_string())
+                {
+                    entry.id = std::string(*id);
+                }
+                if (auto type =
+                        (*entry_obj)[std::string_view("type")].as_string())
+                {
+                    entry.type = std::string(*type);
+                }
+                if (!entry.id.empty() && !entry.type.empty())
+                {
+                    entries.push_back(std::move(entry));
+                }
+            }
+            return entries;
+        }
+
+        /// 把边界口条目写回节点 settings.boundaryPorts（其余 settings 键
+        /// 原样保留；条目形 {id,type}——与读取形态一致）。
+        void StoreNodeBoundaryPorts(
+            Dto::GraphNodeDto&                    node,
+            const std::vector<BoundaryPortEntry>& entries)
+        {
+            auto settings_obj = node.settings.as_object();
+            if (!settings_obj)
+            {
+                node.settings = Das::Utils::MakeYyjsonObject();
+                settings_obj = node.settings.as_object();
+            }
+            yyjson::value array_value(Das::Utils::MakeYyjsonArray());
+            auto          arr = array_value.as_array();
+            for (const auto& entry : entries)
+            {
+                yyjson::value entry_value(Das::Utils::MakeYyjsonObject());
+                auto          entry_obj = entry_value.as_object();
+                (*entry_obj)[std::string_view("id")] =
+                    yyjson::value(std::string(entry.id));
+                (*entry_obj)[std::string_view("type")] =
+                    yyjson::value(std::string(entry.type));
+                arr->emplace_back(std::move(entry_value));
+            }
+            (*settings_obj)[std::string_view("boundaryPorts")] =
+                std::move(array_value);
+        }
+
         /// 已绑仓库条目的调用节点 entry id 解析（业务中立——不特判组件
         /// guid，只认目录声明的 taskRepositoryRef 字段持正整数值）：
         /// 返回该正整数（十进制文本键由调用方按容器键形转换），
-        /// nullopt = 未绑条目。NodeHoldsBoundRepositoryEntry 与 entryFaces
-        /// 消费（编译侧/投影侧）共用本判据——单一逻辑源。
+        /// nullopt = 未绑条目。entryFaces 消费（编译侧/投影侧）共用本判
+        /// 据——单一逻辑源。
         std::optional<int64_t> BoundRepositoryEntryIdOf(
             const Dto::GraphNodeDto&            node,
             const std::optional<ActionCatalog>& action_catalog)
@@ -538,35 +619,6 @@ namespace Contract
                 }
             }
             return std::nullopt;
-        }
-
-        /// 已绑仓库条目的调用节点判定（签名口物化通道的角色门判据）——
-        /// BoundRepositoryEntryIdOf 的布尔形态。
-        bool NodeHoldsBoundRepositoryEntry(
-            const Dto::GraphNodeDto&            node,
-            const std::optional<ActionCatalog>& action_catalog)
-        {
-            return BoundRepositoryEntryIdOf(node, action_catalog).has_value();
-        }
-
-        /// node 作用域稳定口 id 分配（照 AllocateStableNodeId 模式）：
-        /// "p_" 前缀计数器 + 现有 id 扫描防撞，首口 p_1。口 id 是连线坐
-        /// 标与后续 remove/rename 的寻址键，节点内必须唯一。
-        std::string AllocateNodePortId(const Dto::GraphNodeDto& node)
-        {
-            std::unordered_set<std::string> existing;
-            for (const auto& port : node.ports)
-            {
-                existing.insert(port.id);
-            }
-            std::size_t counter = existing.size() + 1;
-            std::string candidate;
-            do
-            {
-                candidate = "p_" + std::to_string(counter);
-                ++counter;
-            } while (existing.count(candidate) != 0);
-            return candidate;
         }
 
         /// 口名规则（add/rename 共用）：非空、UTF-8 字节数 ≤100、不以
@@ -654,12 +706,13 @@ namespace Contract
                         }
                     }
                 }
-                // 动态口分区（begin/end）：九词白名单不含 signal，category
-                // 恒为 data——分区口不在 catalog 静态面里，connectGraphPorts
-                // 的边型推导据此解析，未声明的动态口端点照旧拒绝。
-                for (const auto& declared : node.ports)
+                // begin/end 边界口（节点 settings.boundaryPorts）：九词白
+                // 名单不含 signal，category 恒为 data——边界口不在 catalog
+                // 静态面里，connectGraphPorts 的边型推导据此解析，未声明
+                // 的动态口端点照旧拒绝。
+                for (const auto& entry : LoadNodeBoundaryPorts(node))
                 {
-                    if (declared.id == port_id)
+                    if (entry.id == port_id)
                     {
                         return std::string(PORT_CATEGORY_DATA);
                     }
@@ -700,12 +753,13 @@ namespace Contract
                 {
                     return std::nullopt;
                 }
+                const auto boundary_entries = LoadNodeBoundaryPorts(node);
                 const auto declared = std::find_if(
-                    node.ports.begin(),
-                    node.ports.end(),
-                    [&](const Dto::GraphNodePortDeclarationDto& candidate)
+                    boundary_entries.begin(),
+                    boundary_entries.end(),
+                    [&](const BoundaryPortEntry& candidate)
                     { return candidate.id == port_id; });
-                if (declared == node.ports.end())
+                if (declared == boundary_entries.end())
                 {
                     return std::nullopt; // 静态目录口，门不管。
                 }
@@ -858,38 +912,10 @@ namespace Contract
                     }
                 }
 
-                // begin/end 动态口 merge（D-16 受控例外）：存储分区按 wire
-                // 投影键形并入 ports 数组——方向按组件角色翻转（存储的
-                // direction 是签名方向：begin 的入参口长在右侧 output 锚
-                // 供图内连线、end 的出参口长在左侧 input 锚收图内连线），
-                // category 走单一派生点（九词白名单不含 signal，恒为
-                // data），dynamic 键只在动态口上 engaged（UI 弹窗据此区
-                // 分可删/固定口）。
-                if (IsBoundaryComponent(out.component_guid))
-                {
-                    const std::string_view anchor_direction =
-                        out.component_guid
-                                == std::string_view(GRAPH_BEGIN_COMPONENT_GUID)
-                            ? PORT_DIRECTION_OUTPUT
-                            : PORT_DIRECTION_INPUT;
-                    for (const auto& declared : node.ports)
-                    {
-                        GraphNodePort projected;
-                        projected.port_id = declared.id;
-                        projected.display_label = declared.name;
-                        projected.port_type = declared.value_type;
-                        projected.direction = std::string(anchor_direction);
-                        projected.category =
-                            DerivePortCategory(declared.value_type);
-                        projected.dynamic_port = true;
-                        AttachPortValueFromSettings(
-                            node.settings,
-                            node.node_id,
-                            connected_input_sources,
-                            projected);
-                        out.ports.push_back(std::move(projected));
-                    }
-                }
+                // begin/end 动态口投影分区读取段已随图文档口数据退役删
+                // 除——画布动态口仅 faces 通道（下方 merge；begin/end 的
+                // 文档口面由预备 pass 从节点 settings 建边界会话现算注
+                // 入）。
 
                 // faces 注入通道 merge（调用侧合并形态）：nodeFaces[本节
                 // 点] 与绑条目节点的 entryFaces[entryId]（判据复用
@@ -1548,37 +1574,11 @@ namespace Contract
         // self-contained and safe to hand across the boundary.
         // 显式以 value 接住（auto 会推导成 object 句柄，宿主 document 临
         // 时在语句尾析构——句柄即悬空）。转换发生在完整表达式内，value
-        // 自持 arena。
+        // 自持 arena。节点不携带口数据（图文档零口数据——边界口列表在
+        // settings.boundaryPorts 里随 settings 序列化），聚合反射不再有
+        // 空分区键需要擦除。
         yyjson::value serialized =
             yyjson::object(document, yyjson::copy_string);
-        // 动态口分区 engaged-only：无分区的节点不落 ports 键——键的出现
-        // 即语义（该节点持 begin/end 动态口声明）。聚合反射对空 vector
-        // 会出 "ports":[]，把「无分区」与「空分区」混为一谈，故反射后
-        // 就地擦除空键。
-        auto source_object = serialized.as_object();
-        if (source_object.has_value()
-            && source_object->contains(std::string_view("nodes")))
-        {
-            auto nodes = (*source_object)[std::string_view("nodes")].as_array();
-            if (nodes.has_value())
-            {
-                for (auto node_value : *nodes)
-                {
-                    auto node_object = node_value.as_object();
-                    if (!node_object.has_value()
-                        || !node_object->contains(std::string_view("ports")))
-                    {
-                        continue;
-                    }
-                    auto ports =
-                        (*node_object)[std::string_view("ports")].as_array();
-                    if (ports.has_value() && ports->empty())
-                    {
-                        node_object->erase(std::string_view("ports"));
-                    }
-                }
-            }
-        }
         return serialized;
     }
 
@@ -2767,32 +2767,25 @@ namespace Contract
                         {},
                         std::nullopt};
                 }
-                // 角色门 fail-closed：动态口分区仅 begin/end 与已绑仓库条
-                // 目的调用节点（签名口物化通道）可持。
+                // 图文档零口存储域：仅 begin/end 节点持口列表（节点
+                // settings.boundaryPorts——边界会话状态域）；其它节点的
+                // 动态口属其自己的 authoring 文档，图文档无处可写——
+                // fail-closed 拒绝并指认所属文档（零突变）。
                 const std::string target_component_guid =
                     ComponentGuidOf(*target_node);
-                const bool target_is_boundary_component =
-                    IsBoundaryComponent(target_component_guid);
-                const bool target_is_bound_call_node =
-                    !target_is_boundary_component
-                    && NodeHoldsBoundRepositoryEntry(
-                        *target_node,
-                        action_catalog);
-                if (!target_is_boundary_component && !target_is_bound_call_node)
+                if (!IsBoundaryComponent(target_component_guid))
                 {
                     return {
                         ChangeErrorKind::InvalidOp,
-                        "addNodePort target must be a Begin or End node or a "
-                        "repository-bound call node; dynamic ports are only "
-                        "supported on boundary components and bound call "
-                        "nodes",
+                        "graph documents store no port partitions; edit the "
+                        "port list in the owning document (node: "
+                            + *change.item_or_node_id + ")",
                         {},
                         std::nullopt};
                 }
-                // 方向角色门：direction 是签名方向——begin 只收入参口、
-                // end 只收出参口；调用节点物化口两侧皆可（入线口镜像子图
-                // begin 侧、出线口镜像 end 侧）。
-                if (target_is_boundary_component)
+                // 方向门（begin/end 文档校验规则）：direction 是签名方
+                // 向——begin 只收入参口、end 只收出参口（角色固化，任何
+                // 变更路径都产不出反向口）。
                 {
                     const bool direction_mirrors_role =
                         (*direction == std::string_view(PORT_DIRECTION_INPUT))
@@ -2818,82 +2811,40 @@ namespace Contract
                         {},
                         std::nullopt};
                 }
-                for (const auto& existing_port : target_node->ports)
+                // 边界条目单 id 形态（{id,type}）：portId 在场且与 name
+                // 分歧即拒绝——口 id 与口名是同一通道。
+                if (change.node_port_id.has_value()
+                    && *change.node_port_id != *change.node_port_name)
                 {
-                    if (existing_port.name == *change.node_port_name)
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "addNodePort.portId must equal name for boundary "
+                        "ports (the port id and its name are one)",
+                        {},
+                        std::nullopt};
+                }
+                auto boundary_entries = LoadNodeBoundaryPorts(*target_node);
+                for (const auto& existing_entry : boundary_entries)
+                {
+                    if (existing_entry.id == *change.node_port_name)
                     {
                         return {
                             ChangeErrorKind::InvalidOp,
                             "addNodePort.name duplicates an existing port "
-                            "name on the node: "
+                            "id on the node: "
                                 + *change.node_port_name,
                             {},
                             std::nullopt};
                     }
                 }
-                // 物化口稳定 id（仅调用节点通道）：id 是运行期值通道的键
-                // （子图边界口 id），input/output 两侧同 id 各走各通道——
-                // 唯一性按 (id, direction) 判定，异向同 id 合法共存。
-                if (change.node_port_id.has_value())
-                {
-                    if (!target_is_bound_call_node)
-                    {
-                        return {
-                            ChangeErrorKind::InvalidOp,
-                            "addNodePort.portId is only supported on "
-                            "repository-bound call nodes (stable "
-                            "materialization ids)",
-                            {},
-                            std::nullopt};
-                    }
-                    if (const auto id_violation =
-                            NodePortNameViolation(*change.node_port_id);
-                        id_violation.has_value())
-                    {
-                        return {
-                            ChangeErrorKind::InvalidOp,
-                            "addNodePort.portId " + *id_violation,
-                            {},
-                            std::nullopt};
-                    }
-                    for (const auto& existing_port : target_node->ports)
-                    {
-                        if (existing_port.id == *change.node_port_id
-                            && existing_port.direction == *direction)
-                        {
-                            return {
-                                ChangeErrorKind::InvalidOp,
-                                "addNodePort.portId duplicates an existing "
-                                "port id in the same direction: "
-                                    + *change.node_port_id,
-                                {},
-                                std::nullopt};
-                        }
-                    }
-                    target_node->ports.push_back(
-                        Dto::GraphNodePortDeclarationDto{
-                            *change.node_port_id,
-                            *change.node_port_name,
-                            *direction,
-                            *value_type});
-                    return {
-                        ChangeErrorKind::None,
-                        "",
-                        {},
-                        std::optional<std::string>{*change.node_port_id}};
-                }
-                const auto allocated_id = AllocateNodePortId(*target_node);
-                target_node->ports.push_back(
-                    Dto::GraphNodePortDeclarationDto{
-                        allocated_id,
-                        *change.node_port_name,
-                        *direction,
-                        *value_type});
+                boundary_entries.push_back(
+                    BoundaryPortEntry{*change.node_port_name, *value_type});
+                StoreNodeBoundaryPorts(*target_node, boundary_entries);
                 return {
                     ChangeErrorKind::None,
                     "",
                     {},
-                    std::optional<std::string>{allocated_id}};
+                    std::optional<std::string>{*change.node_port_name}};
             }
             else if (change.kind == "removeNodePort")
             {
@@ -2933,34 +2884,27 @@ namespace Contract
                         {},
                         std::nullopt};
                 }
-                // 静态 manifest 口不在存储分区（如 end 的「值」）——remove
-                // 只删分区项，拒绝而非静默误删声明面。
-                bool partition_hit = false;
-                for (const auto& declared : target_node->ports)
-                {
-                    if (declared.id == *change.node_port_id)
-                    {
-                        partition_hit = true;
-                        break;
-                    }
-                }
-                if (!partition_hit)
+                // 边界口列表命中判定（settings.boundaryPorts）：静态
+                // manifest 口不在口列表（如 end 的「值」）——remove 只删
+                // 边界条目，拒绝而非静默误删声明面。
+                auto boundary_entries = LoadNodeBoundaryPorts(*target_node);
+                const auto removed_entry = std::find_if(
+                    boundary_entries.begin(),
+                    boundary_entries.end(),
+                    [&](const BoundaryPortEntry& entry)
+                    { return entry.id == *change.node_port_id; });
+                if (removed_entry == boundary_entries.end())
                 {
                     return {
                         ChangeErrorKind::InvalidOp,
-                        "removeNodePort port is not in the dynamic port "
-                        "partition: "
+                        "removeNodePort port is not declared on the node's "
+                        "boundary list: "
                             + *change.node_port_id,
                         {},
                         std::nullopt};
                 }
-                target_node->ports.erase(
-                    std::remove_if(
-                        target_node->ports.begin(),
-                        target_node->ports.end(),
-                        [&](const Dto::GraphNodePortDeclarationDto& declared)
-                        { return declared.id == *change.node_port_id; }),
-                    target_node->ports.end());
+                boundary_entries.erase(removed_entry);
+                StoreNodeBoundaryPorts(*target_node, boundary_entries);
                 // 级联删线：引用该口 id 的连线（源侧或目标侧）在同一
                 // change 内原子删除——与 removeGraphNodes 的级联同语义。
                 const auto& removed_port_id = *change.node_port_id;
@@ -3037,43 +2981,59 @@ namespace Contract
                         {},
                         std::nullopt};
                 }
-                Dto::GraphNodePortDeclarationDto* target_port = nullptr;
-                for (auto& declared : target_node->ports)
-                {
-                    if (declared.id == *change.node_port_id)
-                    {
-                        target_port = &declared;
-                        break;
-                    }
-                }
-                if (target_port == nullptr)
+                // 边界条目单 id 形态：rename 改条目 id（口 id 即寻址坐
+                // 标），该节点上引用旧口 id 的连线坐标同步改写——寻址面
+                // 与口面同步演进；拒绝路径零突变。
+                auto boundary_entries = LoadNodeBoundaryPorts(*target_node);
+                const auto target_entry = std::find_if(
+                    boundary_entries.begin(),
+                    boundary_entries.end(),
+                    [&](const BoundaryPortEntry& entry)
+                    { return entry.id == *change.node_port_id; });
+                if (target_entry == boundary_entries.end())
                 {
                     return {
                         ChangeErrorKind::InvalidOp,
-                        "renameNodePort port is not in the dynamic port "
-                        "partition: "
+                        "renameNodePort port is not declared on the node's "
+                        "boundary list: "
                             + *change.node_port_id,
                         {},
                         std::nullopt};
                 }
                 // 重名门排除自身：改成同名是幂等 no-op 语义（仍是成功、
                 // revision 照常 bump——与 renameGraphNode 同惯例）。
-                for (const auto& declared : target_node->ports)
+                for (auto iter = boundary_entries.begin();
+                     iter != boundary_entries.end();
+                     ++iter)
                 {
-                    if (&declared != target_port
-                        && declared.name == *change.node_port_name)
+                    if (iter != target_entry
+                        && iter->id == *change.node_port_name)
                     {
                         return {
                             ChangeErrorKind::InvalidOp,
                             "renameNodePort.name duplicates an existing port "
-                            "name on the node: "
+                            "id on the node: "
                                 + *change.node_port_name,
                             {},
                             std::nullopt};
                     }
                 }
-                // 只改 name：口 id 与连线坐标不动（寻址面零扰动）。
-                target_port->name = *change.node_port_name;
+                const std::string old_port_id = target_entry->id;
+                target_entry->id = *change.node_port_name;
+                StoreNodeBoundaryPorts(*target_node, boundary_entries);
+                for (auto& edge : document.edges)
+                {
+                    if (edge.source_node_id == *change.item_or_node_id
+                        && edge.source_port_id == old_port_id)
+                    {
+                        edge.source_port_id = *change.node_port_name;
+                    }
+                    if (edge.target_node_id == *change.item_or_node_id
+                        && edge.target_port_id == old_port_id)
+                    {
+                        edge.target_port_id = *change.node_port_name;
+                    }
+                }
                 return {ChangeErrorKind::None, "", {}, std::nullopt};
             }
             else if (change.kind == "convertView")

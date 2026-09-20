@@ -1,6 +1,9 @@
 #include <das/Core/GraphRuntime/GraphDocument.h>
 #include <das/Core/GraphRuntime/GraphEntryId.h>
+#include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 #include <das/Core/TaskScheduler/TaskRepositoryDtos.h>
+#include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
 #include <string_view>
@@ -585,4 +588,266 @@ TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripEmptyGraph)
     EXPECT_EQ(restored.fingerprint, "sha256:empty");
     EXPECT_TRUE(restored.nodes.empty());
     EXPECT_TRUE(restored.edges.empty());
+}
+
+// ---------------------------------------------------------------------------
+// 旧节点 ports 分区的会话创建兼容迁移（分区退役的在途数据保全）：
+// begin/end 节点旧分区等价迁入 settings.boundaryPorts；调用节点物化口/
+// 普通节点残留分区丢弃（口面经 entryFaces 现算/文档口面推导）；新形状
+// （无分区）空转。观测通道=会话创建后一次拒绝变更的 acceptedProperties
+// （=SerializeSource，存储真源）。
+// ---------------------------------------------------------------------------
+namespace
+{
+    constexpr std::string_view kLegacyBeginGuid =
+        "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E";
+    constexpr std::string_view kLegacyEndGuid =
+        "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D";
+
+    struct LegacySessionHandle
+    {
+        GraphAuthoringSessionState* state = nullptr;
+
+        explicit LegacySessionHandle(const std::string& context)
+        {
+            Das::DasPtr<IDasReadOnlyString> context_string;
+            CreateIDasReadOnlyStringFromUtf8(
+                context.c_str(),
+                context_string.Put());
+            CreateGraphAuthoringSession(context_string.Get(), &state);
+        }
+
+        ~LegacySessionHandle() { DestroyGraphAuthoringSession(state); }
+
+        LegacySessionHandle(const LegacySessionHandle&) = delete;
+        LegacySessionHandle& operator=(const LegacySessionHandle&) = delete;
+    };
+
+    std::string LegacyNodeText(
+        std::string_view node_id,
+        std::string_view guid,
+        std::string_view settings_extra,
+        std::string_view legacy_ports)
+    {
+        std::string node =
+            std::string(R"({"nodeId":")") + std::string(node_id)
+            + R"(","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":")"
+            + std::string(guid) + R"(","pluginGuid":"{p}"}},"settings":{)"
+            + std::string(settings_extra) + "}";
+        if (!legacy_ports.empty())
+        {
+            node += ",\"ports\":" + std::string(legacy_ports);
+        }
+        node += "}";
+        return node;
+    }
+
+    // 一次拒绝变更（空 change）的结果 acceptedProperties——存储真源的
+    // 观测通道。
+    yyjson::value AcceptedPropertiesOf(
+        GraphAuthoringSessionState* state)
+    {
+        Das::DasPtr<IDasReadOnlyString> empty_change;
+        CreateIDasReadOnlyStringFromUtf8("", empty_change.Put());
+        Das::DasPtr<Das::ExportInterface::IDasJson> result;
+        GraphAuthoringSessionApplyChange(
+            state,
+            empty_change.Get(),
+            result.Put());
+        if (result.Get() == nullptr)
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        Das::DasPtr<IDasReadOnlyString> text;
+        if (DAS::IsFailed(result->ToString(0, text.Put())) || !text.Get())
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(text->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        auto root = yyjson::read(std::string(utf8));
+        auto obj = root.as_object();
+        if (!obj || !obj->contains(std::string_view("acceptedProperties")))
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("acceptedProperties")]);
+    }
+
+    // acceptedProperties.nodes[node_id] 的 settings.boundaryPorts 条目表
+    // （{id,type} 对）。
+    std::vector<std::pair<std::string, std::string>> MigratedBoundaryEntriesOf(
+        const yyjson::value& source,
+        std::string_view     node_id)
+    {
+        std::vector<std::pair<std::string, std::string>> entries;
+        auto source_obj = source.as_object();
+        if (!source_obj || !source_obj->contains(std::string_view("nodes")))
+        {
+            return entries;
+        }
+        auto nodes = (*source_obj)[std::string_view("nodes")].as_array();
+        if (!nodes)
+        {
+            return entries;
+        }
+        for (const auto& node_value : *nodes)
+        {
+            auto node_obj = node_value.as_object();
+            if (!node_obj
+                || (*node_obj)[std::string_view("nodeId")].as_string().value_or(
+                       "")
+                       != node_id)
+            {
+                continue;
+            }
+            EXPECT_FALSE(node_obj->contains(std::string_view("ports")))
+                << "the partition key must not survive serialization";
+            auto settings =
+                (*node_obj)[std::string_view("settings")].as_object();
+            if (!settings
+                || !settings->contains(std::string_view("boundaryPorts")))
+            {
+                return entries;
+            }
+            auto arr =
+                (*settings)[std::string_view("boundaryPorts")].as_array();
+            if (!arr)
+            {
+                return entries;
+            }
+            for (const auto& entry_value : *arr)
+            {
+                auto entry_obj = entry_value.as_object();
+                if (!entry_obj)
+                {
+                    continue;
+                }
+                entries.emplace_back(
+                    (*entry_obj)[std::string_view("id")].as_string().value_or(
+                        ""),
+                    (*entry_obj)[std::string_view("type")].as_string().value_or(
+                        ""));
+            }
+            return entries;
+        }
+        return entries;
+    }
+} // namespace
+
+TEST(GraphDocumentDtoTest, LegacyBoundaryPartitionMigratesToSettings)
+{
+    const LegacySessionHandle session{
+        std::string(R"({"nodes":[)")
+        + LegacyNodeText(
+            "n_0",
+            kLegacyBeginGuid,
+            "",
+            R"([{"id":"p_1","name":"左值","direction":"input","valueType":"int"},{"id":"p_2","name":"右值","direction":"input","valueType":"string"}])")
+        + ","
+        + LegacyNodeText(
+            "n_1",
+            kLegacyEndGuid,
+            "",
+            R"([{"id":"q_1","name":"结果","direction":"output","valueType":"image"}])")
+        + "," + LegacyNodeText("n_work", "{g1}", "", "") + R"(],"edges":[]})"};
+
+    const auto source = AcceptedPropertiesOf(session.state);
+
+    // begin 旧分区逐条等价迁移（口 id/类型对应；name/direction 不迁——
+    // 边界条目单 id 形态+角色固化）。
+    const auto begin_entries = MigratedBoundaryEntriesOf(source, "n_0");
+    ASSERT_EQ(begin_entries.size(), 2u);
+    EXPECT_EQ(begin_entries[0].first, "p_1");
+    EXPECT_EQ(begin_entries[0].second, "int");
+    EXPECT_EQ(begin_entries[1].first, "p_2");
+    EXPECT_EQ(begin_entries[1].second, "string");
+
+    // end 同款。
+    const auto end_entries = MigratedBoundaryEntriesOf(source, "n_1");
+    ASSERT_EQ(end_entries.size(), 1u);
+    EXPECT_EQ(end_entries[0].first, "q_1");
+    EXPECT_EQ(end_entries[0].second, "image");
+
+    // 普通节点零口数据（不迁不长键）。
+    EXPECT_TRUE(MigratedBoundaryEntriesOf(source, "n_work").empty());
+}
+
+TEST(GraphDocumentDtoTest, LegacyMaterializedPartitionDroppedWithWarn)
+{
+    const LegacySessionHandle session{
+        std::string(R"({"nodes":[)")
+        + LegacyNodeText(
+            "n_call",
+            "{ginvoke}",
+            R"("repositoryRef":42)",
+            R"([{"id":"p_1","name":"payload","direction":"input","valueType":"int"},{"id":"p_1","name":"score","direction":"output","valueType":"int"}])")
+        + R"(],"edges":[]})"};
+
+    // 物化口数据丢弃（口面经 entryFaces 现算）——存储零口数据；丢弃经
+    // WARN 可观测（日志面，本用例钉存储面）。
+    const auto source = AcceptedPropertiesOf(session.state);
+    EXPECT_TRUE(MigratedBoundaryEntriesOf(source, "n_call").empty());
+}
+
+TEST(GraphDocumentDtoTest, ExistingBoundaryEntriesMergeWithLegacyPartition)
+{
+    // 既有 settings.boundaryPorts 与旧分区共存（迁移追加，不清既有）。
+    const LegacySessionHandle session{
+        std::string(R"({"nodes":[)")
+        + LegacyNodeText(
+            "n_0",
+            kLegacyBeginGuid,
+            R"("boundaryPorts":[{"id":"keep","type":"bool"}])",
+            R"([{"id":"p_1","name":"左值","direction":"input","valueType":"int"}])")
+        + R"(],"edges":[]})"};
+
+    const auto source = AcceptedPropertiesOf(session.state);
+    const auto entries = MigratedBoundaryEntriesOf(source, "n_0");
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].first, "keep");
+    EXPECT_EQ(entries[0].second, "bool");
+    EXPECT_EQ(entries[1].first, "p_1");
+    EXPECT_EQ(entries[1].second, "int");
+}
+
+TEST(GraphDocumentDtoTest, NewShapeDocumentWithoutPartitionNoOps)
+{
+    // 新形状（无分区）空转：不长键、不丢数据（A7 保守设计——数据不存在
+    // 即空转）。
+    const LegacySessionHandle session{
+        std::string(R"({"documentId":"doc","version":4,"nodes":[)")
+        + LegacyNodeText("n_0", kLegacyBeginGuid, "", "") + R"(],"edges":[]})"};
+
+    const auto source = AcceptedPropertiesOf(session.state);
+    const auto entries = MigratedBoundaryEntriesOf(source, "n_0");
+    EXPECT_TRUE(entries.empty());
+
+    auto source_obj = source.as_object();
+    ASSERT_TRUE(source_obj.has_value());
+    EXPECT_EQ(
+        (*source_obj)[std::string_view("documentId")].as_string().value_or(""),
+        "doc");
+    EXPECT_EQ(
+        (*source_obj)[std::string_view("version")].as_int().value_or(-1),
+        4);
+}
+
+TEST(GraphDocumentDtoTest, LegacyPartitionKeyToleratedByCaster)
+{
+    // DTO caster 对未知 "ports" 键静默忽略（field-picking 形态）——旧形状
+    // JSON 直接 cast 不炸（迁移读取段之外的直接 cast 路径安全）。
+    const auto legacy = Das::Utils::ParseYyjsonFromString(
+        std::string_view(
+            R"({"nodeId":"legacy_node","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{g1}","pluginGuid":"{p}"}},"settings":{},"ports":[{"id":"p_1","name":"x","direction":"input","valueType":"int"}]})"));
+    ASSERT_TRUE(legacy.has_value());
+    GraphNodeDto node;
+    SCOPED_TRACE(
+        Das::Utils::SerializeYyjsonValue(*legacy).value_or(std::string{}));
+    ASSERT_NO_THROW(node = yyjson::cast<GraphNodeDto>(*legacy));
+    EXPECT_EQ(node.node_id, "legacy_node");
 }

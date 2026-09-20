@@ -2491,10 +2491,11 @@ TEST(BoundaryPortDerivationTest, EndInPortsExcludedFromBoundaryInputs)
     EXPECT_TRUE(end_output_found);
 }
 
-// begin/end 口面直读注入后的唯一动态口源纪律：faces 条目缺席（编译宿主
-// 未跑预备 pass）=空口面降级——即便声明面 provider 对 begin/end guid 提
-// 供了口面也不得被采纳（begin/end 口面不经 provider 任何路径）。
-TEST(BoundaryPortDerivationTest, BoundaryFacesAbsentDegradeToEmpty)
+// begin/end 动态口面的唯一来源纪律：faces 条目缺席（编译宿主未跑预备
+// pass）=动态口面为空降级——不产生任何幻影动态口；声明面（manifest/
+// catalog 声明口）照常经 provider 解析不被误伤。faces 注入后同名声明口
+// face 胜出（与 ResolveNodePorts 合并规则一致）。
+TEST(BoundaryPortDerivationTest, BoundaryFacesAbsentLeavesDeclaredOnly)
 {
     std::unordered_map<
         std::string,
@@ -2503,8 +2504,8 @@ TEST(BoundaryPortDerivationTest, BoundaryFacesAbsentDegradeToEmpty)
             std::vector<std::pair<std::string, std::string>>>>
         surfaces;
     surfaces[std::string(BOUNDARY_BEGIN_COMPONENT_GUID)] = {
-        {{"ghost", "int"}},
-        {{"ghost", "int"}}};
+        {{"declared_in", "int"}},
+        {{"declared_out", "int"}}};
 
     GraphCompiler compiler;
     compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
@@ -2514,9 +2515,39 @@ TEST(BoundaryPortDerivationTest, BoundaryFacesAbsentDegradeToEmpty)
         "n_begin",
         std::string(BOUNDARY_BEGIN_COMPONENT_GUID)));
 
+    // 无 faces：动态口面为空——边界只有声明口（declared_in 悬空推导；
+    // begin 的 declared_out 输出侧被排除）。
     auto boundary = compiler.DeriveBoundaryPorts(doc);
-    EXPECT_TRUE(boundary.inputs.empty());
+    ASSERT_EQ(boundary.inputs.size(), 1u);
+    EXPECT_EQ(boundary.inputs[0].port_id, "declared_in");
     EXPECT_TRUE(boundary.outputs.empty());
+
+    // faces 注入：动态口面并入（口对双侧展开），同名声明口 face 胜出。
+    GraphCompiler::NodeFacesMap node_faces;
+    node_faces["n_begin"] = {
+        {"declared_in", "string", "新面", "input"},
+        {"dyn_in", "int", "dyn_in", "input"},
+    };
+    compiler.BindNodeFaces(&node_faces);
+    auto merged = compiler.DeriveBoundaryPorts(doc);
+    ASSERT_EQ(merged.inputs.size(), 2u);
+    bool face_won = false;
+    bool dynamic_found = false;
+    for (const auto& input : merged.inputs)
+    {
+        if (input.port_id == "declared_in")
+        {
+            face_won = true;
+            EXPECT_EQ(input.port_type, "string");
+            EXPECT_EQ(input.display_label, "新面");
+        }
+        if (input.port_id == "dyn_in")
+        {
+            dynamic_found = true;
+        }
+    }
+    EXPECT_TRUE(face_won);
+    EXPECT_TRUE(dynamic_found);
 }
 
 // ===================================================================
