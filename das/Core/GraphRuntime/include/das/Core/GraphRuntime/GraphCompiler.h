@@ -50,7 +50,12 @@ enum class CompileDiagnosticKind
     // 只定义 kind 词汇供 wire 序列化消费。
     BeginNodeMissing,   // graph-view document carries no Begin node
     BeginNodeDuplicate, // graph-view document carries more than one Begin node
-    EndNodeDuplicate    // graph-view document carries more than one End node
+    EndNodeDuplicate,   // graph-view document carries more than one End node
+    // 存储边经口面演化复核后标记断开：口的声明已随文档演化消失，或两
+    // 端类型按当前口面不再兼容。诊断是 WARN 级（非阻断）——复核产物在
+    // Apply 语境作为文档变更写回（edges 删除、revision 推进），纯读编
+    // 译路径只携带诊断零修剪。
+    StaleEdgeDisconnect
 };
 
 struct CompileEdgeDiagnostic
@@ -246,6 +251,18 @@ public:
     /// the manifest path is unbound or unresolved.
     void SetPortSurfaceProvider(ComponentPortSurfaceProvider provider);
 
+    /// Bind the injected document type registry (the types[] array riding
+    /// the entryFaces context key — the same registry source the graph-view
+    /// projection exposes as its root types section). The registry extends
+    /// the type judgment of the
+    /// stale-edge review only: registered custom types become judgeable
+    /// (compatibleWith declarations are the authority, undeclared pairs are
+    /// incompatible), while the built-in table stays the single authority
+    /// of IsTypeCompatible (no second equivalence table). Borrowed for the
+    /// duration of the synchronous Compile call — the same lifecycle
+    /// premise as BindNodeFaces.
+    void BindFaceTypes(const std::vector<DocumentFaceType>* face_types);
+
     /// Check type compatibility between source output and target input.
     /// The Core-side authoritative half of the numeric-equivalence table —
     /// the UI-side GraphConnectionRules.CanConnect (DasNativeUI) mirrors
@@ -253,6 +270,60 @@ public:
     static bool IsTypeCompatible(
         const std::string& source_type,
         const std::string& target_type);
+
+    // -----------------------------------------------------------------------
+    // Stored-edge stale review (compile-time auto-disconnect)
+    // -----------------------------------------------------------------------
+
+    /// One stored edge the review marked for disconnection. The reason
+    /// mirrors the two auto-disconnect clauses: a port id gone from the
+    /// node's current face (source/target side), or both endpoints resolved
+    /// but the types no longer compatible under the injected registry.
+    struct StaleEdgeRecord
+    {
+        enum class Reason
+        {
+            SourcePortMissing,
+            TargetPortMissing,
+            TypeIncompatible
+        };
+
+        std::string edge_id;
+        std::string source_node_id;
+        std::string source_port_id;
+        std::string target_node_id;
+        std::string target_port_id;
+        Reason      reason = Reason::SourcePortMissing;
+        // TypeIncompatible only: the two endpoint types as resolved against
+        // the current faces (diagnostic locator fields).
+        std::string source_type;
+        std::string target_type;
+    };
+
+    /// Review product: the disconnect set plus the WARN diagnostics — the
+    /// compile output contract the session Apply path consumes (Apply
+    /// applies the set as an ordinary document change; the pure read
+    /// compile paths carry the diagnostics only, zero mutation).
+    struct StaleEdgeReview
+    {
+        std::vector<StaleEdgeRecord>       stale_edges;
+        std::vector<CompileEdgeDiagnostic> diagnostics;
+    };
+
+    /// Re-check every stored data edge against the nodes' current port
+    /// faces (declared surface ∪ injected faces — the per-node union).
+    /// A data edge goes stale when a face-evolved endpoint lost the port id
+    /// or the endpoint types stopped being compatible (IsTypeCompatible
+    /// authority, extended by the bound document type registry). Every
+    /// stale edge logs a WARN carrying both endpoint node/port ids and the
+    /// reason. Signal edges are outside the review (they ride the canonical
+    /// sequencing coordinate system, not the data-port face); nodes without
+    /// an injected faces entry are outside it too — an absent entry means
+    /// the compile host did not run the prep pass, not that the face
+    /// evolved to empty, so pruning there would delete healthy edges on a
+    /// transient context gap.
+    StaleEdgeReview ReviewStaleEdges(
+        const Dto::GraphDocumentDto& document) const;
 
     // -----------------------------------------------------------------------
     // Boundary port derivation (ports are derived, never authored)
@@ -353,6 +424,9 @@ private:
     // Borrowed entry faces (nullptr = no entry-faces channel bound).
     const EntryFacesMap* entry_faces_ = nullptr;
 
+    // Borrowed document type registry (nullptr = no types channel bound).
+    const std::vector<DocumentFaceType>* face_types_ = nullptr;
+
     // Catalog-derived snapshot: component_guid → taskRepositoryRef field
     // names (the bound-entry judgment's data source).
     RepositoryFieldMap repository_fields_;
@@ -400,6 +474,24 @@ private:
     /// (the EntryFacesMap key form).
     std::optional<std::string> ResolveBoundEntryId(
         const Dto::GraphNodeDto& node) const;
+
+    /// Whether the node carries an injected faces entry (its own nodeFaces
+    /// entry, or a bound repository entry with an entryFaces entry) — the
+    /// stale-review eligibility marker distinguishing "the face evolved"
+    /// from "the compile host did not run the prep pass".
+    bool NodeCarriesInjectedFaces(const Dto::GraphNodeDto& node) const;
+
+    /// Registry-extended type judgment for the stale review. Single
+    /// authority preserved: the built-in equivalence table stays inside
+    /// IsTypeCompatible and this wrapper only adds the closed-world rules
+    /// of registered document types (same name or a compatibleWith link
+    /// declared on either side is compatible; a judgeable undeclared pair
+    /// is not). Pairs with an unjudgeable side (neither built-in nor
+    /// registered — Core cannot enumerate plugin types) stay permissive by
+    /// delegating to IsTypeCompatible.
+    bool IsTypeCompatibleWithRegistry(
+        const std::string& source_type,
+        const std::string& target_type) const;
 
     /// Build a node index: node_id -> GraphNodeDto* for O(1) lookup.
     static std::unordered_map<std::string, const Dto::GraphNodeDto*>

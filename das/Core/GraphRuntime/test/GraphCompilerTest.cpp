@@ -2762,3 +2762,186 @@ TEST(NodeFacesMergeTest, FacesArePerNodeNeverAggregatedByGuid)
     EXPECT_EQ(diagnostics[0].edge_id, "e_leak");
     EXPECT_EQ(diagnostics[0].port_id, "b_in");
 }
+
+// ===================================================================
+// 存储边复核（编译期自动断线）：口面演化后按节点新口面复核存量数据
+// 边——口不存在/类型不配→标记断开+StaleEdgeDisconnect 诊断（WARN）。
+// 类型判据=IsTypeCompatible 单一权威+文档 types[] 注册表闭世界
+// （compatibleWith）；signal 边与 faces 缺席节点不在复核域。
+// ===================================================================
+
+// 口消失断开：face 演化后目标口不在新口面（TargetPortMissing）——stale
+// 记录+诊断含可定位字段（node/port id）；静态节点侧缺口（faces 条目缺
+// 席——预备 pass 未跑而非演化）不进复核，ValidateEdgePorts 的
+// PortNotFound 域原样保留（无误删）。
+TEST(StaleEdgeReviewTest, PortGoneFromEvolvedFaceDisconnects)
+{
+    const std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces{
+            {"{ga}", {{}, {{"out_str", "string"}}}},
+            {"{gstatic}", {{{"in_str", "string"}}, {}}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphCompiler::NodeFacesMap faces;
+    faces["B"] = std::vector<GraphCompiler::DocumentFacePort>{
+        {"other_in", "string", "other_in", "input"}};
+    compiler.BindNodeFaces(&faces);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeComponentNode("A", "{ga}"));
+    doc.nodes.push_back(MakeComponentNode("B", "{gb}"));
+    doc.nodes.push_back(MakeComponentNode("C", "{gstatic}"));
+    // e_gone：B 的 face 已演化（b_in 不在面上）→ 断开。
+    doc.edges.push_back(MakeEdge("e_gone", "A", "out_str", "B", "b_in"));
+    // e_static：C 是静态节点（无 faces 条目），同款缺口不复核。
+    doc.edges.push_back(MakeEdge("e_static", "A", "out_str", "C", "no_such"));
+
+    const auto review = compiler.ReviewStaleEdges(doc);
+    ASSERT_EQ(review.stale_edges.size(), 1u);
+    EXPECT_EQ(review.stale_edges[0].edge_id, "e_gone");
+    EXPECT_EQ(review.stale_edges[0].target_node_id, "B");
+    EXPECT_EQ(review.stale_edges[0].target_port_id, "b_in");
+    EXPECT_EQ(
+        review.stale_edges[0].reason,
+        GraphCompiler::StaleEdgeRecord::Reason::TargetPortMissing);
+
+    ASSERT_EQ(review.diagnostics.size(), 1u);
+    EXPECT_EQ(
+        review.diagnostics[0].kind,
+        CompileDiagnosticKind::StaleEdgeDisconnect);
+    EXPECT_EQ(review.diagnostics[0].edge_id, "e_gone");
+    EXPECT_EQ(review.diagnostics[0].node_id, "B");
+    EXPECT_EQ(review.diagnostics[0].port_id, "b_in");
+    EXPECT_NE(review.diagnostics[0].message.find("e_gone"), std::string::npos);
+}
+
+// 类型改配断开 vs 兼容保持：face 类型演化后 int→bool 不配断开；int→
+// double 数值族加宽保持（IsTypeCompatible 单一权威的既有表义）。
+TEST(StaleEdgeReviewTest, TypeChangeOnEvolvedFaceDisconnectsIncompatibleOnly)
+{
+    const std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces{{"{ga}", {{}, {{"out_int", "int"}}}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphCompiler::NodeFacesMap faces;
+    faces["B"] = std::vector<GraphCompiler::DocumentFacePort>{
+        {"b_bool", "bool", "b_bool", "input"},
+        {"b_dbl", "double", "b_dbl", "input"}};
+    compiler.BindNodeFaces(&faces);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeComponentNode("A", "{ga}"));
+    doc.nodes.push_back(MakeComponentNode("B", "{gb}"));
+    doc.edges.push_back(MakeEdge("e_bad", "A", "out_int", "B", "b_bool"));
+    doc.edges.push_back(MakeEdge("e_keep", "A", "out_int", "B", "b_dbl"));
+
+    const auto review = compiler.ReviewStaleEdges(doc);
+    ASSERT_EQ(review.stale_edges.size(), 1u);
+    EXPECT_EQ(review.stale_edges[0].edge_id, "e_bad");
+    EXPECT_EQ(
+        review.stale_edges[0].reason,
+        GraphCompiler::StaleEdgeRecord::Reason::TypeIncompatible);
+    EXPECT_EQ(review.stale_edges[0].source_type, "int");
+    EXPECT_EQ(review.stale_edges[0].target_type, "bool");
+
+    ASSERT_EQ(review.diagnostics.size(), 1u);
+    EXPECT_EQ(review.diagnostics[0].edge_id, "e_bad");
+    EXPECT_EQ(review.diagnostics[0].actual_type, "int");
+    EXPECT_EQ(review.diagnostics[0].expected_type, "bool");
+}
+
+// 文档 types[] 注册表兼容：自定义类型经 compatibleWith 声明保持；可判
+// （注册×内建）而未声明配对闭世界断开；不可判（未注册非内建）维持
+// permissive 不误删。
+TEST(StaleEdgeReviewTest, RegistryCompatibleWithKeepsLinkAndClosesWorld)
+{
+    const std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces{{"{ga}", {{}, {{"out_str", "string"}}}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphCompiler::NodeFacesMap faces;
+    faces["B"] = std::vector<GraphCompiler::DocumentFacePort>{
+        {"my_in", "MyMode", "my_in", "input"},
+        {"other_in", "OtherMode", "other_in", "input"},
+        {"wild_in", "WildType", "wild_in", "input"}};
+    compiler.BindNodeFaces(&faces);
+
+    std::vector<GraphCompiler::DocumentFaceType> types;
+    types.push_back(GraphCompiler::DocumentFaceType{"MyMode", {"string"}});
+    types.push_back(GraphCompiler::DocumentFaceType{"OtherMode", {}});
+    compiler.BindFaceTypes(&types);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeComponentNode("A", "{ga}"));
+    doc.nodes.push_back(MakeComponentNode("B", "{gb}"));
+    // e_link：MyMode 声明 compatibleWith ["string"]——string→MyMode 保持。
+    doc.edges.push_back(MakeEdge("e_link", "A", "out_str", "B", "my_in"));
+    // e_closed：OtherMode 注册但零声明——string→OtherMode 可判不配，断开。
+    doc.edges.push_back(MakeEdge("e_closed", "A", "out_str", "B", "other_in"));
+    // e_wild：WildType 未注册非内建——判不了，permissive 保持。
+    doc.edges.push_back(MakeEdge("e_wild", "A", "out_str", "B", "wild_in"));
+
+    const auto review = compiler.ReviewStaleEdges(doc);
+    ASSERT_EQ(review.stale_edges.size(), 1u);
+    EXPECT_EQ(review.stale_edges[0].edge_id, "e_closed");
+    EXPECT_EQ(review.stale_edges[0].target_type, "OtherMode");
+    EXPECT_EQ(review.stale_edges[0].source_type, "string");
+}
+
+// signal 边不受数据口复核影响：规范时序端点（signal_out/signal_in）不
+// 在数据口面——若复核越域会按口缺失断开；复核域限数据边，signal 边
+// 零产出。
+TEST(StaleEdgeReviewTest, SignalEdgesOutsideReviewDomain)
+{
+    const std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces{
+            {"{ga}", {{}, {{"out_str", "string"}}}},
+            {"{gb}", {{{"b_in", "string"}}, {}}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphCompiler::NodeFacesMap faces;
+    faces["B"] = std::vector<GraphCompiler::DocumentFacePort>{
+        {"b_in", "string", "b_in", "input"}};
+    compiler.BindNodeFaces(&faces);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeComponentNode("A", "{ga}"));
+    doc.nodes.push_back(MakeComponentNode("B", "{gb}"));
+    // 规范 signal 边：端点均不在数据口面（signal_out/signal_in 是时序
+    // 坐标系，非数据口声明）。
+    GraphEdgeDto signal_edge =
+        MakeEdge("e_seq", "A", "signal_out", "B", "signal_in");
+    signal_edge.edge_type = "signal";
+    doc.edges.push_back(signal_edge);
+    // 数据对照边：同节点对的数据边复核域内正常存活（口面双双在场且
+    // string→string 兼容）。
+    doc.edges.push_back(MakeEdge("e_data", "A", "out_str", "B", "b_in"));
+
+    const auto review = compiler.ReviewStaleEdges(doc);
+    EXPECT_TRUE(review.stale_edges.empty());
+    EXPECT_TRUE(review.diagnostics.empty());
+}

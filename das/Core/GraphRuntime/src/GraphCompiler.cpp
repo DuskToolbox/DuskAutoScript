@@ -98,6 +98,12 @@ void GraphCompiler::BindEntryFaces(
     repository_fields_ = std::move(repository_fields);
 }
 
+void GraphCompiler::BindFaceTypes(
+    const std::vector<DocumentFaceType>* face_types)
+{
+    face_types_ = face_types;
+}
+
 void GraphCompiler::MergeFacesOntoSurface(
     ManifestPorts&                       ports,
     const std::string&                   node_id,
@@ -785,6 +791,268 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
     }
 
     return diagnostics;
+}
+
+// ---------------------------------------------------------------------------
+// Stored-edge stale review (compile-time auto-disconnect)
+// ---------------------------------------------------------------------------
+
+bool GraphCompiler::NodeCarriesInjectedFaces(
+    const Dto::GraphNodeDto& node) const
+{
+    if (node_faces_ != nullptr
+        && node_faces_->find(node.node_id) != node_faces_->end())
+    {
+        return true;
+    }
+    const auto bound_entry_id = ResolveBoundEntryId(node);
+    return bound_entry_id.has_value() && entry_faces_ != nullptr
+           && entry_faces_->find(*bound_entry_id) != entry_faces_->end();
+}
+
+bool GraphCompiler::IsTypeCompatibleWithRegistry(
+    const std::string& source_type,
+    const std::string& target_type) const
+{
+    if (source_type == target_type)
+    {
+        return true;
+    }
+    // 注册类型闭世界判定（文档 types[] 注册表——图视图根 types section
+    // 的同一数据源）：两侧均可判（内建九词，或经 BindFaceTypes 注册的
+    // 自定义类型）时按声明链接判定——任一侧 compatibleWith 列出对方即
+    // 兼容，未声明的可判配对不兼容。判不了的一侧（未注册且非内建——
+    // Core 无法枚举插件类型）回落 IsTypeCompatible 的 permissive 语义，
+    // 复核不误伤。内建九词撞名的注册条目被内建遮蔽（投影侧「内建胜
+    // 出」的镜像）。
+    const auto& known = GetKnownTypes();
+    const auto  find_registered =
+        [this](const std::string& name) -> const DocumentFaceType*
+    {
+        if (face_types_ == nullptr)
+        {
+            return nullptr;
+        }
+        for (const auto& type : *face_types_)
+        {
+            if (type.name == name)
+            {
+                return &type;
+            }
+        }
+        return nullptr;
+    };
+    const bool source_builtin = known.contains(source_type);
+    const bool target_builtin = known.contains(target_type);
+    // 内建×内建：数值等价族等既有表义直接走 IsTypeCompatible 单一权威
+    // （注册表闭世界不覆盖内建对的判定）。
+    if (source_builtin && target_builtin)
+    {
+        return IsTypeCompatible(source_type, target_type);
+    }
+    const DocumentFaceType* source_registered =
+        source_builtin ? nullptr : find_registered(source_type);
+    const DocumentFaceType* target_registered =
+        target_builtin ? nullptr : find_registered(target_type);
+    const bool source_judgeable =
+        source_builtin || source_registered != nullptr;
+    const bool target_judgeable =
+        target_builtin || target_registered != nullptr;
+    if (!source_judgeable || !target_judgeable)
+    {
+        return IsTypeCompatible(source_type, target_type);
+    }
+    const auto declares_link =
+        [](const DocumentFaceType* entry, const std::string& other)
+    {
+        return entry != nullptr
+               && std::find(
+                      entry->compatible_with.begin(),
+                      entry->compatible_with.end(),
+                      other)
+                      != entry->compatible_with.end();
+    };
+    return declares_link(source_registered, target_type)
+           || declares_link(target_registered, source_type);
+}
+
+GraphCompiler::StaleEdgeReview GraphCompiler::ReviewStaleEdges(
+    const Dto::GraphDocumentDto& document) const
+{
+    StaleEdgeReview review;
+
+    auto node_index = BuildNodeIndex(document);
+    // 口面解析缓存（guid 键，声明面复用；faces 合并在 per-node 本地副本）。
+    std::unordered_map<std::string, ManifestPorts> manifest_cache;
+
+    for (const auto& edge : document.edges)
+    {
+        // 复核域=数据边：signal 边走规范时序坐标系（signal_out/signal_in
+        // 隐式端点+声明执行口），其存亡不随数据口面演化（111.1 现仓边域
+        // 实读定界——数据口复核不触 signal 边）。
+        if (edge.edge_type == "signal")
+        {
+            continue;
+        }
+        auto src_it = node_index.find(edge.source_node_id);
+        auto tgt_it = node_index.find(edge.target_node_id);
+        if (src_it == node_index.end() || tgt_it == node_index.end())
+        {
+            // 缺节点边是 ValidateEdgePorts 的 NodeNotFound 诊断域（图文档
+            // 删节点在 apply 期已有级联），复核不重复处理。
+            continue;
+        }
+        const auto& src_node = *src_it->second;
+        const auto& tgt_node = *tgt_it->second;
+        if (src_node.target.target_kind != "componentRef"
+            || !src_node.target.component_ref.has_value()
+            || tgt_node.target.target_kind != "componentRef"
+            || !tgt_node.target.component_ref.has_value())
+        {
+            continue;
+        }
+        const ManifestPorts src_ports =
+            ResolveNodePorts(src_node, manifest_cache);
+        const ManifestPorts tgt_ports =
+            ResolveNodePorts(tgt_node, manifest_cache);
+        // 口面未解析（无 manifest/catalog/faces 任一来源）= Unresolvable
+        // ComponentGuid 诊断域——组件面未知时判不了口存亡，复核跳过不
+        // 误删。
+        if (!src_ports.was_resolved || !tgt_ports.was_resolved)
+        {
+            continue;
+        }
+        const PortEntry* src_port = nullptr;
+        for (const auto& p : src_ports.outputs)
+        {
+            if (p.port_id == edge.source_port_id)
+            {
+                src_port = &p;
+                break;
+            }
+        }
+        const PortEntry* tgt_port = nullptr;
+        for (const auto& p : tgt_ports.inputs)
+        {
+            if (p.port_id == edge.target_port_id)
+            {
+                tgt_port = &p;
+                break;
+            }
+        }
+
+        StaleEdgeRecord record;
+        record.edge_id = edge.edge_id;
+        record.source_node_id = edge.source_node_id;
+        record.source_port_id = edge.source_port_id;
+        record.target_node_id = edge.target_node_id;
+        record.target_port_id = edge.target_port_id;
+
+        // 复核资格按原因侧锚定（「口面演化后复核存量边」的精确域）：
+        // 口消失的原因侧节点必须携带注入 faces（演化证据）；类型不配须
+        // 至少一侧携带。faces 条目缺席=编译宿主未跑预备 pass，不是口面
+        // 演化为空——缺席侧判不了演化，跳过防误删。
+        bool stale = false;
+        if (src_port == nullptr)
+        {
+            record.reason = StaleEdgeRecord::Reason::SourcePortMissing;
+            stale = NodeCarriesInjectedFaces(src_node);
+        }
+        else if (tgt_port == nullptr)
+        {
+            record.reason = StaleEdgeRecord::Reason::TargetPortMissing;
+            stale = NodeCarriesInjectedFaces(tgt_node);
+        }
+        else if (!IsTypeCompatibleWithRegistry(
+                     src_port->port_type,
+                     tgt_port->port_type))
+        {
+            record.reason = StaleEdgeRecord::Reason::TypeIncompatible;
+            record.source_type = src_port->port_type;
+            record.target_type = tgt_port->port_type;
+            stale = NodeCarriesInjectedFaces(src_node)
+                    || NodeCarriesInjectedFaces(tgt_node);
+        }
+        if (!stale)
+        {
+            continue;
+        }
+
+        CompileEdgeDiagnostic diagnostic;
+        diagnostic.kind = CompileDiagnosticKind::StaleEdgeDisconnect;
+        diagnostic.edge_id = edge.edge_id;
+        diagnostic.expected_type = record.target_type;
+        diagnostic.actual_type = record.source_type;
+        switch (record.reason)
+        {
+        case StaleEdgeRecord::Reason::SourcePortMissing:
+            diagnostic.node_id = edge.source_node_id;
+            diagnostic.port_id = edge.source_port_id;
+            diagnostic.direction = CompileEdgeDiagnostic::PortDirection::Output;
+            diagnostic.message = DAS_FMT_NS::format(
+                "stored edge '{}' disconnects at compile review: source "
+                "port '{}.{}' no longer exists on the node's current port "
+                "face",
+                edge.edge_id,
+                edge.source_node_id,
+                edge.source_port_id);
+            DAS_CORE_LOG_WARN(
+                "stored edge {} disconnects at compile review: source port "
+                "{}.{} no longer exists on the node's current port face",
+                edge.edge_id,
+                edge.source_node_id,
+                edge.source_port_id);
+            break;
+        case StaleEdgeRecord::Reason::TargetPortMissing:
+            diagnostic.node_id = edge.target_node_id;
+            diagnostic.port_id = edge.target_port_id;
+            diagnostic.direction = CompileEdgeDiagnostic::PortDirection::Input;
+            diagnostic.message = DAS_FMT_NS::format(
+                "stored edge '{}' disconnects at compile review: target "
+                "port '{}.{}' no longer exists on the node's current port "
+                "face",
+                edge.edge_id,
+                edge.target_node_id,
+                edge.target_port_id);
+            DAS_CORE_LOG_WARN(
+                "stored edge {} disconnects at compile review: target port "
+                "{}.{} no longer exists on the node's current port face",
+                edge.edge_id,
+                edge.target_node_id,
+                edge.target_port_id);
+            break;
+        case StaleEdgeRecord::Reason::TypeIncompatible:
+            diagnostic.node_id = edge.target_node_id;
+            diagnostic.port_id = edge.target_port_id;
+            diagnostic.direction = CompileEdgeDiagnostic::PortDirection::Input;
+            diagnostic.message = DAS_FMT_NS::format(
+                "stored edge '{}' disconnects at compile review: source port "
+                "'{}.{}' type '{}' is incompatible with target port '{}.{}' "
+                "type '{}'",
+                edge.edge_id,
+                edge.source_node_id,
+                edge.source_port_id,
+                record.source_type,
+                edge.target_node_id,
+                edge.target_port_id,
+                record.target_type);
+            DAS_CORE_LOG_WARN(
+                "stored edge {} disconnects at compile review: source port "
+                "{}.{} type {} is incompatible with target port {}.{} type "
+                "{}",
+                edge.edge_id,
+                edge.source_node_id,
+                edge.source_port_id,
+                record.source_type,
+                edge.target_node_id,
+                edge.target_port_id,
+                record.target_type);
+            break;
+        }
+        review.diagnostics.push_back(std::move(diagnostic));
+        review.stale_edges.push_back(std::move(record));
+    }
+    return review;
 }
 
 // ---------------------------------------------------------------------------
@@ -2147,7 +2415,9 @@ yyjson::value GraphCompiler::DiagnosticToWireContract(
     const bool is_non_blocking_lint =
         kind_value == static_cast<int>(CompileDiagnosticKind::UnknownPortType)
         || kind_value
-               == static_cast<int>(CompileDiagnosticKind::LoopBodyDataLeak);
+               == static_cast<int>(CompileDiagnosticKind::LoopBodyDataLeak)
+        || kind_value
+               == static_cast<int>(CompileDiagnosticKind::StaleEdgeDisconnect);
     obj[std::string_view("severity")] = std::make_pair(
         std::string_view{is_non_blocking_lint ? "warning" : "error"},
         yyjson::copy_string);
@@ -2211,6 +2481,16 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     auto required_diagnostics =
         ValidateRequiredFields(document, required_fields);
     for (const auto& d : required_diagnostics)
+    {
+        plan.diagnostics.push_back(DiagnosticToJson(d));
+    }
+
+    // 存储边复核（口面解析完成后、产物冻结前）：按节点当前口面复核数
+    // 据边，失效边产 WARN 诊断随编译输出返回。写回是 Apply 语境的行为
+    // （编译器本体只产诊断零变异——纯 Get/仓条目/OnTick 编译路径读无副
+    // 作用）；会话 Apply 路径消费 stale_edges 集合作文档变更。
+    auto stale_review = ReviewStaleEdges(document);
+    for (const auto& d : stale_review.diagnostics)
     {
         plan.diagnostics.push_back(DiagnosticToJson(d));
     }
