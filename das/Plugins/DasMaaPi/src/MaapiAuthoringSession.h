@@ -76,7 +76,8 @@ namespace Plugins::DasMaaPi
         MaapiAuthoringSession() = default;
         explicit MaapiAuthoringSession(
             AcceptedSettingsDto settings,
-            int64_t             revision = 0);
+            int64_t             revision = 0,
+            bool                component_context = false);
 
         DAS_IMPL GetDocument(
             ExportInterface::IDasJson*  p_request_json,
@@ -118,6 +119,12 @@ namespace Plugins::DasMaaPi
     private:
         AcceptedSettingsDto settings_{};
         int64_t             revision_ = 0;
+        // 图内节点下钻编辑（IDasTaskComponent 语境）标记：工厂从 context_json
+        // 读 "componentContext"（engaged-only，缺省 false）。true 时投影暴露
+        // 开关伴生 bool 字段行与 ports section 推导；false = standalone（任务
+        // 编排直开）与现状逐字节一致。请求作用域数据，不入 settings_ 不
+        // 序列化。
+        bool component_context_ = false;
         // session 内存态，不进 AcceptedSettingsDto 不序列化
         // （设备状态会变 — adb 拔出/换机，持久化 cache 会陈旧）。重启时
         // controllerAdbDevice 持久化字段仍在但 cache 空 → 用户重扫描即可。

@@ -706,6 +706,74 @@ namespace Das::Plugins::DasMaaPi
             return {4, 0};
         }
 
+        // 暴露开关伴生 bool 字段（仅 component 语境投影）：字段名派生规则 =
+        // input.<optionKey>_exposed —— 派生稳定可反查（setValue 路由按本规则
+        // 剥前缀/后缀还原 option key；optionKey 同时是端口 id 与暴露状态存储
+        // 键）。
+        constexpr std::string_view kExposedInputFieldPrefix = "input.";
+        constexpr std::string_view kExposedInputFieldSuffix = "_exposed";
+
+        std::string MakeExposedInputFieldName(std::string_view option_key)
+        {
+            std::string name(kExposedInputFieldPrefix);
+            name += option_key;
+            name += kExposedInputFieldSuffix;
+            return name;
+        }
+
+        // 端口 id 纪律（与 Core 文档校验器口名纪律同语义 lockstep：非空、
+        // UTF-8 字节数≤100、不以 "$" 开头）。option key 违纪则该字段不可暴露
+        // ——否则推导出的 ports[].id 会让 Core 校验器整文档拒绝（编辑面被
+        // 破坏），宁可跳过伴生字段。
+        bool OptionKeyUsableAsPortId(std::string_view key)
+        {
+            return !key.empty() && key.size() <= 100 && key.front() != '$';
+        }
+
+        // 暴露为节点输入后的端口类型映射（九词域）：与 MapOptionType 同一
+        // 声明形态判据的端口词映射——switch→bool、select→string、input 单
+        // 字段按 pipeline_type→int/float/double/string；checkbox
+        // （array<string>）与 input 多字段（object）无九词映射 → nullopt =
+        // 该 option 不可暴露（不生成伴生字段）。端口 type 只出自本映射，
+        // 不透传任意字段声明串。
+        std::optional<std::string_view> MapOptionPortType(
+            const PiOptionDto& dto)
+        {
+            if (dto.type == "switch")
+            {
+                return std::string_view("bool");
+            }
+            if (dto.type == "select" || dto.type.empty())
+            {
+                return std::string_view("string");
+            }
+            if (dto.type == "input")
+            {
+                if (dto.inputs.size() > 1)
+                {
+                    return std::nullopt;
+                }
+                if (!dto.inputs.empty() && dto.inputs.front().pipeline_type)
+                {
+                    const auto& pt = *dto.inputs.front().pipeline_type;
+                    if (pt == "int")
+                    {
+                        return std::string_view("int");
+                    }
+                    if (pt == "float")
+                    {
+                        return std::string_view("float");
+                    }
+                    if (pt == "double")
+                    {
+                        return std::string_view("double");
+                    }
+                }
+                return std::string_view("string");
+            }
+            return std::nullopt;
+        }
+
         yyjson::value OptionCandidates(
             const PiOptionDto& dto,
             const PiCatalog*   catalog,
@@ -2774,7 +2842,8 @@ namespace Das::Plugins::DasMaaPi
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
         std::vector<PiDiagnosticDto>*       projection_diagnostics,
-        const std::vector<AdbDeviceInfo>*   device_cache)
+        const std::vector<AdbDeviceInfo>*   device_cache,
+        bool                                component_context)
     {
         yyjson::value document(Object());
         auto          obj = document.as_object();
@@ -3373,6 +3442,30 @@ namespace Das::Plugins::DasMaaPi
                     }
                     const auto* current =
                         FindOptionSettings(first_task.options, option_name);
+                    // 暴露开关伴生 bool 字段行（仅 component
+                    // 语境）：fieldLayout 排目标字段行的紧邻上一行——fields[]
+                    // 声明序即 layout 行序
+                    // （分类桶保持相对顺序），伴生字段先于目标字段 emplace 即
+                    // 得邻接。可暴露性 = 端口类型九词映射 + 端口 id 纪律 +
+                    // 伴生字段名不与同 task 其它声明 option 撞名（撞名则跳过
+                    // 伴生，目标字段照常投影）。伴生 bool 的编辑 = 既有
+                    // setValue（路由到暴露状态存储，见 ApplyDocumentSetValue
+                    // 伴生分支）。CheckBox 控件/valueType=8 渲染链全现成。
+                    if (component_context
+                        && MapOptionPortType(option_dto->dto).has_value()
+                        && OptionKeyUsableAsPortId(option_name)
+                        && !ContainsName(
+                            catalog_task->dto.option,
+                            option_name
+                                + std::string(kExposedInputFieldSuffix)))
+                    {
+                        fields.as_array()->emplace_back(MakePropertyField(
+                            MakeExposedInputFieldName(option_name),
+                            Translate("field.exposeAsNodeInput"),
+                            8, // valueType=bool → UI CheckBox
+                            0, // inputType=plain
+                            yyjson::value(false)));
+                    }
                     fields.as_array()->emplace_back(MakeOptionPropertyField(
                         std::string{"input."} + option_name,
                         option_dto->dto,

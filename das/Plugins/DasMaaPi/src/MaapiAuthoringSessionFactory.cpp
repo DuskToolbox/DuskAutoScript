@@ -23,6 +23,7 @@ namespace Plugins::DasMaaPi
         }
         AcceptedSettingsDto settings;
         int64_t             revision = 0;
+        bool                component_context = false;
         if (auto context = ReadJson(p_context_json))
         {
             settings = ParseAcceptedSettings(*context);
@@ -37,10 +38,25 @@ namespace Plugins::DasMaaPi
                     revision = *rev;
                 }
             }
+            // 图内节点下钻编辑（IDasTaskComponent 语境）标记：engaged-only
+            // （键缺席/非布尔一律 false = standalone 行为逐字节一致）。true
+            // 时投影器生成暴露开关伴生 bool 字段行与 ports section 推导；
+            // 暴露状态仅 component 语境可写。读法与 revision 通道同款
+            // （contains + 类型安全 as_bool）。
+            if (obj && obj->contains(std::string_view("componentContext")))
+            {
+                if (auto flag =
+                        (*obj)[std::string_view("componentContext")].as_bool())
+                {
+                    component_context = *flag;
+                }
+            }
         }
 
-        auto* session =
-            new MaapiAuthoringSession(std::move(settings), revision);
+        auto* session = new MaapiAuthoringSession(
+            std::move(settings),
+            revision,
+            component_context);
         session->AddRef();
         *pp_out_session = session;
         return DAS_S_OK;

@@ -27,6 +27,7 @@
     "field.proxyAddress": "代理地址",
     "field.updateChannel": "检查更新通道",
     "field.failFast": "失败即停",
+    "field.exposeAsNodeInput": "作为节点输入",
     "field.scheduleKind": "定时方式",
     "field.scheduleInterval": "间隔（分钟）",
     "field.scheduleDailyTime": "每日时间",

@@ -27,6 +27,7 @@
     "field.proxyAddress": "Proxy Address",
     "field.updateChannel": "Update Channel",
     "field.failFast": "Fail fast",
+    "field.exposeAsNodeInput": "Use as node input",
     "field.scheduleKind": "Schedule kind",
     "field.scheduleInterval": "Interval (minutes)",
     "field.scheduleDailyTime": "Daily time",

@@ -67,14 +67,16 @@ namespace Das::Plugins::DasMaaPi
     // D-84-07: 暴露 BuildApplyResult 给 session-level 测试做严格 envelope
     // 校验。command_result 可选业务结果回传（checkUpdate → progressKey）。
     // 更新五字段与 applyUpdate 按钮态由进程级 UpdateCheckStore 条目驱动。
-    // device_cache 供 adbDevice 字段投影 candidates。
+    // device_cache 供 adbDevice 字段投影 candidates。component_context 同
+    // BuildDocument 语境门控语义（缺省 false = standalone）。
     yyjson::value BuildApplyResult(
         const AcceptedSettingsDto&        settings,
         int64_t                           revision,
         std::vector<PiDiagnosticDto>      diagnostics,
         bool                              project_document = true,
         const yyjson::value*              command_result = nullptr,
-        const std::vector<AdbDeviceInfo>* device_cache = nullptr);
+        const std::vector<AdbDeviceInfo>* device_cache = nullptr,
+        bool                              component_context = false);
 } // namespace Das::Plugins::DasMaaPi
 
 namespace
@@ -6915,6 +6917,529 @@ TEST(MaapiProjectionTest, ApplyDocumentSetValueOnPiInputFieldPersistsToTask)
     EXPECT_FALSE(bad_ok);
     ASSERT_FALSE(diagnostics.empty());
     EXPECT_EQ(diagnostics.front().severity, "error");
+}
+
+// ============================================================================
+// 暴露开关伴生 bool 字段行（componentContext 语境门控）。
+//
+// 链路：UI 从图节点下钻时请求体携带组件语境标记 → 管线透传进 CreateSession
+// 的 context_json → 工厂读 "componentContext"（engaged-only）→ session 成员
+// → 投影器门控。standalone（任务编排直开，无标记）与改造前现状逐字节一致
+// ——暴露状态仅 component 语境可写。
+// ============================================================================
+namespace
+{
+    // fieldLayout 展平：按 section 顺序收集叶子 fieldName（row 内叶子按 row
+    // 内顺序展开；commandId 叶子跳过）。fields[] 声明序即 layout 行序，伴生
+    // 字段在目标字段紧邻上方 → 展平序列中 index(伴生)+1 == index(目标)。
+    std::vector<std::string> FlattenLayoutFieldNames(
+        const yyjson::value& document)
+    {
+        std::vector<std::string> names;
+        auto                     doc_obj = document.as_object();
+        if (!doc_obj || !doc_obj->contains(std::string_view("fieldLayout")))
+        {
+            return names;
+        }
+        auto layout = (*doc_obj)[std::string_view("fieldLayout")].as_array();
+        if (!layout)
+        {
+            return names;
+        }
+        for (const auto& section : *layout)
+        {
+            auto section_obj = section.as_object();
+            if (!section_obj
+                || !section_obj->contains(std::string_view("entries")))
+            {
+                continue;
+            }
+            auto entries =
+                (*section_obj)[std::string_view("entries")].as_array();
+            if (!entries)
+            {
+                continue;
+            }
+            for (const auto& entry : *entries)
+            {
+                auto entry_obj = entry.as_object();
+                if (!entry_obj)
+                {
+                    continue;
+                }
+                if (entry_obj->contains(std::string_view("fieldName")))
+                {
+                    names.emplace_back(
+                        (*entry_obj)[std::string_view("fieldName")]
+                            .as_string()
+                            .value_or(""));
+                    continue;
+                }
+                if (entry_obj->contains(std::string_view("row")))
+                {
+                    auto row = (*entry_obj)[std::string_view("row")].as_array();
+                    if (!row)
+                    {
+                        continue;
+                    }
+                    for (const auto& leaf : *row)
+                    {
+                        auto leaf_obj = leaf.as_object();
+                        if (leaf_obj
+                            && leaf_obj->contains(
+                                std::string_view("fieldName")))
+                        {
+                            names.emplace_back(
+                                (*leaf_obj)[std::string_view("fieldName")]
+                                    .as_string()
+                                    .value_or(""));
+                        }
+                    }
+                }
+            }
+        }
+        return names;
+    }
+} // namespace
+
+// standalone 钉：无标记 context 的投影与伴生字段机制落地前（基线采集自
+// 改造前树）逐字节一致——含 fields/fieldLayout/formSequence/actionCatalog/
+// commands 全 section。任何伴生字段/ports section 泄漏进 standalone 都会
+// 在此转红。
+TEST(MaapiProjectionTest, StandaloneProjectionMatchesPreChangeBaseline)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakePiInputDomainMockCatalog();
+    AcceptedSettingsDto settings = MakePiInputDomainSettings();
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto actual = Das::Utils::SerializeYyjsonValue(document, /*pretty=*/true)
+                      .value_or("");
+    // 基线在伴生字段机制落地前于同一 mock 上采集（en 缺省 locale 的确定
+    // 性序列化）。本用例改造前后都必须绿——它是「standalone 零变化」的
+    // 字节级证明。
+    const std::string baseline = R"maapi({
+  "contractVersion": 1,
+  "viewKind": "formSequence",
+  "revision": 0,
+  "fields": [
+    {
+      "name": "adapter.interfacePath",
+      "label": "ProjectInterface path",
+      "valueType": 4,
+      "inputType": 0,
+      "value": ""
+    },
+    {
+      "name": "adapter.executionPolicy.failFast",
+      "label": "Fail fast",
+      "valueType": 8,
+      "inputType": 0,
+      "value": true
+    },
+    {
+      "name": "controllerName",
+      "label": "控制器",
+      "valueType": 4,
+      "inputType": 1,
+      "value": "",
+      "candidates": []
+    },
+    {
+      "name": "resourceName",
+      "label": "资源",
+      "valueType": 4,
+      "inputType": 1,
+      "value": "",
+      "candidates": []
+    },
+    {
+      "name": "presetName",
+      "label": "预设",
+      "valueType": 4,
+      "inputType": 1,
+      "value": "",
+      "candidates": []
+    },
+    {
+      "name": "language",
+      "label": "语言",
+      "valueType": 4,
+      "inputType": 1,
+      "value": "",
+      "candidates": []
+    },
+    {
+      "name": "schedule.kind",
+      "label": "Schedule kind",
+      "valueType": 4,
+      "inputType": 1,
+      "value": "",
+      "candidates": [
+        {
+          "value": "off",
+          "label": "Off"
+        },
+        {
+          "value": "interval",
+          "label": "Interval"
+        },
+        {
+          "value": "daily",
+          "label": "Daily"
+        }
+      ]
+    },
+    {
+      "name": "input.stage",
+      "label": "stage",
+      "valueType": 4,
+      "inputType": 1,
+      "value": "1-1",
+      "candidates": [
+        {
+          "value": "1-1",
+          "label": "1-1"
+        }
+      ]
+    },
+    {
+      "name": "input.retry",
+      "label": "retry",
+      "valueType": 0,
+      "inputType": 0,
+      "value": 3
+    },
+    {
+      "name": "input.use-medicine",
+      "label": "use-medicine",
+      "valueType": 32,
+      "inputType": 2,
+      "value": [],
+      "candidates": [
+        {
+          "value": "1-1",
+          "label": "1-1"
+        }
+      ]
+    },
+    {
+      "name": "input.notify",
+      "label": "notify",
+      "valueType": 8,
+      "inputType": 0,
+      "value": true
+    }
+  ],
+  "fieldLayout": [
+    {
+      "id": "schedule",
+      "label": "Schedule",
+      "defaultExpanded": true,
+      "entries": [
+        {
+          "fieldName": "schedule.kind"
+        }
+      ]
+    },
+    {
+      "id": "project",
+      "label": "Project",
+      "defaultExpanded": true,
+      "entries": [
+        {
+          "fieldName": "adapter.interfacePath"
+        },
+        {
+          "fieldName": "adapter.executionPolicy.failFast"
+        },
+        {
+          "fieldName": "controllerName"
+        },
+        {
+          "fieldName": "resourceName"
+        },
+        {
+          "fieldName": "presetName"
+        },
+        {
+          "fieldName": "language"
+        },
+        {
+          "fieldName": "input.stage"
+        },
+        {
+          "fieldName": "input.retry"
+        },
+        {
+          "fieldName": "input.use-medicine"
+        },
+        {
+          "fieldName": "input.notify"
+        }
+      ]
+    }
+  ],
+  "formSequence": {
+    "items": [
+      {
+        "id": "item_daily_farm",
+        "componentGuid": "69F20008-0000-4000-8000-000000000001",
+        "targetKind": "componentRef",
+        "label": "DailyFarm",
+        "description": "",
+        "fields": [
+          {
+            "name": "options.stage",
+            "label": "stage",
+            "valueType": 4,
+            "inputType": 1,
+            "value": "1-1",
+            "candidates": [
+              {
+                "value": "1-1",
+                "label": "1-1"
+              }
+            ]
+          },
+          {
+            "name": "options.retry",
+            "label": "retry",
+            "valueType": 0,
+            "inputType": 0,
+            "value": 3
+          },
+          {
+            "name": "options.use-medicine",
+            "label": "use-medicine",
+            "valueType": 32,
+            "inputType": 2,
+            "value": [],
+            "candidates": [
+              {
+                "value": "1-1",
+                "label": "1-1"
+              }
+            ]
+          },
+          {
+            "name": "options.notify",
+            "label": "notify",
+            "valueType": 8,
+            "inputType": 0,
+            "value": true
+          }
+        ],
+        "enabled": true,
+        "debugInfo": {
+          "piTaskName": "DailyFarm",
+          "piEntry": "StartDaily"
+        }
+      }
+    ]
+  },
+  "actionCatalog": {
+    "entries": [
+      {
+        "actionId": "DailyFarm",
+        "label": "DailyFarm"
+      }
+    ],
+    "groups": []
+  },
+  "commands": [
+    {
+      "id": "newPreset",
+      "label": "New Preset",
+      "apply": {
+        "kind": "invokeCommand",
+        "payload": {
+          "commandId": "newPreset"
+        }
+      }
+    }
+  ]
+})maapi";
+    EXPECT_EQ(actual, baseline);
+}
+
+// 显式 false == 缺省（默认参数路径与 standalone 显式关闸逐字节一致）。
+TEST(MaapiProjectionTest, ComponentContextExplicitFalseEqualsDefault)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakePiInputDomainMockCatalog();
+    AcceptedSettingsDto settings = MakePiInputDomainSettings();
+
+    auto without_flag = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto with_false = ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0,
+        /*projection_diagnostics=*/nullptr,
+        /*device_cache=*/nullptr,
+        /*component_context=*/false);
+    EXPECT_EQ(
+        Das::Utils::SerializeYyjsonValue(without_flag).value_or(""),
+        Das::Utils::SerializeYyjsonValue(with_false).value_or(""));
+}
+
+// component 钉：带标记投影为每个可暴露字段生成伴生 bool 行
+// （input.<optionKey>_exposed，label「作为节点输入」走 host i18n），
+// fieldLayout 排目标字段行的紧邻上一行；checkbox（array<string>，无九词
+// 映射）不生成伴生。文档整体过 Core 校验器。
+TEST(MaapiProjectionTest, ComponentContextProjectsCompanionExposedToggles)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakePiInputDomainMockCatalog();
+    AcceptedSettingsDto settings = MakePiInputDomainSettings();
+
+    std::vector<PiDiagnosticDto> diags;
+    auto                         document = ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0,
+        &diags,
+        /*device_cache=*/nullptr,
+        /*component_context=*/true);
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    // select/input(int)/switch 三类可暴露字段各一伴生 bool 行。
+    for (const auto* companion :
+         {"input.stage_exposed", "input.retry_exposed", "input.notify_exposed"})
+    {
+        EXPECT_EQ(CountFieldsWithName(document, companion), 1u) << companion;
+        auto field = FindRootField(document, companion);
+        ASSERT_TRUE(field.has_value()) << companion;
+        auto field_obj = field->as_object();
+        ASSERT_TRUE(field_obj) << companion;
+        EXPECT_EQ(
+            (*field_obj)[std::string_view("valueType")].as_sint().value_or(-1),
+            8)
+            << companion; // bool → UI CheckBox
+        EXPECT_EQ(
+            (*field_obj)[std::string_view("inputType")].as_sint().value_or(-1),
+            0)
+            << companion;
+        EXPECT_FALSE((*field_obj)[std::string_view("label")]
+                         .as_string()
+                         .value_or("")
+                         .empty())
+            << companion;
+    }
+
+    // checkbox（array<string>，无九词映射）不暴露——无伴生字段。
+    EXPECT_EQ(CountFieldsWithName(document, "input.use-medicine_exposed"), 0u);
+
+    // 邻接：伴生行在目标字段行的紧邻上方（展平序 index(伴生)+1 ==
+    // index(目标)）。
+    const auto leaves = FlattenLayoutFieldNames(document);
+    auto       index_of = [&leaves](const std::string& name) -> int
+    {
+        auto it = std::find(leaves.begin(), leaves.end(), name);
+        return it == leaves.end() ? -1 : static_cast<int>(it - leaves.begin());
+    };
+    for (const auto& [companion, target] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"input.stage_exposed", "input.stage"},
+             {"input.retry_exposed", "input.retry"},
+             {"input.notify_exposed", "input.notify"}})
+    {
+        const int companion_index = index_of(companion);
+        const int target_index = index_of(target);
+        ASSERT_GE(companion_index, 0) << companion;
+        ASSERT_GE(target_index, 0) << target;
+        EXPECT_EQ(companion_index + 1, target_index)
+            << companion << " must sit immediately above " << target;
+    }
+
+    // standalone（同 settings 无标记）零伴生字段零新 section。
+    auto standalone = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    EXPECT_EQ(CountFieldsWithName(standalone, "input.stage_exposed"), 0u);
+    EXPECT_EQ(CountFieldsWithName(standalone, "input.retry_exposed"), 0u);
+    EXPECT_EQ(CountFieldsWithName(standalone, "input.notify_exposed"), 0u);
+    auto standalone_obj = standalone.as_object();
+    ASSERT_TRUE(standalone_obj);
+    EXPECT_FALSE(standalone_obj->contains(std::string_view("ports")));
+    EXPECT_FALSE(standalone_obj->contains(std::string_view("types")));
+}
+
+// 会话级钉：真实工厂读 context_json 的 "componentContext"（engaged-only，
+// 缺省/非布尔一律 false）——带标记的会话文档含伴生字段行，缺省 context
+// 的会话文档与现状一致（无伴生无 ports/types section）。
+TEST_F(MaapiAuthoringFixture, ComponentContextFlagGatesSessionDocument)
+{
+    auto interface_path =
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
+    const std::string base_context =
+        R"({"adapter":{"interfacePath":")" + interface_path
+        + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}";
+
+    // 缺省 context：无 componentContext 键 → standalone 形态。
+    {
+        auto          session = CreateSession(base_context);
+        yyjson::value document;
+        {
+            DasPtr<Das::ExportInterface::IDasJson> doc_json;
+            ASSERT_EQ(session->GetDocument(nullptr, doc_json.Put()), DAS_S_OK);
+            document = DocumentOfGet(doc_json.Get());
+        }
+        auto doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj);
+        auto fields = (*doc_obj)[std::string_view("fields")].as_array();
+        ASSERT_TRUE(fields);
+        for (const auto& field : *fields)
+        {
+            auto field_obj = field.as_object();
+            ASSERT_TRUE(field_obj);
+            const auto name =
+                (*field_obj)[std::string_view("name")].as_string().value_or("");
+            EXPECT_FALSE(name.ends_with("_exposed")) << name;
+        }
+        EXPECT_FALSE(doc_obj->contains(std::string_view("ports")));
+        EXPECT_FALSE(doc_obj->contains(std::string_view("types")));
+    }
+
+    // 带标记 context：文档含伴生 bool 字段行。
+    {
+        const std::string component_context_json =
+            "{\"componentContext\":true,\"adapter\":{\"interfacePath\":\""
+            + interface_path
+            + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
+              "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}";
+        auto          session = CreateSession(component_context_json);
+        yyjson::value document;
+        {
+            DasPtr<Das::ExportInterface::IDasJson> doc_json;
+            ASSERT_EQ(session->GetDocument(nullptr, doc_json.Put()), DAS_S_OK);
+            document = DocumentOfGet(doc_json.Get());
+        }
+        size_t companion_count = 0;
+        auto   doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj);
+        auto fields = (*doc_obj)[std::string_view("fields")].as_array();
+        ASSERT_TRUE(fields);
+        for (const auto& field : *fields)
+        {
+            auto field_obj = field.as_object();
+            ASSERT_TRUE(field_obj);
+            const auto name =
+                (*field_obj)[std::string_view("name")].as_string().value_or("");
+            if (name.ends_with("_exposed") && name.starts_with("input."))
+            {
+                ++companion_count;
+            }
+        }
+        EXPECT_GE(companion_count, 1u);
+    }
 }
 
 // Round-trip 持久化 RED: settings.pi.pretasks 序列化→parse→project 必须

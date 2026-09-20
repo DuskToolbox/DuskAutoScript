@@ -193,8 +193,10 @@ namespace Plugins::DasMaaPi
 
     MaapiAuthoringSession::MaapiAuthoringSession(
         AcceptedSettingsDto settings,
-        int64_t             revision)
-        : settings_(std::move(settings)), revision_(revision)
+        int64_t             revision,
+        bool                component_context)
+        : settings_(std::move(settings)), revision_(revision),
+          component_context_(component_context)
     {
     }
 
@@ -213,8 +215,12 @@ namespace Plugins::DasMaaPi
         // diagnostics 数组（即使空）。BuildDocument 既投影 document 又填充
         // diagnostics，envelope 同级包装二者（与 Compile 对称）。
         std::vector<PiDiagnosticDto> diagnostics;
-        auto                         document =
-            BuildDocument(settings_, revision_, diagnostics, &device_cache_);
+        auto                         document = BuildDocument(
+            settings_,
+            revision_,
+            diagnostics,
+            &device_cache_,
+            component_context_);
 
         yyjson::value envelope(Das::Utils::MakeYyjsonObject());
         auto          env_obj = envelope.as_object();
@@ -381,7 +387,8 @@ namespace Plugins::DasMaaPi
             std::move(diagnostics),
             /*project_document=*/kind != "uiEvent",
             command_result ? &*command_result : nullptr,
-            &device_cache_);
+            &device_cache_,
+            component_context_);
 
         auto wrapped = WrapJson(std::move(result_json));
         *pp_out_result_json = wrapped.Get();
