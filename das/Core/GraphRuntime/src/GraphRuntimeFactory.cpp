@@ -2375,13 +2375,19 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
         // compile path injects via SetPortSurfaceProvider — connectGraphPorts
         // derives the stored edge_type from the endpoint port categories
         // through it (canonical signal port names resolve with no
-        // declaration; undeclared endpoints reject).
+        // declaration; undeclared endpoints reject). The session's injected
+        // faces (nodeFaces/entryFaces) ride along: connect endpoint
+        // resolution consumes the same knowledge source the compile path and
+        // the canvas projection use — a dynamic face port the pre-check
+        // allows is accepted by the dispatch too (同一口能连=编译不拒).
         const int32_t version_before_apply = p->document.version;
         auto r = Das::Core::GraphRuntime::Contract::ApplyAuthoringChange(
             p->document,
             change,
             valid_action_ids,
-            MakeCatalogFromState(*p));
+            MakeCatalogFromState(*p),
+            &p->node_faces,
+            &p->entry_faces);
         // 编译期自动断线写回（Apply 专属使能——判别机制即调用位本身：
         // 会话 Apply 是唯一可写入口，Get/Compile/OnTick 三条编译路径不经
         // 此处，读无副作用）。变更成功且 revision 推进（viewData 通道类

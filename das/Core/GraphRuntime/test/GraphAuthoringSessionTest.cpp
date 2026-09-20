@@ -2645,7 +2645,8 @@ namespace
     // 调用节点签名口物化通道（addNodePort portId 稳定物化 id）已随图文档
     // ports 分区退役（口面改经 entryFaces 现算——编译侧按节点并入由
     // EntryFacesMergeOntoBoundCallNode 锁定；分派期对 faces 口的连线端
-    // 点解析沿 faces 通道落地期记录的已知缺口归后续 plan 裁决）。原
+    // 点解析已随 faces 通道落地——ConnectResolvesFacesChannelEndpoints
+    // 锁定 UI 预检与 Apply 分派语义同源）。原
     // InvokeNodePortMaterializationResolvesThroughDispatchAndCompile 用例
     // 测的正是被退役的物化通道，随之删除。
 
@@ -2926,6 +2927,80 @@ namespace
             EXPECT_NE(not_found.find("doc_in"), std::string::npos)
                 << faces_json;
         }
+    }
+
+    // 分派期端点解析吃 faces 通道（UI 预检与服务端 Apply 语义同源）：绑条
+    // 目调用节点的 entryFaces 文档口（doc_in 入向 / doc_out 出向）与非边
+    // 界组件节点的 nodeFaces 文档口（dyn_in）经 connectGraphPorts 建立连
+    // 线——Apply 端点解析消费与编译/投影同源的口面知识（faces 并集，
+    // face 胜出同名声明口），不再落 "port not declared" 拒绝。连线落地后
+    // 编译零 PortNotFound/TypeMismatch（同一口能连=编译不拒）。
+    TEST(GraphAuthoringSessionTest, ConnectResolvesFacesChannelEndpoints)
+    {
+        constexpr std::string_view catalog =
+            R"json([{"actionId":"{gs}","ports":[{"portId":"result","portType":"string","direction":"output"}]},{"actionId":"{g1}","config":[{"name":"repositoryRef","type":"taskRepositoryRef"}]},{"actionId":"{g2}","ports":[{"portId":"take","portType":"string","direction":"input"}]}])json";
+        const std::string context =
+            std::string(R"({"properties":)")
+            + RawGraphContextOf(
+                {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+                 RawGraphNodeOf("n_src", "{gs}"),
+                 R"({"nodeId":"n_call","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{g1}","pluginGuid":"{p}"}},"settings":{"repositoryRef":7}})",
+                 RawGraphNodeOf("n_free", "{g2}"),
+                 RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
+                {})
+            + R"(,"actionCatalog":)" + std::string(catalog)
+            + R"(,"entryFaces":[{"entryId":7,"ports":[)"
+            + R"({"id":"doc_in","type":"string","direction":"input"},)"
+            + R"({"id":"doc_out","type":"string","direction":"output"}]}],)"
+            + R"("nodeFaces":[{"nodeId":"n_free","ports":[)"
+            + R"({"id":"dyn_in","type":"string","direction":"input"}]}]})";
+
+        const SessionHandle s{context};
+
+        // ① 图上游值接入被调条目暴露口（entryFaces 入向口作 target）。
+        ApplyChangeExpectOk(
+            s.p,
+            "connectGraphPorts",
+            R"({"fromNodeId":"n_src","fromPortId":"result","toNodeId":"n_call","toPortId":"doc_in"})");
+
+        // ② 被调条目暴露口对外供值（entryFaces 出向口作 source）。
+        ApplyChangeExpectOk(
+            s.p,
+            "connectGraphPorts",
+            R"({"fromNodeId":"n_call","fromPortId":"doc_out","toNodeId":"n_free","toPortId":"take"})");
+
+        // ③ 非边界组件节点的 nodeFaces 文档口作 target。
+        ApplyChangeExpectOk(
+            s.p,
+            "connectGraphPorts",
+            R"({"fromNodeId":"n_src","fromPortId":"result","toNodeId":"n_free","toPortId":"dyn_in"})");
+
+        // 连线落地后编译干净：faces 口是一路声明源，无 PortNotFound、
+        // string→string 无 TypeMismatch。
+        const auto outcome = CompileOutcomeOf(s.p);
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound));
+        EXPECT_FALSE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
+
+        // 编译产物携带 faces 口的绑定坐标（连线端到端有效，非仅 Apply 放
+        // 行）。
+        DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(s.p, nullptr, compiled.Put()),
+            DAS_S_OK);
+        const auto plan_text = Compact(JsonToUtf8(compiled.Get()));
+        EXPECT_NE(
+            plan_text.find("\"targetPortId\":\"doc_in\""),
+            std::string::npos);
+        EXPECT_NE(
+            plan_text.find("\"sourcePortId\":\"doc_out\""),
+            std::string::npos);
+        EXPECT_NE(
+            plan_text.find("\"targetPortId\":\"dyn_in\""),
+            std::string::npos);
     }
 
     // ======================================================================

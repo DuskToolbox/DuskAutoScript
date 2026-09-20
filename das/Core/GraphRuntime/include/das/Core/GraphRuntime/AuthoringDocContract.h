@@ -516,11 +516,22 @@ namespace Contract
     /// other connect endpoint that names no declared port rejects the change
     /// (InvalidOp) instead of silently landing a data edge — as does an
     /// execution/data category mismatch across the endpoint pair.
+    ///
+    /// `node_faces`/`entry_faces` (optional, default null) are the session's
+    /// injected document port faces — the same knowledge source the compile
+    /// path (ResolveNodePorts) and the canvas projection consume. connect
+    /// endpoint resolution consults them first (a face wins over a same-id
+    /// declared port, mirroring the compile-side dedupe), so a connect the
+    /// canvas pre-check allows on an injected dynamic port is accepted here
+    /// too (同一口能连=编译不拒). Null keeps the declared-surface-only
+    /// semantics (faces-less callers see the legacy behavior).
     AuthoringChangeResult ApplyAuthoringChange(
         Dto::GraphDocumentDto&              document,
         const AuthoringChange&              change,
         const std::vector<std::string>&     valid_action_ids = {},
-        const std::optional<ActionCatalog>& action_catalog = std::nullopt);
+        const std::optional<ActionCatalog>& action_catalog = std::nullopt,
+        const GraphCompiler::NodeFacesMap*  node_faces = nullptr,
+        const GraphCompiler::EntryFacesMap* entry_faces = nullptr);
 } // namespace Contract
 
 DAS_CORE_GRAPHRUNTIME_NS_END

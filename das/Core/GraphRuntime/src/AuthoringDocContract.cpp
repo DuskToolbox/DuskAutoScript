@@ -673,16 +673,22 @@ namespace Contract
         /// stored edge_type derivation. The canonical signal port names
         /// resolve execution outright — they are the wire-layer coordinate
         /// system, no component ever declares them; any other port resolves
-        /// through the catalog-declared port surface of the endpoint node's
-        /// component (the caller threads the same session catalog the
-        /// compile path injects). Nullopt = the endpoint names no
-        /// resolvable port, and the change must reject rather than
+        /// through the endpoint node's resolvable port surface, in the same
+        /// precedence the compile path and the canvas projection apply:
+        /// injected faces first (nodeFaces[本节点] ∪ entryFaces[绑条目] —
+        /// face 胜出同名声明口，与 ResolveNodePorts/MapGraphView 同一知
+        /// 识源与去重规则：faces 口能连=编译不拒)，then the catalog-declared
+        /// surface of the endpoint node's component, then the begin/end
+        /// boundary ports stored in node settings. Nullopt = the endpoint
+        /// names no resolvable port, and the change must reject rather than
         /// silently store a mistyped edge.
         std::optional<std::string> ResolveEndpointPortCategory(
             const Dto::GraphDocumentDto&        document,
             const std::optional<ActionCatalog>& action_catalog,
             const std::string&                  node_id,
-            const std::string&                  port_id)
+            const std::string&                  port_id,
+            const GraphCompiler::NodeFacesMap*  node_faces,
+            const GraphCompiler::EntryFacesMap* entry_faces)
         {
             if (port_id == FormSequenceProjector::SignalInPort
                 || port_id == FormSequenceProjector::SignalOutPort)
@@ -694,6 +700,44 @@ namespace Contract
                 if (node.node_id != node_id)
                 {
                     continue;
+                }
+                // faces 注入口（消费与编译/投影同源）：nodeFaces[本节点]，
+                // 其后绑条目的 entryFaces[entryId]（判据复用
+                // BoundRepositoryEntryIdOf 单一逻辑源）——命中按
+                // DerivePortCategory(face.port_type) 归类。
+                if (node_faces != nullptr)
+                {
+                    const auto found = node_faces->find(node.node_id);
+                    if (found != node_faces->end())
+                    {
+                        for (const auto& face : found->second)
+                        {
+                            if (face.port_id == port_id)
+                            {
+                                return DerivePortCategory(face.port_type);
+                            }
+                        }
+                    }
+                }
+                if (entry_faces != nullptr)
+                {
+                    const auto bound_entry_id =
+                        BoundRepositoryEntryIdOf(node, action_catalog);
+                    if (bound_entry_id.has_value())
+                    {
+                        const auto found =
+                            entry_faces->find(std::to_string(*bound_entry_id));
+                        if (found != entry_faces->end())
+                        {
+                            for (const auto& face : found->second)
+                            {
+                                if (face.port_id == port_id)
+                                {
+                                    return DerivePortCategory(face.port_type);
+                                }
+                            }
+                        }
+                    }
                 }
                 const ActionCatalogEntry* entry =
                     FindCatalogEntry(action_catalog, ComponentGuidOf(node));
@@ -2187,7 +2231,9 @@ namespace Contract
             Dto::GraphDocumentDto&              document,
             const AuthoringChange&              change,
             const std::vector<std::string>&     valid_action_ids,
-            const std::optional<ActionCatalog>& action_catalog)
+            const std::optional<ActionCatalog>& action_catalog,
+            const GraphCompiler::NodeFacesMap*  node_faces,
+            const GraphCompiler::EntryFacesMap* entry_faces)
         {
             GraphAuthoringChange gac;
             if (change.kind == "addGraphNode")
@@ -2419,7 +2465,9 @@ namespace Contract
                         document,
                         action_catalog,
                         conn.from_node_id,
-                        conn.from_port_id);
+                        conn.from_port_id,
+                        node_faces,
+                        entry_faces);
                     if (!source_category.has_value())
                     {
                         return {
@@ -2434,7 +2482,9 @@ namespace Contract
                         document,
                         action_catalog,
                         conn.to_node_id,
-                        conn.to_port_id);
+                        conn.to_port_id,
+                        node_faces,
+                        entry_faces);
                     if (!target_category.has_value())
                     {
                         return {
@@ -3136,11 +3186,13 @@ namespace Contract
         Dto::GraphDocumentDto&              document,
         const AuthoringChange&              change,
         const std::vector<std::string>&     valid_action_ids,
-        const std::optional<ActionCatalog>& action_catalog)
+        const std::optional<ActionCatalog>& action_catalog,
+        const GraphCompiler::NodeFacesMap*  node_faces,
+        const GraphCompiler::EntryFacesMap* entry_faces)
     {
         // 线性⊂图法则前门：图文档 + 线性 change kinds（item 家族与
-        // formSequenceItem 定向 setValue）一律 InvalidOp 拒绝，拒绝零
-        // 突变——图文档根本不进线性变更路径（线性反向投影重建会丢
+        // formSequenceItem 定向 setValue）一律 InvalidOp 拒绝，拒绝零突
+        // 变——图文档根本不进线性变更路径（线性反向投影重建会丢
         // viewData/节点 label/动态口分区，守卫使该路径不可达）。
         if (!IsLinearMode(document) && IsLinearOnlyChange(change))
         {
@@ -3157,7 +3209,9 @@ namespace Contract
                       document,
                       change,
                       valid_action_ids,
-                      action_catalog);
+                      action_catalog,
+                      node_faces,
+                      entry_faces);
         if (r.Ok() && BumpsRevision(change.kind))
         {
             ++document.version;
