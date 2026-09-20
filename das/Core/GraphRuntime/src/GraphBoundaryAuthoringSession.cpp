@@ -457,6 +457,421 @@ namespace
         }
         return true;
     }
+
+    // ------------------------------------------------------------------
+    // 变更词表分派（全部既有 kind 字符串——会话把 item 家族与
+    // addNodePort 家族解释成口操作，与 MaaPI 把 item 家族解释成任务操作
+    // 同构；payload 形状遵循文档协议 change 校验层的锁形——上游管线在
+    // 会话分派前已校验，此处再作语义校验（纪律/方向门/唯一性））。
+    // ------------------------------------------------------------------
+
+    Contract::Diagnostic MakeInfoDiagnostic(std::string message)
+    {
+        Contract::Diagnostic diagnostic;
+        diagnostic.severity = "info";
+        diagnostic.message = std::move(message);
+        return diagnostic;
+    }
+
+    std::optional<std::string> PayloadString(
+        const yyjson::value& payload,
+        std::string_view     key)
+    {
+        auto obj = payload.as_object();
+        if (!obj || !obj->contains(key))
+        {
+            return std::nullopt;
+        }
+        auto value = (*obj)[key].as_string();
+        if (!value)
+        {
+            return std::nullopt;
+        }
+        return std::string(*value);
+    }
+
+    std::optional<int64_t> PayloadInt(
+        const yyjson::value& payload,
+        std::string_view     key)
+    {
+        auto obj = payload.as_object();
+        if (!obj || !obj->contains(key))
+        {
+            return std::nullopt;
+        }
+        return (*obj)[key].as_int();
+    }
+
+    std::string_view ComponentGuidTextOfRole(
+        GraphBoundaryAuthoringSession::BoundaryRole role)
+    {
+        return role == GraphBoundaryAuthoringSession::BoundaryRole::kBegin
+                   ? Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID
+                   : Das::Core::GraphRuntime::GRAPH_END_COMPONENT_GUID;
+    }
+
+    std::string_view RoleDirectionOf(
+        GraphBoundaryAuthoringSession::BoundaryRole role)
+    {
+        return role == GraphBoundaryAuthoringSession::BoundaryRole::kBegin
+                   ? std::string_view("input")
+                   : std::string_view("output");
+    }
+
+    // 条目 id 分配（照稳定口 id 分配模式）："p_" 前缀计数器 + 现有 id
+    // 扫描防撞，首口 p_1。条目 id 即口 id（寻址键），文档内必须唯一。
+    std::string AllocateBoundaryPortId(
+        const std::vector<BoundaryPortEntry>& ports)
+    {
+        std::set<std::string> existing;
+        for (const auto& port : ports)
+        {
+            existing.insert(port.id);
+        }
+        std::size_t counter = existing.size() + 1;
+        std::string candidate_id;
+        do
+        {
+            candidate_id = "p_" + std::to_string(counter);
+            ++counter;
+        } while (existing.count(candidate_id) != 0);
+        return candidate_id;
+    }
+
+    std::size_t FindPortIndex(
+        const std::vector<BoundaryPortEntry>& ports,
+        std::string_view                      id)
+    {
+        for (std::size_t index = 0; index < ports.size(); ++index)
+        {
+            if (ports[index].id == id)
+            {
+                return index;
+            }
+        }
+        return ports.size();
+    }
+
+    // 分派单条变更。返回 true = candidate 已变更（调用方提交并递增
+    // revision）；false = 拒绝（diagnostics 已携带 error 条目，candidate
+    // 零突变）。nodeId 类寻址字段在本会话语境不参与定位——会话构造即绑
+    // 定单一节点的 settings（guid+context），口列表唯一，nodeId 只作管线
+    // 侧上下文透传。
+    bool DispatchBoundaryChange(
+        GraphBoundaryAuthoringSession::BoundaryRole role,
+        const std::string&                          kind,
+        const yyjson::value&                        payload,
+        std::vector<BoundaryPortEntry>&             candidate,
+        std::vector<Contract::Diagnostic>&          diagnostics)
+    {
+        const auto reject = [&diagnostics](std::string message)
+        {
+            diagnostics.push_back(MakeErrorDiagnostic(std::move(message)));
+            return false;
+        };
+
+        if (kind == "addFormSequenceItem")
+        {
+            // actionId 通道：本边界文档唯一可添加的「动作」是边界组件自
+            // 身（文档 actionCatalog 只含该条目）——其它 actionId 拒绝。
+            const auto action_id = PayloadString(payload, "actionId");
+            if (!action_id)
+            {
+                return reject("addFormSequenceItem.actionId required");
+            }
+            if (*action_id != ComponentGuidTextOfRole(role))
+            {
+                return reject(
+                    "addFormSequenceItem.actionId must be the boundary "
+                    "component itself: "
+                    + std::string(ComponentGuidTextOfRole(role)));
+            }
+            BoundaryPortEntry entry;
+            entry.id = AllocateBoundaryPortId(candidate);
+            entry.type = "string";
+            if (const auto insertion_index =
+                    PayloadInt(payload, "insertionIndex"))
+            {
+                if (*insertion_index < 0
+                    || static_cast<std::size_t>(*insertion_index)
+                           > candidate.size())
+                {
+                    return reject(
+                        "addFormSequenceItem.insertionIndex out of range");
+                }
+                candidate.insert(
+                    candidate.begin()
+                        + static_cast<std::ptrdiff_t>(*insertion_index),
+                    std::move(entry));
+            }
+            else
+            {
+                candidate.push_back(std::move(entry));
+            }
+            return true;
+        }
+
+        if (kind == "removeFormSequenceItem")
+        {
+            const auto id = PayloadString(payload, "formSequenceItemId");
+            if (!id)
+            {
+                return reject(
+                    "removeFormSequenceItem.formSequenceItemId required");
+            }
+            const auto index = FindPortIndex(candidate, *id);
+            if (index == candidate.size())
+            {
+                return reject("boundary port not found: " + *id);
+            }
+            candidate.erase(
+                candidate.begin() + static_cast<std::ptrdiff_t>(index));
+            // 被删口 id 随 diagnostics 回传（宿主管线据此级联删边；会话
+            // 自身不持图边）。
+            diagnostics.push_back(
+                MakeInfoDiagnostic("boundary port removed: " + *id));
+            return true;
+        }
+
+        if (kind == "moveFormSequenceItem")
+        {
+            const auto id = PayloadString(payload, "formSequenceItemId");
+            if (!id)
+            {
+                return reject(
+                    "moveFormSequenceItem.formSequenceItemId required");
+            }
+            const auto destination = PayloadInt(payload, "destinationIndex");
+            if (!destination)
+            {
+                return reject("moveFormSequenceItem.destinationIndex required");
+            }
+            const auto index = FindPortIndex(candidate, *id);
+            if (index == candidate.size())
+            {
+                return reject("boundary port not found: " + *id);
+            }
+            if (*destination < 0
+                || static_cast<std::size_t>(*destination) >= candidate.size())
+            {
+                return reject(
+                    "moveFormSequenceItem.destinationIndex out of range");
+            }
+            BoundaryPortEntry entry = std::move(candidate[index]);
+            candidate.erase(
+                candidate.begin() + static_cast<std::ptrdiff_t>(index));
+            candidate.insert(
+                candidate.begin() + static_cast<std::ptrdiff_t>(*destination),
+                std::move(entry));
+            return true;
+        }
+
+        if (kind == "addNodePort")
+        {
+            const auto name = PayloadString(payload, "name");
+            if (!name)
+            {
+                return reject("addNodePort.name required");
+            }
+            const auto direction = PayloadString(payload, "direction");
+            if (!direction)
+            {
+                return reject("addNodePort.direction required");
+            }
+            // 方向门：方向由会话角色固化（begin 只入 / end 只出）——与
+            // 角色相反的签名方向拒绝，任何变更路径都产不出反向口。
+            if (*direction != RoleDirectionOf(role))
+            {
+                return reject(
+                    "addNodePort.direction mismatch: Begin accepts input "
+                    "ports, End accepts output ports");
+            }
+            const auto value_type = PayloadString(payload, "valueType");
+            if (!value_type)
+            {
+                return reject("addNodePort.valueType required");
+            }
+            if (!ValueTypeAllowed(*value_type))
+            {
+                return reject(
+                    "addNodePort.valueType must be one of bool/int/int64/"
+                    "float/double/string/image/base/component");
+            }
+            if (const auto violation = PortIdViolation(*name);
+                violation.has_value())
+            {
+                return reject("addNodePort.name " + *violation);
+            }
+            if (FindPortIndex(candidate, *name) != candidate.size())
+            {
+                return reject(
+                    "addNodePort.name duplicates an existing port id: "
+                    + *name);
+            }
+            // 口 id 与口名在本文档是同一通道（条目 {id,type} 单 id 形
+            // 态）——portId 在场时必须与 name 一致，分歧即拒绝。
+            if (const auto port_id = PayloadString(payload, "portId");
+                port_id.has_value() && *port_id != *name)
+            {
+                return reject(
+                    "addNodePort.portId must equal name for boundary ports "
+                    "(the port id and its name are one)");
+            }
+            candidate.push_back(BoundaryPortEntry{*name, *value_type});
+            return true;
+        }
+
+        if (kind == "removeNodePort")
+        {
+            const auto port_id = PayloadString(payload, "portId");
+            if (!port_id)
+            {
+                return reject("removeNodePort.portId required");
+            }
+            const auto index = FindPortIndex(candidate, *port_id);
+            if (index == candidate.size())
+            {
+                return reject("boundary port not found: " + *port_id);
+            }
+            candidate.erase(
+                candidate.begin() + static_cast<std::ptrdiff_t>(index));
+            diagnostics.push_back(
+                MakeInfoDiagnostic("boundary port removed: " + *port_id));
+            return true;
+        }
+
+        if (kind == "renameNodePort")
+        {
+            const auto port_id = PayloadString(payload, "portId");
+            if (!port_id)
+            {
+                return reject("renameNodePort.portId required");
+            }
+            const auto name = PayloadString(payload, "name");
+            if (!name)
+            {
+                return reject("renameNodePort.name required");
+            }
+            const auto index = FindPortIndex(candidate, *port_id);
+            if (index == candidate.size())
+            {
+                return reject("boundary port not found: " + *port_id);
+            }
+            if (const auto violation = PortIdViolation(*name);
+                violation.has_value())
+            {
+                return reject("renameNodePort.name " + *violation);
+            }
+            for (std::size_t other = 0; other < candidate.size(); ++other)
+            {
+                if (other != index && candidate[other].id == *name)
+                {
+                    return reject(
+                        "renameNodePort.name duplicates an existing port "
+                        "id: "
+                        + *name);
+                }
+            }
+            candidate[index].id = *name;
+            return true;
+        }
+
+        if (kind == "setValue")
+        {
+            auto obj = payload.as_object();
+            if (!obj || !obj->contains(std::string_view("target")))
+            {
+                return reject("setValue.target required");
+            }
+            auto target_obj = (*obj)[std::string_view("target")].as_object();
+            if (!target_obj)
+            {
+                return reject("setValue.target must be an object");
+            }
+            auto target_kind =
+                (*target_obj)[std::string_view("kind")].as_string();
+            if (!target_kind
+                || *target_kind != std::string_view("formSequenceItem"))
+            {
+                return reject(
+                    "setValue.target.kind must be formSequenceItem in the "
+                    "boundary document");
+            }
+            auto target_id = (*target_obj)[std::string_view("id")].as_string();
+            if (!target_id || target_id->empty())
+            {
+                return reject("setValue.target.id required");
+            }
+            const auto field_name = PayloadString(payload, "fieldName");
+            if (!field_name)
+            {
+                return reject("setValue.fieldName required");
+            }
+            if (!obj->contains(std::string_view("value")))
+            {
+                return reject("setValue.value required");
+            }
+            const auto index = FindPortIndex(candidate, *target_id);
+            if (index == candidate.size())
+            {
+                return reject(
+                    "boundary port not found: " + std::string(*target_id));
+            }
+            const auto& value = (*obj)[std::string_view("value")];
+            if (*field_name == "id")
+            {
+                auto new_id = value.as_string();
+                if (!new_id)
+                {
+                    return reject(
+                        "setValue.value must be a string for the id field");
+                }
+                if (const auto violation = PortIdViolation(*new_id);
+                    violation.has_value())
+                {
+                    return reject("setValue.value " + *violation);
+                }
+                for (std::size_t other = 0; other < candidate.size(); ++other)
+                {
+                    if (other != index && candidate[other].id == *new_id)
+                    {
+                        return reject(
+                            "setValue.value duplicates an existing port "
+                            "id: "
+                            + std::string(*new_id));
+                    }
+                }
+                candidate[index].id = std::string(*new_id);
+                return true;
+            }
+            if (*field_name == "type")
+            {
+                auto new_type = value.as_string();
+                if (!new_type)
+                {
+                    return reject(
+                        "setValue.value must be a string for the type "
+                        "field");
+                }
+                if (!ValueTypeAllowed(*new_type))
+                {
+                    return reject(
+                        "setValue.value must be one of bool/int/int64/"
+                        "float/double/string/image/base/component");
+                }
+                candidate[index].type = std::string(*new_type);
+                return true;
+            }
+            return reject(
+                "setValue.fieldName must be id or type for boundary port "
+                "items");
+        }
+
+        // 未知/图专属 kind（connectGraphPorts、convertView、
+        // invokeCommand 等）fail-closed 拒绝。
+        return reject(
+            "Unsupported change kind for the boundary document: " + kind);
+    }
 } // namespace
 
 GraphBoundaryAuthoringSession::BoundaryRole
@@ -591,19 +1006,19 @@ DasResult GraphBoundaryAuthoringSession::ApplyChange(
         }
     }
 
-    // 变更分派（词表见下方注释）。拒绝零突变：settings 与 revision 保持
-    // 原样，envelope 携带 error 诊断。
+    // 变更分派（词表：item 家族 + addNodePort 家族 + setValue，全部既有
+    // kind 字符串，会话解释成口操作）。拒绝零突变：settings 与 revision
+    // 保持原样，envelope 携带 error 诊断。
     std::vector<BoundaryPortEntry> candidate = LoadBoundaryPorts(settings_);
     bool                           accepted = false;
     if (request_ok && revision_ok)
     {
-        // 词表（item 家族 + addNodePort 家族 + setValue，全部既有 kind
-        // 字符串，会话解释成口操作）由 ApplyChange 词表解释任务接线；
-        // 此处先行 fail-closed：一切 kind 拒绝（零突变），保证会话在词
-        // 表接线前不吞任何变更。
-        diagnostics.push_back(MakeErrorDiagnostic(
-            "Unsupported change kind for the boundary document: "
-            + request.kind));
+        accepted = DispatchBoundaryChange(
+            role_,
+            request.kind,
+            request.payload,
+            candidate,
+            diagnostics);
     }
 
     if (accepted)

@@ -3448,4 +3448,460 @@ namespace
         ASSERT_TRUE(ports.has_value());
         EXPECT_EQ(ports->size(), 0);
     }
+
+    // ------------------------------------------------------------------
+    // Boundary session ApplyChange vocabulary（item 家族 + addNodePort
+    // 家族 + setValue；payload 形状遵循文档协议 change 校验层锁形）
+    // ------------------------------------------------------------------
+
+    std::string BoundaryChange(
+        int64_t          base_revision,
+        std::string_view kind,
+        std::string_view payload)
+    {
+        std::string out = R"({"baseRevision":)";
+        out += std::to_string(base_revision);
+        out += R"(,"kind":")";
+        out += kind;
+        out += R"(","payload":)";
+        out += payload;
+        out += "}";
+        return out;
+    }
+
+    yyjson::value BoundaryApplyOf(
+        Das::PluginInterface::IDasTaskAuthoringSession* session,
+        const std::string&                              change)
+    {
+        DasPtr<Das::ExportInterface::IDasJson> request;
+        ParseDasJsonFromString(change.c_str(), request.Put());
+        DasPtr<Das::ExportInterface::IDasJson> out;
+        session->ApplyChange(request.Get(), out.Put());
+        return yyjson::read(JsonToUtf8(out.Get()));
+    }
+
+    // 取 apply 结果的 document。
+    yyjson::value ResultDocumentOf(const yyjson::value& result)
+    {
+        auto obj = result.as_object();
+        if (!obj || !obj->contains(std::string_view("document")))
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("document")]);
+    }
+
+    std::vector<std::string> BoundaryPortIdsOf(const yyjson::value& document)
+    {
+        std::vector<std::string> ids;
+        auto                     doc_obj = document.as_object();
+        if (!doc_obj)
+        {
+            return ids;
+        }
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        if (!ports)
+        {
+            return ids;
+        }
+        for (const auto& port : *ports)
+        {
+            auto port_obj = port.as_object();
+            if (!port_obj)
+            {
+                continue;
+            }
+            auto id = (*port_obj)[std::string_view("id")].as_string();
+            if (id)
+            {
+                ids.emplace_back(*id);
+            }
+        }
+        return ids;
+    }
+
+    std::string FirstDiagnosticMessageOf(const yyjson::value& result)
+    {
+        auto obj = result.as_object();
+        if (!obj || !obj->contains(std::string_view("diagnostics")))
+        {
+            return {};
+        }
+        auto arr = (*obj)[std::string_view("diagnostics")].as_array();
+        if (!arr || arr->empty())
+        {
+            return {};
+        }
+        auto first = (*arr)[0].as_object();
+        if (!first)
+        {
+            return {};
+        }
+        auto message = (*first)[std::string_view("message")].as_string();
+        return message ? std::string(*message) : std::string{};
+    }
+
+    TEST(BoundaryAuthoringSessionTest, AddFormSequenceItemAllocatesEntry)
+    {
+        const BoundarySession s{kBoundaryBeginGuidText, "{}"};
+        const std::string     payload = std::string(R"({"actionId":")")
+                                        + std::string(kBoundaryBeginGuidText)
+                                        + R"("})";
+        const auto            result = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(0, "addFormSequenceItem", payload));
+        // 成功：document.revision = base+1；envelope 三键齐全。
+        auto result_obj = result.as_object();
+        ASSERT_TRUE(result_obj.has_value());
+        EXPECT_TRUE(
+            result_obj->contains(std::string_view("acceptedProperties")));
+        EXPECT_TRUE(result_obj->contains(std::string_view("diagnostics")));
+        const auto document = ResultDocumentOf(result);
+        auto       doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        auto revision = (*doc_obj)[std::string_view("revision")].as_int();
+        ASSERT_TRUE(revision.has_value());
+        EXPECT_EQ(*revision, 1);
+        const auto ids = BoundaryPortIdsOf(document);
+        ASSERT_EQ(ids.size(), 1);
+        EXPECT_EQ(ids[0], "p_1");
+        // acceptedProperties 回写 boundaryPorts（含默认 type）。
+        auto accepted_obj =
+            (*result_obj)[std::string_view("acceptedProperties")].as_object();
+        ASSERT_TRUE(accepted_obj.has_value());
+        EXPECT_TRUE(accepted_obj->contains(std::string_view("boundaryPorts")));
+    }
+
+    TEST(BoundaryAuthoringSessionTest, AddNodePortCreatesExplicitEntry)
+    {
+        const BoundarySession s{kBoundaryBeginGuidText, "{}"};
+        const auto            result = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                0,
+                "addNodePort",
+                R"({"nodeId":"n_0","name":"p1","direction":"input","valueType":"string"})"));
+        const auto document = ResultDocumentOf(result);
+        const auto ids = BoundaryPortIdsOf(document);
+        ASSERT_EQ(ids.size(), 1);
+        EXPECT_EQ(ids[0], "p1");
+        // items 写通道同步含 p1（同一文档两面）。
+        auto doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        auto form_seq =
+            (*doc_obj)[std::string_view("formSequence")].as_object();
+        ASSERT_TRUE(form_seq.has_value());
+        auto items = (*form_seq)[std::string_view("items")].as_array();
+        ASSERT_TRUE(items.has_value());
+        ASSERT_EQ(items->size(), 1);
+        auto first_item = (*items)[0].as_object();
+        ASSERT_TRUE(first_item.has_value());
+        auto item_id = (*first_item)[std::string_view("id")].as_string();
+        ASSERT_TRUE(item_id.has_value());
+        EXPECT_EQ(*item_id, "p1");
+    }
+
+    TEST(BoundaryAuthoringSessionTest, AddNodePortDuplicateRejected)
+    {
+        const BoundarySession s{kBoundaryBeginGuidText, "{}"};
+        const std::string     add_payload =
+            R"({"nodeId":"n_0","name":"p1","direction":"input","valueType":"string"})";
+        BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(0, "addNodePort", add_payload));
+        const auto result = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(1, "addNodePort", add_payload));
+        // 重复 id 拒绝：error 诊断 + revision 不推进 + 零突变。
+        const auto message = FirstDiagnosticMessageOf(result);
+        EXPECT_NE(message.find("duplicates"), std::string::npos);
+        const auto document = ResultDocumentOf(result);
+        auto       doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        auto revision = (*doc_obj)[std::string_view("revision")].as_int();
+        ASSERT_TRUE(revision.has_value());
+        EXPECT_EQ(*revision, 1);
+        EXPECT_EQ(BoundaryPortIdsOf(document).size(), 1);
+    }
+
+    TEST(BoundaryAuthoringSessionTest, AddNodePortDirectionGateRejectsOpposite)
+    {
+        // begin 只入：output 方向拒绝（方向门=文档校验规则）。
+        const BoundarySession begin_session{kBoundaryBeginGuidText, "{}"};
+        const auto            begin_result = BoundaryApplyOf(
+            begin_session.session.Get(),
+            BoundaryChange(
+                0,
+                "addNodePort",
+                R"({"nodeId":"n_0","name":"p1","direction":"output","valueType":"string"})"));
+        const auto begin_message = FirstDiagnosticMessageOf(begin_result);
+        EXPECT_NE(begin_message.find("direction"), std::string::npos);
+        EXPECT_EQ(BoundaryPortIdsOf(ResultDocumentOf(begin_result)).size(), 0);
+
+        // end 只出：input 方向拒绝。
+        const BoundarySession end_session{kBoundaryEndGuidText, "{}"};
+        const auto            end_result = BoundaryApplyOf(
+            end_session.session.Get(),
+            BoundaryChange(
+                0,
+                "addNodePort",
+                R"({"nodeId":"n_1","name":"p1","direction":"input","valueType":"string"})"));
+        const auto end_message = FirstDiagnosticMessageOf(end_result);
+        EXPECT_NE(end_message.find("direction"), std::string::npos);
+        EXPECT_EQ(BoundaryPortIdsOf(ResultDocumentOf(end_result)).size(), 0);
+    }
+
+    TEST(
+        BoundaryAuthoringSessionTest,
+        AddNodePortDisciplineAndVocabularyRejects)
+    {
+        const BoundarySession s{kBoundaryBeginGuidText, "{}"};
+        // 空 id、101 字节 id（>100 UTF-8 上限）、$ 前缀、九词外 type。
+        const std::string long_id(101, 'a');
+        const std::vector<std::pair<std::string_view, std::string>> cases = {
+            {"long",
+             std::string(R"({"nodeId":"n_0","name":")") + long_id
+                 + R"(","direction":"input","valueType":"string"})"},
+            {"empty",
+             R"({"nodeId":"n_0","name":"","direction":"input","valueType":"string"})"},
+            {"dollar",
+             R"({"nodeId":"n_0","name":"$x","direction":"input","valueType":"string"})"},
+            {"bad-type",
+             R"({"nodeId":"n_0","name":"p1","direction":"input","valueType":"signal"})"}};
+        for (const auto& [label, payload] : cases)
+        {
+            const auto result = BoundaryApplyOf(
+                s.session.Get(),
+                BoundaryChange(0, "addNodePort", payload));
+            EXPECT_NE(
+                FirstDiagnosticMessageOf(result).find("addNodePort"),
+                std::string::npos)
+                << label;
+            EXPECT_EQ(BoundaryPortIdsOf(ResultDocumentOf(result)).size(), 0)
+                << label;
+        }
+    }
+
+    TEST(BoundaryAuthoringSessionTest, RemoveItemSurfacesRemovedPortId)
+    {
+        const BoundarySession s{kBoundaryBeginGuidText, "{}"};
+        BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                0,
+                "addNodePort",
+                R"({"nodeId":"n_0","name":"p1","direction":"input","valueType":"string"})"));
+        const auto result = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                1,
+                "removeFormSequenceItem",
+                R"({"formSequenceItemId":"p1"})"));
+        // diagnostics 携带被删口 id（宿主管线级联删边的对账通道）。
+        const auto message = FirstDiagnosticMessageOf(result);
+        EXPECT_NE(message.find("p1"), std::string::npos);
+        // 条目消失。
+        const auto document = ResultDocumentOf(result);
+        EXPECT_EQ(BoundaryPortIdsOf(document).size(), 0);
+        // removeNodePort 同义路径：删口 + 携带 id。
+        BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                2,
+                "addNodePort",
+                R"({"nodeId":"n_0","name":"p2","direction":"input","valueType":"int"})"));
+        const auto removed = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                3,
+                "removeNodePort",
+                R"({"nodeId":"n_0","portId":"p2"})"));
+        EXPECT_NE(
+            FirstDiagnosticMessageOf(removed).find("p2"),
+            std::string::npos);
+        EXPECT_EQ(BoundaryPortIdsOf(ResultDocumentOf(removed)).size(), 0);
+    }
+
+    TEST(BoundaryAuthoringSessionTest, MoveFormSequenceItemReorders)
+    {
+        const BoundarySession s{kBoundaryBeginGuidText, "{}"};
+        int64_t               base = 0;
+        for (const auto port : {"p1", "p2", "p3"})
+        {
+            const std::string payload =
+                std::string(R"({"nodeId":"n_0","name":")") + port
+                + R"(","direction":"input","valueType":"string"})";
+            BoundaryApplyOf(
+                s.session.Get(),
+                BoundaryChange(base, "addNodePort", payload));
+            ++base;
+        }
+        const auto result = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                3,
+                "moveFormSequenceItem",
+                R"({"formSequenceItemId":"p3","destinationIndex":0})"));
+        const auto ids = BoundaryPortIdsOf(ResultDocumentOf(result));
+        ASSERT_EQ(ids.size(), 3);
+        EXPECT_EQ(ids[0], "p3");
+        EXPECT_EQ(ids[1], "p1");
+        EXPECT_EQ(ids[2], "p2");
+    }
+
+    TEST(BoundaryAuthoringSessionTest, RenameNodePortRenamesEntry)
+    {
+        const BoundarySession s{kBoundaryBeginGuidText, "{}"};
+        BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                0,
+                "addNodePort",
+                R"({"nodeId":"n_0","name":"p1","direction":"input","valueType":"string"})"));
+        const auto result = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                1,
+                "renameNodePort",
+                R"({"nodeId":"n_0","portId":"p1","name":"renamed"})"));
+        const auto ids = BoundaryPortIdsOf(ResultDocumentOf(result));
+        ASSERT_EQ(ids.size(), 1);
+        EXPECT_EQ(ids[0], "renamed");
+    }
+
+    TEST(BoundaryAuthoringSessionTest, SetValueEditsIdAndTypeFields)
+    {
+        const BoundarySession s{kBoundaryBeginGuidText, "{}"};
+        BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                0,
+                "addNodePort",
+                R"({"nodeId":"n_0","name":"p1","direction":"input","valueType":"string"})"));
+        // fieldName=id → 改条目 id。
+        const auto rename = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                1,
+                "setValue",
+                R"({"target":{"kind":"formSequenceItem","id":"p1"},"fieldName":"id","value":"p9"})"));
+        const auto renamed_ids = BoundaryPortIdsOf(ResultDocumentOf(rename));
+        ASSERT_EQ(renamed_ids.size(), 1);
+        EXPECT_EQ(renamed_ids[0], "p9");
+        // fieldName=type → 改条目 type（ports[].type 跟随）。
+        const auto retype = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                2,
+                "setValue",
+                R"({"target":{"kind":"formSequenceItem","id":"p9"},"fieldName":"type","value":"int"})"));
+        const auto document = ResultDocumentOf(retype);
+        auto       doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports.has_value());
+        auto first_port = (*ports)[0].as_object();
+        ASSERT_TRUE(first_port.has_value());
+        auto type = (*first_port)[std::string_view("type")].as_string();
+        ASSERT_TRUE(type.has_value());
+        EXPECT_EQ(*type, "int");
+        // 未知 fieldName 拒绝（fail-closed）。
+        const auto bogus = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                3,
+                "setValue",
+                R"({"target":{"kind":"formSequenceItem","id":"p9"},"fieldName":"bogus","value":1})"));
+        const auto bogus_message = FirstDiagnosticMessageOf(bogus);
+        EXPECT_NE(bogus_message.find("fieldName"), std::string::npos);
+    }
+
+    TEST(BoundaryAuthoringSessionTest, UnknownKindRejected)
+    {
+        const BoundarySession s{kBoundaryBeginGuidText, "{}"};
+        const auto            result = BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(0, "invokeCommand", R"({"commandId":"x"})"));
+        const auto message = FirstDiagnosticMessageOf(result);
+        EXPECT_NE(message.find("Unsupported change kind"), std::string::npos);
+        const auto document = ResultDocumentOf(result);
+        auto       doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        auto revision = (*doc_obj)[std::string_view("revision")].as_int();
+        ASSERT_TRUE(revision.has_value());
+        EXPECT_EQ(*revision, 0);
+        EXPECT_EQ(BoundaryPortIdsOf(document).size(), 0);
+    }
+
+    TEST(BoundaryAuthoringSessionTest, BeginDirectionStaysInputAcrossEdits)
+    {
+        // 方向固化：begin 会话经任何成功变更路径产出的口恒 input。
+        const BoundarySession s{kBoundaryBeginGuidText, "{}"};
+        BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                0,
+                "addNodePort",
+                R"({"nodeId":"n_0","name":"p1","direction":"input","valueType":"string"})"));
+        BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                1,
+                "addFormSequenceItem",
+                std::string(R"({"actionId":")")
+                    + std::string(kBoundaryBeginGuidText) + R"("})"));
+        BoundaryApplyOf(
+            s.session.Get(),
+            BoundaryChange(
+                2,
+                "renameNodePort",
+                R"({"nodeId":"n_0","portId":"p1","name":"renamed"})"));
+        const auto document = BoundaryDocumentOf(s.session.Get());
+        auto       doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports.has_value());
+        EXPECT_EQ(ports->size(), 2);
+        for (const auto& port : *ports)
+        {
+            auto port_obj = port.as_object();
+            ASSERT_TRUE(port_obj.has_value());
+            auto direction =
+                (*port_obj)[std::string_view("direction")].as_string();
+            ASSERT_TRUE(direction.has_value());
+            EXPECT_EQ(*direction, "input");
+        }
+    }
+
+    TEST(BoundaryAuthoringSessionTest, CompileReturnsBoundarySignature)
+    {
+        const BoundarySession s{
+            kBoundaryEndGuidText,
+            R"({"boundaryPorts":[{"id":"out1","type":"double"}]})"};
+        DasPtr<Das::ExportInterface::IDasJson> out;
+        s.session->Compile(nullptr, out.Put());
+        const auto root = yyjson::read(JsonToUtf8(out.Get()));
+        auto       root_obj = root.as_object();
+        ASSERT_TRUE(root_obj.has_value());
+        EXPECT_TRUE(root_obj->contains(std::string_view("compile")));
+        EXPECT_TRUE(root_obj->contains(std::string_view("diagnostics")));
+        auto compile_obj = (*root_obj)[std::string_view("compile")].as_object();
+        ASSERT_TRUE(compile_obj.has_value());
+        auto ports = (*compile_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports.has_value());
+        ASSERT_EQ(ports->size(), 1);
+        auto first_port = (*ports)[0].as_object();
+        ASSERT_TRUE(first_port.has_value());
+        auto id = (*first_port)[std::string_view("id")].as_string();
+        ASSERT_TRUE(id.has_value());
+        EXPECT_EQ(*id, "out1");
+        auto type = (*first_port)[std::string_view("type")].as_string();
+        ASSERT_TRUE(type.has_value());
+        EXPECT_EQ(*type, "double");
+        auto direction =
+            (*first_port)[std::string_view("direction")].as_string();
+        ASSERT_TRUE(direction.has_value());
+        EXPECT_EQ(*direction, "output");
+    }
 } // namespace
