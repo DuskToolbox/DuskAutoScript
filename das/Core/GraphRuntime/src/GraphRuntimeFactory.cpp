@@ -14,6 +14,11 @@
 #include <das/Utils/DasJsonCore.h>
 #include <new>
 
+#include <algorithm>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
 // --- GraphRuntimeImpl implementation ---
@@ -1323,7 +1328,8 @@ namespace
             entry_faces,
         const std::vector<
             Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType>*
-            entry_face_types)
+                                          entry_face_types,
+        const std::vector<yyjson::value>* extra_success_diagnostics = nullptr)
     {
         auto root = Das::Utils::MakeYyjsonObject();
         auto obj = root.as_object();
@@ -1344,6 +1350,21 @@ namespace
                     node_faces,
                     entry_faces,
                     entry_face_types);
+            // 成功路径附载诊断（编译期自动断线的 WARN——严格诊断契约形状
+            // {severity, message[, code]}，warning 级不触发 applyRejected
+            // 判定）。
+            if (extra_success_diagnostics != nullptr)
+            {
+                auto diag_arr_o = diag_arr.as_array();
+                if (diag_arr_o)
+                {
+                    for (const auto& extra : *extra_success_diagnostics)
+                    {
+                        diag_arr_o->emplace_back(
+                            Das::Utils::CloneYyjsonValue(extra));
+                    }
+                }
+            }
         }
         else
         {
@@ -1402,6 +1423,79 @@ namespace
         // envelope).
         std::ignore = r.allocated_id;
         return root;
+    }
+
+    /// 会话编译器口面知识接线（单一来源）：faces 通道（nodeFaces）、绑
+    /// 条目通道（entryFaces+taskRepositoryRef 字段快照）、catalog 声明
+    /// 端口面 provider、文档 types[] 注册表——Compile 入口与 Apply 路径
+    /// 的编译期复核共用同一接线，两处口面解析永不漂移。闭包借引会话状
+    /// 态：编译/复核同步完成，会话在调用期内有效（与既有 action_entries
+    /// 引用捕获同生命周期前提）。
+    void BindSessionPortKnowledge(
+        Das::Core::GraphRuntime::GraphCompiler& compiler,
+        const GraphAuthoringSessionState&       s)
+    {
+        compiler.BindNodeFaces(&s.node_faces);
+        {
+            Das::Core::GraphRuntime::GraphCompiler::RepositoryFieldMap
+                repository_fields;
+            for (const auto& entry : s.action_entries)
+            {
+                for (const auto& config_field : entry.config_fields)
+                {
+                    if (config_field.type
+                        == std::string_view("taskRepositoryRef"))
+                    {
+                        repository_fields[entry.action_id].insert(
+                            config_field.name);
+                    }
+                }
+            }
+            compiler.BindEntryFaces(
+                &s.entry_faces,
+                std::move(repository_fields));
+        }
+        // 端口面注入（与 required 清单同范式）：catalog 声明的静态端口面
+        // （direction 由 inputs/outputs 声明携带）喂给编译器，使无 factory
+        // manager 的 authoring 编译路径也能做端口校验与边界端口推导。
+        // 闭包形态=guid 级纯声明面：动态口不在此展开——begin/end 文档口
+        // 面经 nodeFaces 通道按节点并入（ResolveNodePorts 合并、
+        // DeriveBoundaryPorts 直读注入面），绑条目调用节点口面经
+        // entryFaces（同按节点）。
+        compiler.SetPortSurfaceProvider(
+            [&s](const std::string& component_guid)
+                -> std::optional<Das::Core::GraphRuntime::GraphCompiler::
+                                     ComponentPortSurface>
+            {
+                for (const auto& entry : s.action_entries)
+                {
+                    if (entry.action_id != component_guid)
+                    {
+                        continue;
+                    }
+                    Das::Core::GraphRuntime::GraphCompiler::ComponentPortSurface
+                        surface;
+                    for (const auto& port : entry.ports)
+                    {
+                        Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto
+                            definition;
+                        definition.port_id = port.port_id;
+                        definition.display_label = port.display_label;
+                        definition.port_type = port.port_type;
+                        if (port.direction == std::string_view("input"))
+                        {
+                            surface.inputs.push_back(std::move(definition));
+                        }
+                        else
+                        {
+                            surface.outputs.push_back(std::move(definition));
+                        }
+                    }
+                    return surface;
+                }
+                return std::nullopt;
+            });
+        compiler.BindFaceTypes(&s.entry_face_types);
     }
 
     // Catalog 端口对象的锁形规则（单一来源）：必填 portId/portType/
@@ -2282,11 +2376,51 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
         // derives the stored edge_type from the endpoint port categories
         // through it (canonical signal port names resolve with no
         // declaration; undeclared endpoints reject).
+        const int32_t version_before_apply = p->document.version;
         auto r = Das::Core::GraphRuntime::Contract::ApplyAuthoringChange(
             p->document,
             change,
             valid_action_ids,
             MakeCatalogFromState(*p));
+        // 编译期自动断线写回（Apply 专属使能——判别机制即调用位本身：
+        // 会话 Apply 是唯一可写入口，Get/Compile/OnTick 三条编译路径不经
+        // 此处，读无副作用）。变更成功且 revision 推进（viewData 通道类
+        // 变更不推进——修剪无从搭车）后跑存储边复核：失效边作为普通文档
+        // 变更应用（edges erase——形状照 removeNodePort 的 apply 期原子
+        // 级联），随本变更已推进的 revision 与 Apply 管线既有 persist 落
+        // 盘（acceptedProperties 序列化修剪后文档，零新写回通道）。
+        std::vector<yyjson::value> prune_diagnostics;
+        if (r.Ok() && p->document.version != version_before_apply)
+        {
+            Das::Core::GraphRuntime::GraphCompiler compiler;
+            BindSessionPortKnowledge(compiler, *p);
+            const auto review = compiler.ReviewStaleEdges(p->document);
+            if (!review.stale_edges.empty())
+            {
+                std::unordered_set<std::string> stale_edge_ids;
+                for (const auto& record : review.stale_edges)
+                {
+                    stale_edge_ids.insert(record.edge_id);
+                }
+                p->document.edges.erase(
+                    std::remove_if(
+                        p->document.edges.begin(),
+                        p->document.edges.end(),
+                        [&stale_edge_ids](
+                            const Das::Core::GraphRuntime::Dto::GraphEdgeDto&
+                                edge)
+                        { return stale_edge_ids.count(edge.edge_id) > 0; }),
+                    p->document.edges.end());
+                for (const auto& diagnostic : review.diagnostics)
+                {
+                    prune_diagnostics.push_back(
+                        Das::Core::GraphRuntime::GraphCompiler::
+                            DiagnosticToWireContract(
+                                Das::Core::GraphRuntime::GraphCompiler::
+                                    DiagnosticToJson(diagnostic)));
+                }
+            }
+        }
         return WrapValue(
             BuildChangeResultJson(
                 r,
@@ -2295,7 +2429,8 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
                 MakeCatalogFromState(*p),
                 &p->node_faces,
                 &p->entry_faces,
-                &p->entry_face_types),
+                &p->entry_face_types,
+                &prune_diagnostics),
             pp_out_result_json);
     }
     catch (const std::bad_alloc&)
@@ -2325,77 +2460,10 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         // No factory manager bound at the authoring boundary, so manifest port
         // validation is skipped (acceptable for authoring preview).
         Das::Core::GraphRuntime::GraphCompiler compiler;
-        // faces 通道消费：nodeFaces 快照随 context 进入会话状态，此处借
-        // 引用注入编译器（编译同步完成，p 在编译期内有效——与 provider
-        // 闭包的 action_entries 引用捕获同生命周期前提）；编译期零活查
+        // 口面知识接线（faces/entryFaces/声明面 provider/types 注册表——
+        // Apply 路径的编译期复核共用同一接线的单一来源）；编译期零活查
         // 询（不回调任何外部存储/PluginManager）。
-        compiler.BindNodeFaces(&p->node_faces);
-        // entryFaces 通道消费 + 绑条目判据的数据快照（与 required 清单
-        // 同范式）：taskRepositoryRef 字段名按 guid 自会话 catalog 推导注
-        // 入（编译器不回调 catalog）——ResolveNodePorts 据此从节点
-        // settings 解析 entryId 并并入 entryFaces[该 entryId]。
-        {
-            Das::Core::GraphRuntime::GraphCompiler::RepositoryFieldMap
-                repository_fields;
-            for (const auto& entry : p->action_entries)
-            {
-                for (const auto& config_field : entry.config_fields)
-                {
-                    if (config_field.type
-                        == std::string_view("taskRepositoryRef"))
-                    {
-                        repository_fields[entry.action_id].insert(
-                            config_field.name);
-                    }
-                }
-            }
-            compiler.BindEntryFaces(
-                &p->entry_faces,
-                std::move(repository_fields));
-        }
-        // 端口面注入（与 required 清单同范式）：catalog 声明的静态端口面
-        // （direction 由 inputs/outputs 声明携带）喂给编译器，使无 factory
-        // manager 的 authoring 编译路径也能做端口校验与边界端口推导——
-        // 生产执行输入正是这条编译路径的产物。闭包形态=guid 级纯声明面：
-        // 动态口不在此展开——begin/end 文档口面经 nodeFaces 通道按节点并
-        // 入（ResolveNodePorts 合并、DeriveBoundaryPorts 直读注入面），
-        // 绑条目调用节点口面经 entryFaces（同按节点），guid 维分区聚合
-        // （同 guid 节点口串面）随之根除。闭包捕获会话指针 p：编译同步
-        // 完成，p 在编译期内有效（与既有 action_entries 引用捕获同生命
-        // 周期前提）。
-        compiler.SetPortSurfaceProvider(
-            [p](const std::string& component_guid)
-                -> std::optional<Das::Core::GraphRuntime::GraphCompiler::
-                                     ComponentPortSurface>
-            {
-                for (const auto& entry : p->action_entries)
-                {
-                    if (entry.action_id != component_guid)
-                    {
-                        continue;
-                    }
-                    Das::Core::GraphRuntime::GraphCompiler::ComponentPortSurface
-                        surface;
-                    for (const auto& port : entry.ports)
-                    {
-                        Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto
-                            definition;
-                        definition.port_id = port.port_id;
-                        definition.display_label = port.display_label;
-                        definition.port_type = port.port_type;
-                        if (port.direction == std::string_view("input"))
-                        {
-                            surface.inputs.push_back(std::move(definition));
-                        }
-                        else
-                        {
-                            surface.outputs.push_back(std::move(definition));
-                        }
-                    }
-                    return surface;
-                }
-                return std::nullopt;
-            });
+        BindSessionPortKnowledge(compiler, *p);
         // required 清单由会话 catalog 推导注入（compiler 无 catalog 访问）：
         // action_id 即 GraphTask 域的 componentGuid，config 字段的 required
         // 声明聚合成 component_guid → 字段名集，编译期对空值产出

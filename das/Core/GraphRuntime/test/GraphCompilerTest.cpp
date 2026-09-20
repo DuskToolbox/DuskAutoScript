@@ -2945,3 +2945,56 @@ TEST(StaleEdgeReviewTest, SignalEdgesOutsideReviewDomain)
     EXPECT_TRUE(review.stale_edges.empty());
     EXPECT_TRUE(review.diagnostics.empty());
 }
+
+// Compile 只产诊断零变异：复核接线进 Compile 后，编译器本体对输入文档
+// 零改动（edges/revision 逐项不变）——写回是会话 Apply 路径的行为（读
+// 无副作用守卫的编译器侧断言）。
+TEST(StaleEdgeReviewTest, CompileEmitsWarningsWithoutMutatingDocument)
+{
+    const std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces{{"{ga}", {{}, {{"out_str", "string"}}}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphCompiler::NodeFacesMap faces;
+    faces["B"] = std::vector<GraphCompiler::DocumentFacePort>{
+        {"b_bool", "bool", "b_bool", "input"}};
+    compiler.BindNodeFaces(&faces);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeComponentNode("A", "{ga}"));
+    doc.nodes.push_back(MakeComponentNode("B", "{gb}"));
+    doc.edges.push_back(MakeEdge("e_bad", "A", "out_str", "B", "b_bool"));
+    const GraphDocumentDto doc_before = doc;
+
+    const auto plan = compiler.Compile(doc);
+
+    // 断线诊断随编译输出可见（WARN 级 kind 进 plan.diagnostics）。
+    bool seen_stale = false;
+    for (const auto& diagnostic : plan.diagnostics)
+    {
+        auto diagnostic_obj = diagnostic.as_object();
+        if (!diagnostic_obj.has_value()
+            || !diagnostic_obj->contains(std::string_view("kind")))
+        {
+            continue;
+        }
+        if ((*diagnostic_obj)[std::string_view("kind")].as_string()
+            == std::to_string(
+                static_cast<int>(CompileDiagnosticKind::StaleEdgeDisconnect)))
+        {
+            seen_stale = true;
+        }
+    }
+    EXPECT_TRUE(seen_stale);
+
+    // 文档零变异：边集与 revision 逐项不变（修剪只发生在 Apply 语境）。
+    ASSERT_EQ(doc.edges.size(), doc_before.edges.size());
+    EXPECT_EQ(doc.edges[0].edge_id, doc_before.edges[0].edge_id);
+    EXPECT_EQ(doc.version, doc_before.version);
+}

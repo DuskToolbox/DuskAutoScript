@@ -2929,6 +2929,133 @@ namespace
     }
 
     // ======================================================================
+    // 编译期自动断线（存储边口面演化复核）：Apply 写回 + 三读路径零修剪
+    // ======================================================================
+
+    /// Graph whose n_dst face evolved AFTER the stored edges were drawn:
+    /// dyn_in flipped to int (edge e_stale was drawn string→string), keep_in
+    /// stayed string (edge e_ok survives). Both edges predate the evolution —
+    /// the review must mark e_stale for disconnect and keep e_ok.
+    std::string StaleEdgeGraphContext(std::string_view node_faces_json)
+    {
+        constexpr std::string_view catalog =
+            R"json([{"actionId":"{g1}","ports":[{"portId":"result","portType":"string","direction":"output"}]},{"actionId":"{g2}"}])json";
+        return std::string(R"({"properties":)")
+               + RawGraphContextOf(
+                   {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
+                    RawGraphNodeOf("n_src", "{g1}"),
+                    RawGraphNodeOf("n_dst", "{g2}"),
+                    RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
+                   {R"({"edgeId":"e_stale","sourceNodeId":"n_src","sourcePortId":"result","targetNodeId":"n_dst","targetPortId":"dyn_in","edgeType":"data"})",
+                    R"({"edgeId":"e_ok","sourceNodeId":"n_src","sourcePortId":"result","targetNodeId":"n_dst","targetPortId":"keep_in","edgeType":"data"})"})
+               + R"(,"actionCatalog":)" + std::string(catalog)
+               + R"(,"nodeFaces":)" + std::string(node_faces_json) + "}";
+    }
+
+    constexpr std::string_view kEvolvedNodeFaces =
+        R"([{"nodeId":"n_dst","ports":[{"id":"dyn_in","type":"int","direction":"input"},{"id":"keep_in","type":"string","direction":"input"}]}])";
+
+    /// Apply 序列（口面已演化→apply）：失效存储边被修剪——edges 删除、
+    /// revision 推进（恰好 +1，修剪搭本变更的车不另计）、acceptedProperties
+    /// 落盘内容正确（修剪后文档=持久化载荷）、WARN 诊断随响应可见；健康
+    /// 边与显式级联通道（removeNodePort）语义不重叠，不受波及。
+    TEST(GraphAuthoringSessionTest, ApplyPrunesStaleEdgesWithRevision)
+    {
+        const SessionHandle s{StaleEdgeGraphContext(kEvolvedNodeFaces)};
+
+        // 前置：读路径（compile 预览）已能看见断线诊断，但文档未被修剪。
+        const auto pre_outcome = CompileOutcomeOf(s.p);
+        EXPECT_TRUE(DiagnosticsContainKind(
+            pre_outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::
+                StaleEdgeDisconnect));
+        const auto stale_message = DiagnosticMessageOfKind(
+            pre_outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::
+                StaleEdgeDisconnect);
+        EXPECT_NE(stale_message.find("e_stale"), std::string::npos);
+        EXPECT_EQ(stale_message.find("e_ok"), std::string::npos);
+
+        // Apply 一次 bumping 变更（setValue 落节点 settings）触发复核写回。
+        const auto apply_text = Compact(JsonToUtf8(
+            ApplyChange(
+                s.p,
+                WrapEnvelope(
+                    "setValue",
+                    R"({"target":{"kind":"graphNode","id":"n_src"},"fieldName":"marker","value":7})"))
+                .Get()));
+        ASSERT_FALSE(apply_text.empty());
+        // 无 error 级诊断（修剪 WARN 不构成 applyRejected）。
+        EXPECT_EQ(apply_text.find("\"severity\":\"error\""), std::string::npos)
+            << apply_text;
+        // 断线 WARN 随 Apply 响应可见。
+        EXPECT_NE(apply_text.find("e_stale"), std::string::npos) << apply_text;
+
+        // revision 恰好 +1（本变更推进一次；修剪不另计——批量推进域
+        // [base, base+1] 的硬约束）。
+        EXPECT_NE(apply_text.find("\"revision\":1"), std::string::npos)
+            << apply_text;
+
+        // acceptedProperties（Apply 管线既有 persist 的载荷）= 修剪后文档。
+        auto apply_root = yyjson::read(apply_text);
+        auto apply_obj = apply_root.as_object();
+        ASSERT_TRUE(apply_obj.has_value());
+        ASSERT_TRUE(
+            apply_obj->contains(std::string_view("acceptedProperties")));
+        const auto accepted = Compact(
+            Das::Utils::SerializeYyjsonValue(
+                (*apply_obj)[std::string_view("acceptedProperties")])
+                .value_or(""));
+        EXPECT_EQ(accepted.find("\"edgeId\":\"e_stale\""), std::string::npos)
+            << accepted;
+        EXPECT_NE(accepted.find("\"edgeId\":\"e_ok\""), std::string::npos)
+            << accepted;
+        // 源载荷 revision（version 字段）同步推进。
+        EXPECT_NE(accepted.find("\"version\":1"), std::string::npos)
+            << accepted;
+
+        // 视图文档同样只余健康边（Get 侧权威快照；图视图以 connections
+        // 投影边——toPortId 是边的目标坐标，口本身仍留在节点口面）。
+        const auto document = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(s.p)).value_or(""));
+        EXPECT_EQ(document.find("\"toPortId\":\"dyn_in\""), std::string::npos)
+            << document;
+        EXPECT_NE(document.find("\"toPortId\":\"keep_in\""), std::string::npos)
+            << document;
+    }
+
+    /// 纯读零修剪：Get 与 Compile（三读入口——UI 预览 compile/仓条目
+    /// Get/OnTick 执行编译共用 session->Compile）之后文档与 revision 逐
+    /// 字节不变；断线诊断在编译出口可见（读路径只产诊断）。
+    TEST(GraphAuthoringSessionTest, PureGetAndCompileNeverPrune)
+    {
+        const SessionHandle s{StaleEdgeGraphContext(kEvolvedNodeFaces)};
+
+        const auto before = Compact(JsonToUtf8(GetDocument(s.p).Get()));
+
+        // OnTick 执行编译形态（执行请求体）与 UI 预览 compile 同走
+        // session->Compile——单次调用即覆盖三入口的会话侧行为。
+        DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(s.p, nullptr, compiled.Put()),
+            DAS_S_OK);
+        // 断线诊断经编译出口可见。
+        const auto outcome = CompileOutcomeOf(s.p);
+        EXPECT_TRUE(DiagnosticsContainKind(
+            outcome,
+            Das::Core::GraphRuntime::CompileDiagnosticKind::
+                StaleEdgeDisconnect));
+
+        const auto after = Compact(JsonToUtf8(GetDocument(s.p).Get()));
+        // 逐字节不变（读无副作用——文档与 revision 均未动）。失效边仍
+        // 在 connections（toPortId 是边坐标；口本身仍留在节点口面）。
+        EXPECT_EQ(before, after);
+        EXPECT_NE(before.find("\"toPortId\":\"dyn_in\""), std::string::npos)
+            << before;
+        EXPECT_NE(before.find("\"revision\":0"), std::string::npos) << before;
+    }
+
+    // ======================================================================
     // faces 画布投影（BuildPortsValue 调用侧合并形态）
     // ======================================================================
 
