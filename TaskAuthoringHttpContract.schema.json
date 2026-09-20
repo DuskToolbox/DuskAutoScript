@@ -682,7 +682,7 @@
       "type": "object",
       "required": ["nodeId", "name", "direction", "valueType"],
       "additionalProperties": false,
-      "$comment": "Dynamic port declaration on a begin/end boundary node or a repository-bound call node (the controlled exception to 'the document stores no port declarations'). The direction is the SIGNATURE direction (input = a graph input growing on Begin, output = a graph output growing on End; a bound call node accepts both — its materialized ports mirror the child graph's boundary signature); the role gate — only Begin/End nodes and repository-bound call nodes may carry dynamic ports, Begin accepts input, End accepts output, '$'-prefixed and duplicate names rejected — is enforced in the Core dispatch layer. The backend allocates a stable port id (the edge addressing coordinate) and returns it as the allocated id unless the optional portId is supplied (the call-node materialization channel: the stable id is the child graph's boundary port id, the runtime value-plane key; uniqueness is per (portId, direction) so the input and output sides may share one id). A successful add bumps the semantic revision exactly once.",
+      "$comment": "Add one port entry to a document's port list — the standard vocabulary for editing a port list in any authoring document (the same family MaaPI's task list uses). The graph document stores no port partitions, so on a graph only begin/end boundary nodes accept it (their port list lives in the node settings); any other node's dynamic ports belong to that node's own authoring document and are computed live from it (the legacy repository-bound call-node port materialization channel is retired) — adding there rejects with a pointer to the owning document. The direction gate (Begin accepts input, End accepts output — the signature direction), '$'-prefixed and duplicate names are enforced in the Core dispatch layer. The port id IS the port name (boundary single-id form); a successful add bumps the semantic revision exactly once.",
       "properties": {
         "nodeId": { "type": "string", "minLength": 1 },
         "name": {
@@ -716,7 +716,7 @@
           "minLength": 1,
           "maxLength": 100,
           "pattern": "^[^$].*$",
-          "$comment": "Optional stable id for the call-node materialization channel only (the child graph's boundary port id — the runtime value-plane key). Begin/End adds reject it; the backend-allocated p_N ids remain the default."
+          "$comment": "Optional explicit port id. The boundary single-id form makes the port id and its name one channel: when present it must equal name (a divergent value rejects); omitting it is equivalent to passing name. The historical call-node materialization channel (the child graph's boundary port id as a stable value-plane key) is retired."
         }
       }
     },
