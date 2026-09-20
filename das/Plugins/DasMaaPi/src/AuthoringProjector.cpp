@@ -531,9 +531,30 @@ namespace Das::Plugins::DasMaaPi
                     settings.pi.custom_presets =
                         ParseCustomPresetsArray(*pi, "customPresets");
                     // D-86-03/06: pretasks 是 Provider 私有的 pretask 选中值
-                    // 存储。缺失时返回空 vector。
+                    // 存储。缺失时返回空 vector（flat pi 形态）。
                     settings.pi.pretasks =
                         ParsePretaskSettingsArray(*pi, "pretasks");
+                    // 暴露为节点输入的状态存储（option key → true）。缺失/
+                    // 非对象/非布尔值 → 空态（fail-safe；false 条目不存储，
+                    // 键存在即暴露）。
+                    if (pi->contains(std::string_view("exposedInputs")))
+                    {
+                        if (auto exposed =
+                                (*pi)[std::string_view("exposedInputs")]
+                                    .as_object())
+                        {
+                            for (const auto& [key, flag] : *exposed)
+                            {
+                                if (flag.is_bool()
+                                    && flag.as_bool().value_or(false))
+                                {
+                                    settings.pi
+                                        .exposed_inputs[std::string(key)] =
+                                        true;
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -719,6 +740,27 @@ namespace Das::Plugins::DasMaaPi
             name += option_key;
             name += kExposedInputFieldSuffix;
             return name;
+        }
+
+        // 反查：伴生 bool 字段名 → option key（MakeExposedInputFieldName 的
+        // 逆运算）。非伴生形态（无前缀/无后缀/剥完为空）返回 nullopt。
+        std::optional<std::string_view> OptionKeyOfExposedInputField(
+            std::string_view field_name)
+        {
+            if (!field_name.starts_with(kExposedInputFieldPrefix)
+                || !field_name.ends_with(kExposedInputFieldSuffix))
+            {
+                return std::nullopt;
+            }
+            const auto offset = kExposedInputFieldPrefix.size();
+            const auto length = field_name.size()
+                                - kExposedInputFieldPrefix.size()
+                                - kExposedInputFieldSuffix.size();
+            if (length == 0)
+            {
+                return std::nullopt;
+            }
+            return field_name.substr(offset, length);
         }
 
         // 端口 id 纪律（与 Core 文档校验器口名纪律同语义 lockstep：非空、
@@ -2234,6 +2276,22 @@ namespace Das::Plugins::DasMaaPi
             (*pi_obj)[std::string_view("customPresets")] =
                 CustomPresetsArray(settings.pi.custom_presets);
         }
+        // 暴露为节点输入的状态存储（option key → true）。仅在非空时输出
+        // （engaged-only；取消勾选=键删除而非存 false），与 customPresets
+        // 同款 Provider 私有存储序列化形态。
+        if (!settings.pi.exposed_inputs.empty())
+        {
+            yyjson::value exposed(Das::Utils::MakeYyjsonObject());
+            auto          exposed_obj = exposed.as_object();
+            for (const auto& [option_key, flag] : settings.pi.exposed_inputs)
+            {
+                if (flag)
+                {
+                    (*exposed_obj)[std::string_view(option_key)] = true;
+                }
+            }
+            (*pi_obj)[std::string_view("exposedInputs")] = std::move(exposed);
+        }
         yyjson::value orphans(Array());
         for (const auto& path : settings.pi.orphan_paths)
         {
@@ -3422,6 +3480,11 @@ namespace Das::Plugins::DasMaaPi
         // MakeOptionPropertyField 内的 MapOptionType 声明形态（select→string /
         // checkbox→array<string> / switch→bool / input→int|float|string），
         // 值/label/candidates 复用 option 字段投影既有链（双语沿用现状）。
+        // 顶层 ports section 推导的收集位：勾选暴露的 option（component 语境
+        // 且勾选集非空才 engaged）。随输入域候选循环收集（声明序即 ports 序，
+        // 与表单字段顺序一致）；存储里已不再被首个 task 声明的陈旧勾选自然
+        // 不产口（fail-safe 跳过）。
+        std::vector<std::pair<std::string, std::string>> exposed_ports;
         if (catalog != nullptr && !settings.pi.tasks.empty())
         {
             const auto& first_task = settings.pi.tasks.front();
@@ -3459,12 +3522,24 @@ namespace Das::Plugins::DasMaaPi
                             option_name
                                 + std::string(kExposedInputFieldSuffix)))
                     {
+                        const auto exposed_it =
+                            settings.pi.exposed_inputs.find(option_name);
+                        const bool exposed =
+                            exposed_it != settings.pi.exposed_inputs.end()
+                            && exposed_it->second;
                         fields.as_array()->emplace_back(MakePropertyField(
                             MakeExposedInputFieldName(option_name),
                             Translate("field.exposeAsNodeInput"),
                             8, // valueType=bool → UI CheckBox
                             0, // inputType=plain
-                            yyjson::value(false)));
+                            yyjson::value(exposed)));
+                        if (exposed)
+                        {
+                            exposed_ports.emplace_back(
+                                option_name,
+                                std::string(
+                                    *MapOptionPortType(option_dto->dto)));
+                        }
                     }
                     fields.as_array()->emplace_back(MakeOptionPropertyField(
                         std::string{"input."} + option_name,
@@ -3490,6 +3565,29 @@ namespace Das::Plugins::DasMaaPi
             update_section_top);
         (*obj)[std::string_view("fields")] = std::move(fields);
         (*obj)[std::string_view("fieldLayout")] = std::move(field_layout);
+
+        // 顶层 ports section 推导（仅 component 语境且勾选集非空 engaged）：
+        // 勾选字段 → {id=option key, type=九词映射端口类型, direction=input}。
+        // 纯投影——每次从 exposedInputs 现算，无双写零缓存；standalone 恒不
+        // 投影（伴生字段与 ports 同门）。types section：MaaPI 首期字段类型全
+        // 落九词（MapOptionPortType 只产九词），无自定义类型声明 → 不投影。
+        // 口 id 与 manifest 声明口重名时由 Core 编译合并侧去重（文档侧声明
+        // 胜出 + DAS_LOG_WARN），本投影器不重复实现。
+        if (!exposed_ports.empty())
+        {
+            yyjson::value ports(Array());
+            for (const auto& [option_key, port_type] : exposed_ports)
+            {
+                yyjson::value port(Object());
+                auto          port_obj = port.as_object();
+                (*port_obj)[std::string_view("id")] = JsonString(option_key);
+                (*port_obj)[std::string_view("type")] = JsonString(port_type);
+                (*port_obj)[std::string_view("direction")] =
+                    JsonString("input");
+                ports.as_array()->emplace_back(std::move(port));
+            }
+            (*obj)[std::string_view("ports")] = std::move(ports);
+        }
 
         // D-84-13: formSequence 只承载 items[]；不再有根级 fields/sequence。
         // D-84-40: FormSequenceItem.id = Provider 颁发的 itemId，绝不回退到
@@ -4454,7 +4552,8 @@ namespace Das::Plugins::DasMaaPi
             std::string_view              field_name,
             const yyjson::value&          value,
             const PiCatalog*              catalog,
-            std::vector<PiDiagnosticDto>& diagnostics)
+            std::vector<PiDiagnosticDto>& diagnostics,
+            bool                          component_context = false)
         {
             const std::string field(field_name);
             if (field == "adapter.interfacePath")
@@ -4825,6 +4924,66 @@ namespace Das::Plugins::DasMaaPi
                     value);
                 return true;
             }
+            // 暴露开关伴生 bool 字段行（仅 component 语境可写，standalone 无
+            // 此字段=不可写）：字段名按派生规则反查 option key →
+            // exposedInputs upsert(true)/erase(false)。同名真 option 守卫——
+            // 首 task 同时声明 <optionKey>_exposed option 时按正常 input.*
+            // 路由处理该真 option（投影侧该场景已跳过伴生生成）；伴生条件
+            // 不成立（未声明/不可暴露/违纪）也落穿到正常 input.* 分支的
+            // fail-closed 诊断，不在此另设错误路径。
+            if (component_context && catalog
+                && field.starts_with(kExposedInputFieldPrefix)
+                && field.ends_with(kExposedInputFieldSuffix))
+            {
+                const auto companion_option =
+                    OptionKeyOfExposedInputField(field);
+                if (companion_option.has_value() && !settings.pi.tasks.empty())
+                {
+                    const auto& first_task = settings.pi.tasks.front();
+                    const auto* catalog_task =
+                        FindTask(*catalog, first_task.task_name);
+                    if (catalog_task != nullptr
+                        && ContainsName(
+                            catalog_task->dto.option,
+                            *companion_option)
+                        && !ContainsName(
+                            catalog_task->dto.option,
+                            field.substr(kExposedInputFieldPrefix.size())))
+                    {
+                        const auto* option =
+                            FindOption(*catalog, *companion_option);
+                        if (option != nullptr
+                            && MapOptionPortType(option->dto).has_value()
+                            && OptionKeyUsableAsPortId(*companion_option))
+                        {
+                            if (value.is_bool())
+                            {
+                                if (value.as_bool().value_or(false))
+                                {
+                                    settings.pi.exposed_inputs[std::string(
+                                        *companion_option)] = true;
+                                }
+                                else
+                                {
+                                    settings.pi.exposed_inputs.erase(
+                                        std::string(*companion_option));
+                                }
+                                return true;
+                            }
+                            EmitDiagnostic(
+                                diagnostics,
+                                "error",
+                                Translate(
+                                    "diagnostic.setValueValueTypeIncompatible"),
+                                DAS_E_INVALID_ARGUMENT,
+                                field);
+                            return false;
+                        }
+                    }
+                }
+                // 落穿：正常 input.* 分支按全名字段查 option（真同名 option
+                // 正常编辑；否则其 fail-closed 诊断拒绝）。
+            }
             // D-A3（111-03）：input.{name} 路由到首个 PI task 的 options 存储
             // （PI 声明输入域候选字段的静态编辑通道——与 formSequence item 的
             // options.* 同一存储同一 ParseOptionValue 校验；暴露机制勾选为端口
@@ -5068,7 +5227,8 @@ namespace Das::Plugins::DasMaaPi
         AcceptedSettingsDto&          settings,
         const yyjson::value&          payload,
         const PiCatalog*              catalog,
-        std::vector<PiDiagnosticDto>& diagnostics)
+        std::vector<PiDiagnosticDto>& diagnostics,
+        bool                          component_context)
     {
         if (!OnlyKeysExact(
                 payload,
@@ -5194,7 +5354,8 @@ namespace Das::Plugins::DasMaaPi
                 *field_name,
                 value,
                 catalog,
-                diagnostics);
+                diagnostics,
+                component_context);
         }
         return ApplyFormSequenceItemSetValue(
             settings,

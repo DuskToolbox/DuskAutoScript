@@ -80,7 +80,8 @@ namespace Das::Plugins::DasMaaPi
         AcceptedSettingsDto&          settings,
         const yyjson::value&          payload,
         const PiCatalog*              catalog,
-        std::vector<PiDiagnosticDto>& diagnostics);
+        std::vector<PiDiagnosticDto>& diagnostics,
+        bool                          component_context = false);
 
     bool ApplyAddFormSequenceItem(
         AcceptedSettingsDto&          settings,

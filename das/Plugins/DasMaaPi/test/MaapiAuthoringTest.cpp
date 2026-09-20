@@ -7371,8 +7371,303 @@ TEST(MaapiProjectionTest, ComponentContextProjectsCompanionExposedToggles)
     EXPECT_FALSE(standalone_obj->contains(std::string_view("types")));
 }
 
+// 暴露状态存储 + ports section 推导：伴生 bool 行的 setValue（component 语境）
+// → exposedInputs upsert/erase → 重投影 ports 增删；非布尔值/不可暴露字段/
+// standalone 语境写伴生字段一律 fail-closed 拒绝。
+TEST(MaapiProjectionTest, ExposedToggleSetPersistsAndDrivesPortsSection)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakePiInputDomainMockCatalog();
+    AcceptedSettingsDto settings = MakePiInputDomainSettings();
+
+    const auto apply_set = [&](const char* field,
+                               const char* value_json,
+                               bool        component_context,
+                               bool        expect_ok,
+                               const char* context = "")
+    {
+        std::vector<PiDiagnosticDto> diagnostics;
+        const auto                   payload_string =
+            std::string(R"({"target":{"kind":"document"},)")
+            + "\"fieldName\":\"" + field + "\",\"value\":" + value_json + "}";
+        auto       payload = Das::Utils::ParseYyjsonFromString(payload_string)
+                                 .value_or(yyjson::value(nullptr));
+        const bool ok = ApplyStrictSetValueChange(
+            settings,
+            payload,
+            &catalog,
+            diagnostics,
+            component_context);
+        EXPECT_EQ(ok, expect_ok)
+            << field << " " << value_json << " " << context;
+        if (!expect_ok)
+        {
+            ASSERT_FALSE(diagnostics.empty()) << field << " " << context;
+            EXPECT_EQ(diagnostics.front().severity, "error")
+                << field << " " << context;
+        }
+    };
+
+    // 勾选 stage → exposedInputs 键写入。
+    apply_set(
+        "input.stage_exposed",
+        "true",
+        /*component_context=*/true,
+        /*expect_ok=*/true);
+    ASSERT_EQ(settings.pi.exposed_inputs.count("stage"), 1u);
+    EXPECT_TRUE(settings.pi.exposed_inputs.at("stage"));
+
+    // 勾选 retry → 两个口，type=九词映射（select→string / input int→int）。
+    apply_set(
+        "input.retry_exposed",
+        "true",
+        /*component_context=*/true,
+        /*expect_ok=*/true);
+
+    const auto project_ports = [&](bool component) -> std::vector<yyjson::value>
+    {
+        auto document = ProjectAuthoringDocument(
+            settings,
+            &catalog,
+            {},
+            0,
+            nullptr,
+            nullptr,
+            component);
+        auto doc_obj = document.as_object();
+        if (!doc_obj || !doc_obj->contains(std::string_view("ports")))
+        {
+            return {};
+        }
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        if (!ports)
+        {
+            return {};
+        }
+        return std::vector<yyjson::value>(ports->begin(), ports->end());
+    };
+
+    {
+        auto ports = project_ports(/*component=*/true);
+        ASSERT_EQ(ports.size(), 2u);
+        auto stage_port = ports[0].as_object();
+        ASSERT_TRUE(stage_port);
+        EXPECT_EQ(
+            (*stage_port)[std::string_view("id")].as_string().value_or(""),
+            "stage");
+        EXPECT_EQ(
+            (*stage_port)[std::string_view("type")].as_string().value_or(""),
+            "string");
+        EXPECT_EQ(
+            (*stage_port)[std::string_view("direction")].as_string().value_or(
+                ""),
+            "input");
+        auto retry_port = ports[1].as_object();
+        ASSERT_TRUE(retry_port);
+        EXPECT_EQ(
+            (*retry_port)[std::string_view("id")].as_string().value_or(""),
+            "retry");
+        EXPECT_EQ(
+            (*retry_port)[std::string_view("type")].as_string().value_or(""),
+            "int");
+        EXPECT_EQ(
+            (*retry_port)[std::string_view("direction")].as_string().value_or(
+                ""),
+            "input");
+    }
+
+    // 带 ports 的文档整体过 Core 校验器（id 纪律/词表/方向门全合法）。
+    {
+        auto document = ProjectAuthoringDocument(
+            settings,
+            &catalog,
+            {},
+            0,
+            nullptr,
+            nullptr,
+            /*component_context=*/true);
+        auto validate =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                    << " message=" << validate.message;
+    }
+
+    // 取消勾选 stage → ports 无该条 + 键删除（非存 false）。
+    apply_set(
+        "input.stage_exposed",
+        "false",
+        /*component_context=*/true,
+        /*expect_ok=*/true);
+    EXPECT_EQ(settings.pi.exposed_inputs.count("stage"), 0u);
+    {
+        auto ports = project_ports(/*component=*/true);
+        ASSERT_EQ(ports.size(), 1u);
+        auto port = ports[0].as_object();
+        ASSERT_TRUE(port);
+        EXPECT_EQ(
+            (*port)[std::string_view("id")].as_string().value_or(""),
+            "retry");
+    }
+
+    // 全部取消 → ports section 缺席（engaged-only）。
+    apply_set(
+        "input.retry_exposed",
+        "false",
+        /*component_context=*/true,
+        /*expect_ok=*/true);
+    EXPECT_TRUE(project_ports(/*component=*/true).empty());
+    EXPECT_TRUE(settings.pi.exposed_inputs.empty());
+
+    // 即便暴露状态有残留，standalone 投影也不带伴生行/不消费暴露状态。
+    {
+        auto document = ProjectAuthoringDocument(
+            settings,
+            &catalog,
+            {},
+            0,
+            nullptr,
+            nullptr,
+            /*component_context=*/false);
+        EXPECT_EQ(CountFieldsWithName(document, "input.stage_exposed"), 0u);
+    }
+
+    // fail-closed 三态：非布尔值 / 不可暴露字段（checkbox 无九词映射）/
+    // standalone 语境写伴生字段（无此字段=不可写）。
+    apply_set(
+        "input.stage_exposed",
+        "\"yes\"",
+        /*component_context=*/true,
+        /*expect_ok=*/false,
+        "non-bool value");
+    apply_set(
+        "input.use-medicine_exposed",
+        "true",
+        /*component_context=*/true,
+        /*expect_ok=*/false,
+        "checkbox option is not exposable");
+    apply_set(
+        "input.stage_exposed",
+        "true",
+        /*component_context=*/false,
+        /*expect_ok=*/false,
+        "standalone context cannot write exposure");
+    EXPECT_TRUE(settings.pi.exposed_inputs.empty());
+}
+
+// exposedInputs 持久化：序列化 → acceptedProperties.pi.exposedInputs 对象
+// → parse 读回状态保留（会话重建路径）。
+TEST(MaapiProjectionTest, ExposedInputsPersistThroughAcceptedProperties)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto settings = MakePiInputDomainSettings();
+    settings.pi.exposed_inputs["stage"] = true;
+    settings.pi.exposed_inputs["retry"] = true;
+
+    auto serialized = SerializeAcceptedSettings(settings);
+    {
+        auto obj = serialized.as_object();
+        ASSERT_TRUE(obj);
+        ASSERT_TRUE(obj->contains(std::string_view("pi")));
+        auto pi = (*obj)[std::string_view("pi")].as_object();
+        ASSERT_TRUE(pi);
+        EXPECT_TRUE(pi->contains(std::string_view("exposedInputs")));
+        auto exposed = (*pi)[std::string_view("exposedInputs")].as_object();
+        ASSERT_TRUE(exposed);
+        EXPECT_EQ(exposed->size(), 2u);
+    }
+
+    auto reparsed = ParseAcceptedSettings(serialized);
+    EXPECT_EQ(reparsed.pi.exposed_inputs.size(), 2u);
+    EXPECT_TRUE(reparsed.pi.exposed_inputs.at("stage"));
+    EXPECT_TRUE(reparsed.pi.exposed_inputs.at("retry"));
+
+    // 空态 → 键缺席（engaged-only，legacy fixture 零破坏）。
+    auto empty = SerializeAcceptedSettings(MakePiInputDomainSettings());
+    auto empty_obj = empty.as_object();
+    ASSERT_TRUE(empty_obj);
+    auto empty_pi = (*empty_obj)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(empty_pi);
+    EXPECT_FALSE(empty_pi->contains(std::string_view("exposedInputs")));
+}
+
+// 会话级钉：context 携带 pi.exposedInputs 重建会话 → 伴生 bool 行勾选态
+// + ports section 推导现算可见（状态持久于 acceptedProperties，纯投影无
+// 双写）。Apply 响应 document 同样携带 ports（严格 envelope 形状不变）。
+TEST_F(MaapiAuthoringFixture, ExposedInputsFromContextDriveSessionDocument)
+{
+    auto interface_path =
+        Das::Utils::PathToGenericUtf8(FixturePath("interface_authoring.jsonc"));
+    const std::string context_json =
+        "{\"componentContext\":true,\"adapter\":{\"interfacePath\":\""
+        + interface_path
+        + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true}],"
+          "\"exposedInputs\":{\"stage\":true}}}";
+    auto session = CreateSession(context_json);
+
+    // Get：伴生行勾选态 + ports section。
+    {
+        DasPtr<Das::ExportInterface::IDasJson> doc_json;
+        ASSERT_EQ(session->GetDocument(nullptr, doc_json.Put()), DAS_S_OK);
+        auto document = DocumentOfGet(doc_json.Get());
+        auto doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj);
+        auto stage = FindRootField(document, "input.stage_exposed");
+        ASSERT_TRUE(stage.has_value());
+        auto stage_obj = stage->as_object();
+        ASSERT_TRUE(stage_obj);
+        EXPECT_TRUE(
+            (*stage_obj)[std::string_view("value")].as_bool().value_or(false));
+        ASSERT_TRUE(doc_obj->contains(std::string_view("ports")));
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports);
+        ASSERT_EQ(ports->size(), 1u);
+        auto port = (*ports)[0].as_object();
+        ASSERT_TRUE(port);
+        EXPECT_EQ(
+            (*port)[std::string_view("id")].as_string().value_or(""),
+            "stage");
+        EXPECT_EQ(
+            (*port)[std::string_view("type")].as_string().value_or(""),
+            "string");
+        EXPECT_EQ(
+            (*port)[std::string_view("direction")].as_string().value_or(""),
+            "input");
+    }
+
+    // Apply：取消勾选 → 响应 document 的 ports 无该条（同一文档投影通道）。
+    {
+        auto change = ParseDasJson(
+            "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+            "\"target\":{\"kind\":\"document\"},"
+            "\"fieldName\":\"input.stage_exposed\",\"value\":false}}");
+        DasPtr<Das::ExportInterface::IDasJson> result_json;
+        ASSERT_EQ(
+            session->ApplyChange(change.Get(), result_json.Put()),
+            DAS_S_OK);
+        auto result = ReadJsonInterface(result_json.Get());
+        auto result_obj = result.as_object();
+        ASSERT_TRUE(result_obj);
+        ASSERT_TRUE(result_obj->contains(std::string_view("document")));
+        auto document = (*result_obj)[std::string_view("document")].as_object();
+        ASSERT_TRUE(document);
+        EXPECT_FALSE(document->contains(std::string_view("ports")));
+        // acceptedProperties 持久化：键删除（不存 false）。
+        ASSERT_TRUE(
+            result_obj->contains(std::string_view("acceptedProperties")));
+        auto accepted =
+            (*result_obj)[std::string_view("acceptedProperties")].as_object();
+        ASSERT_TRUE(accepted);
+        auto pi = (*accepted)[std::string_view("pi")].as_object();
+        ASSERT_TRUE(pi);
+        EXPECT_FALSE(pi->contains(std::string_view("exposedInputs")));
+    }
+}
+
 // 会话级钉：真实工厂读 context_json 的 "componentContext"（engaged-only，
-// 缺省/非布尔一律 false）——带标记的会话文档含伴生字段行，缺省 context
+// 缺省/非布尔一律 false）——带标记的会话文档含伴生 bool 字段行，缺省 context
 // 的会话文档与现状一致（无伴生无 ports/types section）。
 TEST_F(MaapiAuthoringFixture, ComponentContextFlagGatesSessionDocument)
 {

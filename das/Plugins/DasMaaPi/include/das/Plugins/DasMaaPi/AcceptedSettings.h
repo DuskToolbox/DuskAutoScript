@@ -113,9 +113,17 @@ namespace Das::Plugins::DasMaaPi
         std::vector<MaapiPiPretaskSettingsDto> pretasks;
 
         // D-84.2-04: Provider 私有 preset 快照存储。newPreset invokeCommand
-        // 追加当前 flat pi 字段的镜像到此数组；投影层把 id/name 合并到
+        // 追加当前 flat pi 字段镜像到此数组；投影层把 id/name 合并到
         // presetName select candidates。customPresets 不进入 document UI IR。
         std::vector<MaapiPresetSnapshotDto> custom_presets;
+
+        // 暴露为节点输入的状态存储（option key → true）：伴生 bool 字段行
+        // （仅 component 语境投影）经既有 setValue 勾选/取消——true = 键
+        // 写入，false = 键删除（engaged-only，不存 false 条目）。镜像
+        // customPresets 的 Provider 私有存储模式（acceptedProperties.pi 子
+        // 键，不进入 document UI IR 的 id 层）；文档顶层 ports section 每次
+        // 投影从本状态现算（纯投影，无双写零缓存）。
+        std::map<std::string, bool> exposed_inputs;
 
         std::vector<std::string> orphan_paths;
 

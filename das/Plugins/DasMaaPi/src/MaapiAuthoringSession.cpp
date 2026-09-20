@@ -26,7 +26,8 @@ namespace Plugins::DasMaaPi
             const yyjson::value&            payload,
             AcceptedSettingsDto&            candidate,
             const std::optional<PiCatalog>& catalog,
-            std::vector<PiDiagnosticDto>&   diagnostics)
+            std::vector<PiDiagnosticDto>&   diagnostics,
+            bool                            component_context)
         {
             const PiCatalog* catalog_ptr =
                 catalog.has_value() ? &*catalog : nullptr;
@@ -36,7 +37,8 @@ namespace Plugins::DasMaaPi
                     candidate,
                     payload,
                     catalog_ptr,
-                    diagnostics);
+                    diagnostics,
+                    component_context);
             }
             if (kind == "addFormSequenceItem")
             {
@@ -340,7 +342,8 @@ namespace Plugins::DasMaaPi
                     payload,
                     candidate,
                     catalog,
-                    diagnostics);
+                    diagnostics,
+                    component_context_);
             }
             if (dispatch_ok)
             {
