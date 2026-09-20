@@ -1596,6 +1596,32 @@ namespace Contract
             return IsLinear(doc);
         }
 
+        /// 线性⊂图法则拒绝消息（定文，字节精确）：线性 change kinds 与
+        /// graph→formSequence 的 convertView 对图文档一律拒绝——图文档
+        /// 永不转换为线性，也永不进线性变更路径。
+        constexpr std::string_view LINEAR_KINDS_NOT_APPLICABLE_TO_GRAPH =
+            "linear change kinds are not applicable to graph documents; "
+            "a graph is never converted to linear";
+
+        /// True when the change kind only ever mutates a linear
+        /// (formSequence) document: the item family plus the linear setValue
+        /// targeting a formSequenceItem. A graph document never enters the
+        /// linear mutation path — the dispatch front door rejects these kinds
+        /// up front, so the store can never be rebuilt through the linear
+        /// reverse projection (which would drop viewData, node labels and
+        /// dynamic port partitions).
+        bool IsLinearOnlyChange(const AuthoringChange& change) noexcept
+        {
+            if (change.kind == "addFormSequenceItem"
+                || change.kind == "removeFormSequenceItem"
+                || change.kind == "moveFormSequenceItem")
+            {
+                return true;
+            }
+            return change.kind == "setValue" && change.target.has_value()
+                   && change.target->kind == "formSequenceItem";
+        }
+
         /// View-only kinds ride the lightweight viewData channel and skip the
         /// semantic revision bump so coordinate updates never participate in
         /// revision conflict detection (singular moveGraphNode and the
@@ -3052,28 +3078,16 @@ namespace Contract
             }
             else if (change.kind == "convertView")
             {
-                if (!change.target_view_kind.has_value())
-                {
-                    return {
-                        ChangeErrorKind::InvalidOp,
-                        "convertView.targetViewKind required",
-                        {},
-                        std::nullopt};
-                }
-                if (*change.target_view_kind != "formSequence")
-                {
-                    return {
-                        ChangeErrorKind::UnsupportedView,
-                        "graph mode can only convert to formSequence if the topology is linear",
-                        {},
-                        std::nullopt};
-                }
-                // Best-effort one-way conversion: tag the document so the
-                // projection treats it as linear. Real graph→formSequence is
-                // only valid when the topology is a single signal chain; that
-                // invariant is the Provider's responsibility (D-84-29).
-                document.tags.emplace_back(LINEAR_TAG);
-                return {ChangeErrorKind::None, "", {}, std::nullopt};
+                // 线性⊂图法则：graph→formSequence 的 best-effort 翻转
+                // （LINEAR_TAG 塞入段）已退役——单链是图特例，只有
+                // formSequence→graph 的无损升级方向存在（线性派发段的
+                // RemoveTag 语义保留）。图文档一律 InvalidOp 拒绝，
+                // 拒绝零突变。
+                return {
+                    ChangeErrorKind::InvalidOp,
+                    std::string(LINEAR_KINDS_NOT_APPLICABLE_TO_GRAPH),
+                    {},
+                    std::nullopt};
             }
             else
             {
@@ -3103,6 +3117,18 @@ namespace Contract
         const std::vector<std::string>&     valid_action_ids,
         const std::optional<ActionCatalog>& action_catalog)
     {
+        // 线性⊂图法则前门：图文档 + 线性 change kinds（item 家族与
+        // formSequenceItem 定向 setValue）一律 InvalidOp 拒绝，拒绝零
+        // 突变——图文档根本不进线性变更路径（线性反向投影重建会丢
+        // viewData/节点 label/动态口分区，守卫使该路径不可达）。
+        if (!IsLinearMode(document) && IsLinearOnlyChange(change))
+        {
+            return {
+                ChangeErrorKind::InvalidOp,
+                std::string(LINEAR_KINDS_NOT_APPLICABLE_TO_GRAPH),
+                {},
+                std::nullopt};
+        }
         AuthoringChangeResult r =
             IsLinearMode(document)
                 ? ApplyLinearChange(document, change, valid_action_ids)
