@@ -836,3 +836,53 @@ TEST(GraphRuntimeFactoryTest, CatalogDeclaredPortsRemainOnCompileSurface)
                       << (text.has_value() ? *text : std::string("<null>"));
     }
 }
+
+TEST(GraphRuntimeFactoryTest, EntryFacesTypesFlowIntoTypesRegistry)
+{
+    // faces 通道携带的文档 types[]（entryFaces 条目键）随会话状态进图视
+    // 图投影的 types 注册表——内建九词 ∪ 自定义名（消费面：连线规则表
+    // 的 Core 侧供源）。
+    const std::string context =
+        std::string(R"({"documentId":"types_doc","nodes":[)")
+        + BoundaryNodeText("n_0", kBoundaryBeginGuid, R"([])") + ","
+        + BoundaryNodeText("n_1", kBoundaryEndGuid, R"([])")
+        + R"(],"edges":[],"entryFaces":[)"
+        + R"({"entryId":7,"ports":[],"types":[{"name":"myType","compatibleWith":["int"]}]}]})";
+
+    const AuthoringSessionHandle                session{context};
+    Das::DasPtr<Das::ExportInterface::IDasJson> document;
+    ASSERT_EQ(
+        GraphAuthoringSessionGetDocument(
+            session.state,
+            nullptr,
+            document.Put()),
+        DAS_S_OK);
+    ASSERT_NE(document.Get(), nullptr);
+    auto root = yyjson::read(JsonText(document.Get())).as_object();
+    ASSERT_TRUE(root.has_value());
+    ASSERT_TRUE(root->contains(std::string_view("document")));
+    auto doc_obj = (*root)[std::string_view("document")].as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    ASSERT_TRUE(doc_obj->contains(std::string_view("types")));
+    auto types = (*doc_obj)[std::string_view("types")].as_array();
+    ASSERT_TRUE(types.has_value());
+    EXPECT_EQ(types->size(), 10u); // 九词 + myType
+    bool custom_found = false;
+    for (const auto& entry : *types)
+    {
+        auto entry_obj = entry.as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        auto name = (*entry_obj)[std::string_view("name")].as_string();
+        ASSERT_TRUE(name.has_value());
+        if (*name == "myType")
+        {
+            custom_found = true;
+            auto compat =
+                (*entry_obj)[std::string_view("compatibleWith")].as_array();
+            ASSERT_TRUE(compat.has_value());
+            ASSERT_EQ(compat->size(), 1u);
+            EXPECT_EQ((*compat)[0].as_string().value_or(""), "int");
+        }
+    }
+    EXPECT_TRUE(custom_found);
+}

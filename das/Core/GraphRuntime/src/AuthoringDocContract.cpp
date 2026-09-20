@@ -14,6 +14,7 @@
 #include <das/Core/GraphRuntime/FormSequenceProjector.h>
 #include <das/Core/GraphRuntime/GraphAuthoring.h>
 #include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/Utils/DasJsonCore.h>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -1441,10 +1442,11 @@ namespace Contract
     } // anonymous namespace
 
     yyjson::value SerializeDocument(
-        const Dto::GraphDocumentDto&        document,
-        const std::optional<ActionCatalog>& action_catalog,
-        const GraphCompiler::NodeFacesMap*  node_faces,
-        const GraphCompiler::EntryFacesMap* entry_faces)
+        const Dto::GraphDocumentDto&                        document,
+        const std::optional<ActionCatalog>&                 action_catalog,
+        const GraphCompiler::NodeFacesMap*                  node_faces,
+        const GraphCompiler::EntryFacesMap*                 entry_faces,
+        const std::vector<GraphCompiler::DocumentFaceType>* entry_face_types)
     {
         // Build the strict Phase 84 wire by hand. Earlier shape-based
         // yyjson::object(shape, copy_string) emitted every optional as null;
@@ -1546,6 +1548,65 @@ namespace Contract
                 }
             }
             root_obj["graph"] = std::move(g_v);
+
+            // types 注册表（graph 视图投影）：内建九词 ∪ faces 通道携带的
+            // 文档 types[]——形状照根文档 types section（{name[,
+            // compatibleWith]}）。消费面=连线规则表（Core 侧供源，UI 侧
+            // 双表退役）。同名内建词冲突：内建胜出（注册表须恒过同文档
+            // 唯一校验），冲突自定义条目丢弃 + WARN。
+            {
+                yyjson::value types_value(Das::Utils::MakeYyjsonArray());
+                auto          types_arr = types_value.as_array();
+                const auto    append_type =
+                    [&types_arr](
+                        std::string_view                name,
+                        const std::vector<std::string>* compatible_with)
+                {
+                    yyjson::value entry(Das::Utils::MakeYyjsonObject());
+                    auto          entry_obj = entry.as_object();
+                    (*entry_obj)[std::string_view("name")] =
+                        yyjson::value(std::string(name));
+                    if (compatible_with != nullptr && !compatible_with->empty())
+                    {
+                        yyjson::value compat_value(
+                            Das::Utils::MakeYyjsonArray());
+                        auto compat_arr = compat_value.as_array();
+                        for (const auto& word : *compatible_with)
+                        {
+                            compat_arr->emplace_back(yyjson::value(word));
+                        }
+                        (*entry_obj)[std::string_view("compatibleWith")] =
+                            std::move(compat_value);
+                    }
+                    types_arr->emplace_back(std::move(entry));
+                };
+                for (const auto builtin : NODE_PORT_VALUE_TYPES)
+                {
+                    append_type(builtin, nullptr);
+                }
+                if (entry_face_types != nullptr)
+                {
+                    for (const auto& custom : *entry_face_types)
+                    {
+                        const bool collides_with_builtin = std::any_of(
+                            NODE_PORT_VALUE_TYPES.begin(),
+                            NODE_PORT_VALUE_TYPES.end(),
+                            [&custom](std::string_view builtin)
+                            { return builtin == custom.name; });
+                        if (collides_with_builtin)
+                        {
+                            DAS_CORE_LOG_WARN(
+                                "custom type name {} collides with a "
+                                "built-in word; the built-in wins and the "
+                                "custom entry is dropped from the registry",
+                                custom.name);
+                            continue;
+                        }
+                        append_type(custom.name, &custom.compatible_with);
+                    }
+                }
+                root_obj["types"] = std::move(types_value);
+            }
         }
 
         // The viewData partition is emitted at the document root (same level

@@ -2,6 +2,7 @@
 #include <das/Core/GraphRuntime/FormSequenceProjector.h>
 #include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
+#include <das/Core/TaskScheduler/TaskAuthoringContract.h>
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
 
@@ -3287,6 +3288,98 @@ namespace
             std::string::npos);
         EXPECT_NE(json.find("\"dynamic\":true"), std::string::npos);
         EXPECT_EQ(json.find("\"dynamic\":false"), std::string::npos);
+    }
+
+    // types 注册表随图视图投影：根 types section = 内建九词 ∪ faces 通道
+    // 携带的自定义类型（形状照 types section 立法层：{name[,
+    // compatibleWith]}）；内建词同名冲突内建胜出；投影过严格校验器。
+    TEST(AuthoringDocContractTest, GraphTypesRegistryProjectsBuiltinsAndCustoms)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n_begin", BOUNDARY_BEGIN_GUID, 0.0));
+
+        std::vector<GraphCompiler::DocumentFaceType> customs;
+        customs.push_back(
+            GraphCompiler::DocumentFaceType{"myType", {"int", "float"}});
+        customs.push_back(
+            GraphCompiler::DocumentFaceType{
+                "bool", // 与内建词撞名——内建胜出，本条丢弃。
+                {"string"}});
+        customs.push_back(GraphCompiler::DocumentFaceType{"裸类型", {}});
+
+        const auto value =
+            SerializeDocument(doc, std::nullopt, nullptr, nullptr, &customs);
+        auto obj = value.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("types")));
+        auto types = (*obj)[std::string_view("types")].as_array();
+        ASSERT_TRUE(types.has_value());
+
+        // 九词全数在场 + 三条自定义（撞名丢弃后两条）。
+        std::vector<std::string> names;
+        for (const auto& entry : *types)
+        {
+            auto entry_obj = entry.as_object();
+            ASSERT_TRUE(entry_obj.has_value());
+            auto name = (*entry_obj)[std::string_view("name")].as_string();
+            ASSERT_TRUE(name.has_value());
+            names.emplace_back(*name);
+            if (*name == "myType")
+            {
+                auto compat =
+                    (*entry_obj)[std::string_view("compatibleWith")].as_array();
+                ASSERT_TRUE(compat.has_value());
+                ASSERT_EQ(compat->size(), 2u);
+                EXPECT_EQ((*compat)[0].as_string().value_or(""), "int");
+            }
+        }
+        ASSERT_EQ(names.size(), 11u);
+        for (const std::string_view builtin :
+             {"bool",
+              "int",
+              "int64",
+              "float",
+              "double",
+              "string",
+              "image",
+              "base",
+              "component"})
+        {
+            EXPECT_NE(
+                std::find(names.begin(), names.end(), builtin),
+                names.end())
+                << builtin;
+        }
+        EXPECT_NE(std::find(names.begin(), names.end(), "myType"), names.end());
+        EXPECT_NE(std::find(names.begin(), names.end(), "裸类型"), names.end());
+
+        // 无自定义：仅九词。
+        const auto builtin_only = SerializeDocument(doc);
+        auto       builtin_obj = builtin_only.as_object();
+        ASSERT_TRUE(builtin_obj.has_value());
+        auto builtin_types =
+            (*builtin_obj)[std::string_view("types")].as_array();
+        ASSERT_TRUE(builtin_types.has_value());
+        EXPECT_EQ(builtin_types->size(), 9u);
+
+        // 投影过严格校验器（types section 立法层 lockstep）。
+        auto validation =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(value);
+        EXPECT_TRUE(validation.valid)
+            << validation.error_kind << ": " << validation.message;
+    }
+
+    // 线性文档不投 types 注册表（graph 视图专属键）。
+    TEST(AuthoringDocContractTest, LinearDocumentOmitsTypesRegistry)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.tags.emplace_back(LINEAR_TAG);
+
+        const auto value = SerializeDocument(doc);
+        auto       obj = value.as_object();
+        ASSERT_TRUE(obj.has_value());
+        EXPECT_FALSE(obj->contains(std::string_view("types")));
     }
 
     // 序列化 round-trip：节点 wire 恒不含 ports 键（图文档零口数据——口

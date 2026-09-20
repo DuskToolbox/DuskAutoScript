@@ -340,11 +340,19 @@ namespace Contract
     /// dynamic ports — same dedupe rule as the compile side (face wins over
     /// a same-name projected port); nullptr = no faces channel (the
     /// projection then matches the pre-faces wire exactly).
+    /// `entry_face_types` is the optional faces-carried custom type registry
+    /// (the types[] arrays the entryFaces channel collects). In graph mode
+    /// the document root carries a types registry (the legislated types
+    /// section shape: {name[, compatibleWith]}) built from the nine built-in
+    /// words plus these custom declarations — the Core-side supply for the
+    /// connection-rule table consumers; nullptr = built-ins only.
     yyjson::value SerializeDocument(
         const Dto::GraphDocumentDto&        document,
         const std::optional<ActionCatalog>& action_catalog = std::nullopt,
         const GraphCompiler::NodeFacesMap*  node_faces = nullptr,
-        const GraphCompiler::EntryFacesMap* entry_faces = nullptr);
+        const GraphCompiler::EntryFacesMap* entry_faces = nullptr,
+        const std::vector<GraphCompiler::DocumentFaceType>* entry_face_types =
+            nullptr);
 
     /// Serialize the authoritative store as the D-41 *source* blob
     /// (acceptedProperties). This is the full GraphDocumentDto — the persisted
