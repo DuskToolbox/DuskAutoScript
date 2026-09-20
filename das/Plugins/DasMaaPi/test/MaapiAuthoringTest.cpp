@@ -7592,6 +7592,99 @@ TEST(MaapiProjectionTest, ExposedInputsPersistThroughAcceptedProperties)
     EXPECT_FALSE(empty_pi->contains(std::string_view("exposedInputs")));
 }
 
+// 文档级联通钉：component 语境文档的 ports section JSON 形状与 faces 通道
+// （111.1-01 的 nodeFaces/entryFaces context 键）wire 形状字段级一致——faces
+// 口条目锁形规则 = {id,type,direction[,label]}，id/type 非空字符串、
+// direction ∈ {input,output}、键集外任何键违规；type 必须落在九词端口类型
+// 词表内（与 Core 文档校验器 NODE_PORT_VALUE_TYPES lockstep）。满足本形状
+// 的文档 ports 可被 SchedulerService 预备 pass 的 faces 提取原样消费
+// （提取器仅取四键逐元素校验）——SchedulerService 全链 E2E 在后续 plan
+// 收口，此处钉字段级一致性。
+TEST(MaapiProjectionTest, PortsSectionShapeMatchesFacesWireContract)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakePiInputDomainMockCatalog();
+    AcceptedSettingsDto settings = MakePiInputDomainSettings();
+    settings.pi.exposed_inputs["stage"] = true;
+    settings.pi.exposed_inputs["retry"] = true;
+    settings.pi.exposed_inputs["notify"] = true;
+    // checkbox 不可暴露——即便状态里被外部塞入也不产口（fail-safe）。
+    settings.pi.exposed_inputs["use-medicine"] = true;
+    // 陈旧勾选（未被首个 task 声明）不产口。
+    settings.pi.exposed_inputs["not-declared"] = true;
+
+    auto document = ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0,
+        nullptr,
+        nullptr,
+        /*component_context=*/true);
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj);
+    ASSERT_TRUE(doc_obj->contains(std::string_view("ports")));
+    auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+    ASSERT_TRUE(ports);
+    // use-medicine（checkbox 无九词映射）与 not-declared（陈旧）被跳过。
+    ASSERT_EQ(ports->size(), 3u);
+
+    // 九词端口类型词表（与 Core 校验器 NODE_PORT_VALUE_TYPES lockstep 镜像）。
+    const std::set<std::string> nine_words{
+        "bool",
+        "int",
+        "int64",
+        "float",
+        "double",
+        "string",
+        "image",
+        "base",
+        "component"};
+
+    std::set<std::string> seen_ids;
+    for (const auto& port_value : *ports)
+    {
+        auto port = port_value.as_object();
+        ASSERT_TRUE(port);
+        // faces 锁形：键集 ⊆ {id,type,direction,label}（三键必含、label
+        // 可选）。
+        for (const auto& [key, _] : *port)
+        {
+            (void)_;
+            EXPECT_TRUE(
+                key == std::string_view("id") || key == std::string_view("type")
+                || key == std::string_view("direction")
+                || key == std::string_view("label"))
+                << "unexpected port key: " << key;
+        }
+        const auto id = (*port)[std::string_view("id")].as_string();
+        ASSERT_TRUE(id.has_value() && !id->empty());
+        const auto type = (*port)[std::string_view("type")].as_string();
+        ASSERT_TRUE(type.has_value() && !type->empty());
+        const auto direction =
+            (*port)[std::string_view("direction")].as_string();
+        ASSERT_TRUE(direction.has_value());
+        EXPECT_TRUE(
+            *direction == std::string_view("input")
+            || *direction == std::string_view("output"));
+        EXPECT_NE(nine_words.find(std::string(*type)), nine_words.end())
+            << "port type outside nine-word vocabulary: " << *type;
+        EXPECT_TRUE(seen_ids.insert(std::string(*id)).second)
+            << "duplicate port id: " << *id;
+    }
+
+    // 三类口各就位（select→string / input int→int / switch→bool）。
+    EXPECT_EQ(seen_ids.count("stage"), 1u);
+    EXPECT_EQ(seen_ids.count("retry"), 1u);
+    EXPECT_EQ(seen_ids.count("notify"), 1u);
+}
+
 // 会话级钉：context 携带 pi.exposedInputs 重建会话 → 伴生 bool 行勾选态
 // + ports section 推导现算可见（状态持久于 acceptedProperties，纯投影无
 // 双写）。Apply 响应 document 同样携带 ports（严格 envelope 形状不变）。
