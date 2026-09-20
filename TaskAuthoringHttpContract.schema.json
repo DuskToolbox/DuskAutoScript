@@ -878,6 +878,14 @@
       "$comment": "Batch atomic apply: wire is {baseRevision, changes:[{kind,payload},...]}; the backend applies the whole batch all-or-nothing (a mid-batch failure mutates nothing and persists nothing). Legacy single-change top-level kind/payload shape is retired (rejected).",
       "properties": {
         "endpoint": { "$ref": "#/$defs/Endpoint" },
+        "componentContext": {
+          "type": "boolean",
+          "$comment": "Optional component-context flag (default false): when the UI drills into a component from inside a graph, the projector gates component-only projections on it. Absent = standalone editing, byte-identical legacy behavior."
+        },
+        "componentGuid": {
+          "type": "string",
+          "$comment": "Optional component document identity (e.g. a graph begin/end boundary component GUID): routes the apply to that component's own authoring session within the host graph addressed by the URL. Absent = the host document's own apply. Never a node-scoped nodeId key."
+        },
         "baseRevision": { "type": "integer", "minimum": 0 },
         "changes": {
           "type": "array",

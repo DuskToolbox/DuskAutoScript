@@ -956,167 +956,104 @@ namespace Das::Core::TaskScheduler
     }
 
     // ------------------------------------------------------------------
-    // 组件文档口面预备 pass 的静态辅助（member 入口在
-    // AppendComponentFacesContextKeys）：图文档节点扫描、绑条目判据、
-    // faces 口条目重建与节点作用域 context 装配。
+    // 组件文档口面预备 pass 的编排辅助（member 入口在
+    // AppendComponentFacesContextKeys）：图文档形状判据（节点扫描、
+    // componentRef 提取、taskRepositoryRef 绑定判据）全部经
+    // GraphScanComponentBindings C ABI 落在 Core GraphRuntime——本层只做
+    // 中立清单的消费与 faces 口条目重建/节点作用域 context 装配。
     // ------------------------------------------------------------------
 
-    // 图文档节点列表判定：properties 为 GraphDocumentDto 序列化形状
-    // （顶层 nodes 数组）才算图文档；非图文档（formSequence 契约文档等）
-    // 返回 false——预备 pass 对其零动作，context 保持现状。
-    bool PropertiesHoldGraphNodes(const yyjson::value& properties)
+    // GraphRuntime 扫描入口产出的业务中立绑定清单条目（本模块自有契约，
+    // 非图形状）。
+    struct ComponentBinding
     {
-        auto props_obj = properties.as_object();
-        return props_obj.has_value()
-               && props_obj->contains(std::string_view("nodes"));
-    }
+        std::string            node_id;
+        std::string            component_guid;
+        std::optional<int64_t> bound_entry_id;
+        yyjson::value          settings;
+    };
 
-    // 节点的 componentRef 组件 guid（targetKind 非 componentRef 或形状
-    // 不全时返回空串）。
-    std::string ComponentGuidOfNode(const yyjson::value& node_value)
+    // 组件绑定清单扫描（编排薄层）：文档值+actionCatalog 值序列化 →
+    // GraphScanComponentBindings → 读回中立清单。任何失败（序列化/ABI/
+    // 解析）与非图文档一律返回空表——预备 pass 零动作（fail-open 到无
+    // faces，与 Core 侧空数组语义一致）。
+    std::vector<ComponentBinding> ScanComponentBindingsOrEmpty(
+        const yyjson::value& document,
+        const yyjson::value& action_catalog)
     {
-        auto node_obj = node_value.as_object();
-        if (!node_obj || !node_obj->contains(std::string_view("target")))
+        std::vector<ComponentBinding> bindings;
+        const auto document_text = Das::Utils::SerializeYyjsonValue(document);
+        const auto catalog_text =
+            Das::Utils::SerializeYyjsonValue(action_catalog);
+        if (!document_text.has_value() || !catalog_text.has_value())
         {
-            return {};
+            return bindings;
         }
-        auto target = (*node_obj)[std::string_view("target")].as_object();
-        if (!target)
-        {
-            return {};
-        }
-        auto target_kind =
-            (*target)[std::string_view("targetKind")].as_string();
-        if (!target_kind || *target_kind != std::string_view("componentRef"))
-        {
-            return {};
-        }
-        if (!target->contains(std::string_view("componentRef")))
-        {
-            return {};
-        }
-        const auto& ref = (*target)[std::string_view("componentRef")];
-        if (ref.is_null())
-        {
-            return {};
-        }
-        auto ref_obj = ref.as_object();
-        if (!ref_obj)
-        {
-            return {};
-        }
-        auto guid = (*ref_obj)[std::string_view("componentGuid")].as_string();
-        if (!guid)
-        {
-            return {};
-        }
-        return std::string(*guid);
-    }
 
-    // 组件 guid → taskRepositoryRef 配置字段名列表（数据源=context 既有
-    // actionCatalog 快照的 config 声明——与编译侧绑条目判据同一目录语义，
-    // 业务中立不特判组件）。
-    std::unordered_map<std::string, std::vector<std::string>>
-    CollectRepositoryRefFields(const yyjson::value& context)
-    {
-        std::unordered_map<std::string, std::vector<std::string>> fields;
-        auto context_obj = context.as_object();
-        if (!context_obj
-            || !context_obj->contains(std::string_view("actionCatalog")))
+        DasPtr<IDasReadOnlyString> document_json;
+        DasPtr<IDasReadOnlyString> catalog_json;
+        if (DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                document_text->c_str(),
+                document_json.Put()))
+            || DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                catalog_text->c_str(),
+                catalog_json.Put())))
         {
-            return fields;
+            return bindings;
         }
-        auto catalog =
-            (*context_obj)[std::string_view("actionCatalog")].as_array();
-        if (!catalog)
-        {
-            return fields;
-        }
-        for (const auto& entry_value : *catalog)
-        {
-            auto entry_obj = entry_value.as_object();
-            if (!entry_obj
-                || !entry_obj->contains(std::string_view("actionId")))
-            {
-                continue;
-            }
-            auto action_id =
-                (*entry_obj)[std::string_view("actionId")].as_string();
-            if (!action_id || action_id->empty())
-            {
-                continue;
-            }
-            if (!entry_obj->contains(std::string_view("config")))
-            {
-                continue;
-            }
-            auto config = (*entry_obj)[std::string_view("config")].as_array();
-            if (!config)
-            {
-                continue;
-            }
-            for (const auto& field_value : *config)
-            {
-                auto field_obj = field_value.as_object();
-                if (!field_obj
-                    || !field_obj->contains(std::string_view("type")))
-                {
-                    continue;
-                }
-                auto type = (*field_obj)[std::string_view("type")].as_string();
-                if (!type || *type != std::string_view("taskRepositoryRef"))
-                {
-                    continue;
-                }
-                if (!field_obj->contains(std::string_view("name")))
-                {
-                    continue;
-                }
-                auto name = (*field_obj)[std::string_view("name")].as_string();
-                if (!name || name->empty())
-                {
-                    continue;
-                }
-                fields[std::string(*action_id)].emplace_back(*name);
-            }
-        }
-        return fields;
-    }
 
-    // 绑条目判定（判据=编译侧 BoundRepositoryEntryIdOf 同款语义：声明的
-    // taskRepositoryRef 字段持正整数值）——返回该正整数，nullopt=未绑。
-    std::optional<int64_t> BoundEntryIdOfNode(
-        const yyjson::value&            node_value,
-        const std::vector<std::string>& repository_field_names)
-    {
-        auto node_obj = node_value.as_object();
-        if (!node_obj || !node_obj->contains(std::string_view("settings")))
+        DasPtr<Das::ExportInterface::IDasJson> bindings_json;
+        if (DAS::IsFailed(GraphScanComponentBindings(
+                document_json.Get(),
+                catalog_json.Get(),
+                bindings_json.Put()))
+            || !bindings_json)
         {
-            return std::nullopt;
+            return bindings;
         }
-        auto settings_obj =
-            (*node_obj)[std::string_view("settings")].as_object();
-        if (!settings_obj)
+        auto bindings_value = ReadJsonInterface(bindings_json.Get());
+        auto bindings_arr = bindings_value.as_array();
+        if (!bindings_arr)
         {
-            return std::nullopt;
+            return bindings;
         }
-        for (const auto& field_name : repository_field_names)
+        for (const auto& binding_value : *bindings_arr)
         {
-            if (!settings_obj->contains(std::string_view(field_name)))
+            auto binding_obj = binding_value.as_object();
+            if (!binding_obj
+                || !binding_obj->contains(std::string_view("nodeId"))
+                || !binding_obj->contains(std::string_view("componentGuid"))
+                || !binding_obj->contains(std::string_view("settings")))
             {
                 continue;
             }
-            const auto& value = (*settings_obj)[std::string_view(field_name)];
-            if (value.is_int())
+            ComponentBinding binding;
+            auto             node_id =
+                (*binding_obj)[std::string_view("nodeId")].as_string();
+            auto component_guid =
+                (*binding_obj)[std::string_view("componentGuid")].as_string();
+            if (!node_id || node_id->empty() || !component_guid
+                || component_guid->empty())
             {
-                const auto entry_id = value.as_int();
-                if (entry_id.has_value() && *entry_id > 0)
+                continue;
+            }
+            binding.node_id = std::string(*node_id);
+            binding.component_guid = std::string(*component_guid);
+            if (binding_obj->contains(std::string_view("boundEntryId")))
+            {
+                auto bound_entry =
+                    (*binding_obj)[std::string_view("boundEntryId")].as_int();
+                if (bound_entry.has_value() && *bound_entry > 0)
                 {
-                    return *entry_id;
+                    binding.bound_entry_id = *bound_entry;
                 }
             }
+            const auto& settings_ref =
+                (*binding_obj)[std::string_view("settings")];
+            binding.settings = CloneJsonValue(settings_ref);
+            bindings.push_back(std::move(binding));
         }
-        return std::nullopt;
+        return bindings;
     }
 
     // faces 口条目重建：从 Provider 文档根 ports section 提取
@@ -1252,31 +1189,30 @@ namespace Das::Core::TaskScheduler
         return types;
     }
 
-    // 节点作用域组件会话 context：节点 settings 平铺 + 宿主 revision +
-    // componentContext 标记（true 时投影器按组件语境门控）。平铺形状与
-    // 边界会话的 context 契约一致（顶层 revision 剥离、其余键进
-    // settings），也兼容以 properties/平铺双形状解析的插件工厂。
+    // 节点作用域组件会话 context：节点 settings（扫描清单已提取的独立
+    // 值）平铺 + 宿主 revision + componentContext 标记（true 时投影器按
+    // 组件语境门控）。平铺形状与边界会话的 context 契约一致（顶层
+    // revision 剥离、其余键进 settings），也兼容以 properties/平铺双形状
+    // 解析的插件工厂。
     yyjson::value MakeNodeComponentContextJson(
-        const yyjson::value& node_value,
-        int64_t              host_revision)
+        const yyjson::value& settings,
+        int64_t              host_revision,
+        bool                 component_context)
     {
         yyjson::value context(Das::Utils::MakeYyjsonObject());
         auto          obj = context.as_object();
-        auto          node_obj = node_value.as_object();
-        if (node_obj && node_obj->contains(std::string_view("settings")))
+        if (auto settings_obj = settings.as_object())
         {
-            const auto& settings_ref =
-                (*node_obj)[std::string_view("settings")];
-            if (auto settings_obj = settings_ref.as_object())
+            for (const auto& [key, value] : *settings_obj)
             {
-                for (const auto& [key, value] : *settings_obj)
-                {
-                    (*obj)[std::string_view(key)] = CloneJsonValue(value);
-                }
+                (*obj)[std::string_view(key)] = CloneJsonValue(value);
             }
         }
         (*obj)[std::string_view("revision")] = host_revision;
-        (*obj)[std::string_view("componentContext")] = true;
+        if (component_context)
+        {
+            (*obj)[std::string_view("componentContext")] = true;
+        }
         return context;
     }
 
@@ -1284,6 +1220,160 @@ namespace Das::Core::TaskScheduler
     yyjson::value MakeEmptyAuthoringGetRequest()
     {
         return Das::Utils::MakeYyjsonObject();
+    }
+
+    // ------------------------------------------------------------------
+    // begin/end 节点文档的管线侧辅助（MaaPI 对齐通道）：请求体可选
+    // componentGuid 键承载边界组件身份（宿主图身份走既有 URL 通道——
+    // 与 MaaPI 图内节点完全相同的 authoring get/apply 路由族；无 nodeId
+    // 请求体键）。畸形类型（非字符串/空）按缺省（非边界请求）处理。
+    // ------------------------------------------------------------------
+    std::optional<std::string> ReadBoundaryComponentGuid(
+        const yyjson::value& request)
+    {
+        auto obj = request.as_object();
+        if (!obj || !obj->contains(std::string_view("componentGuid")))
+        {
+            return std::nullopt;
+        }
+        auto guid = (*obj)[std::string_view("componentGuid")].as_string();
+        if (!guid || guid->empty())
+        {
+            return std::nullopt;
+        }
+        return std::string(*guid);
+    }
+
+    // 在宿主图文档中定位组件 guid 对应的绑定清单条目（首个匹配——边界
+    // 组件在图内结构唯一）。定位经 GraphRuntime 扫描入口（图形状知识零
+    // 本地解析）。
+    std::optional<ComponentBinding> FindBoundaryBinding(
+        const yyjson::value& properties,
+        std::string_view     component_guid)
+    {
+        const auto bindings = ScanComponentBindingsOrEmpty(
+            properties,
+            MakeEmptyAuthoringGetRequest());
+        for (const auto& binding : bindings)
+        {
+            if (binding.component_guid == component_guid)
+            {
+                return binding;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // 会话产物里的请求期透传键剥离：componentContext 标记是请求作用域数
+    // 据，不属于节点 settings 本体——写回宿主图文档前剥除。
+    yyjson::value StripTransientContextKeys(yyjson::value settings)
+    {
+        auto obj = settings.as_object();
+        if (obj && obj->contains(std::string_view("componentContext")))
+        {
+            obj->erase(std::string_view("componentContext"));
+        }
+        return settings;
+    }
+
+    // 会话 diagnostics 中的被删口 id 提取（info 级「boundary port
+    // removed: <id>」——会话→管线的删口对账通道），供边级联。
+    std::vector<std::string> ExtractRemovedBoundaryPortIds(
+        const yyjson::value& diagnostics)
+    {
+        std::vector<std::string>   removed;
+        constexpr std::string_view kRemovedPrefix = "boundary port removed: ";
+        auto                       arr = diagnostics.as_array();
+        if (!arr)
+        {
+            return removed;
+        }
+        for (const auto& diagnostic : *arr)
+        {
+            auto diag_obj = diagnostic.as_object();
+            if (!diag_obj || !diag_obj->contains(std::string_view("severity"))
+                || !diag_obj->contains(std::string_view("message")))
+            {
+                continue;
+            }
+            auto severity =
+                (*diag_obj)[std::string_view("severity")].as_string();
+            if (!severity || *severity != std::string_view("info"))
+            {
+                continue;
+            }
+            auto message = (*diag_obj)[std::string_view("message")].as_string();
+            if (!message || message->size() <= kRemovedPrefix.size()
+                || message->substr(0, kRemovedPrefix.size()) != kRemovedPrefix)
+            {
+                continue;
+            }
+            removed.emplace_back(message->substr(kRemovedPrefix.size()));
+        }
+        return removed;
+    }
+
+    // 写回宿主图文档（编排薄层）：节点 settings 整体替换 + 被删口边级联
+    // 经 GraphWriteComponentNodeDocument C ABI 落在 Core GraphRuntime——
+    // 本层只做值↔串换装。失败返回 disengaged（调用方按持久化失败处理）。
+    std::optional<yyjson::value> WriteNodeDocumentViaGraphRuntime(
+        const yyjson::value&            properties,
+        std::string_view                node_id,
+        const yyjson::value&            new_settings,
+        const std::vector<std::string>& removed_port_ids)
+    {
+        const auto document_text = Das::Utils::SerializeYyjsonValue(properties);
+        const auto settings_text =
+            Das::Utils::SerializeYyjsonValue(new_settings);
+        if (!document_text.has_value() || !settings_text.has_value())
+        {
+            return std::nullopt;
+        }
+        yyjson::value removed_value(Das::Utils::MakeYyjsonArray());
+        for (const auto& removed_id : removed_port_ids)
+        {
+            removed_value.as_array()->emplace_back(
+                yyjson::value(std::string(removed_id)));
+        }
+        const auto removed_text =
+            Das::Utils::SerializeYyjsonValue(removed_value);
+        if (!removed_text.has_value())
+        {
+            return std::nullopt;
+        }
+
+        DasPtr<IDasReadOnlyString> document_json;
+        DasPtr<IDasReadOnlyString> node_id_json;
+        DasPtr<IDasReadOnlyString> settings_json;
+        DasPtr<IDasReadOnlyString> removed_json;
+        if (DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                document_text->c_str(),
+                document_json.Put()))
+            || DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                std::string(node_id).c_str(),
+                node_id_json.Put()))
+            || DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                settings_text->c_str(),
+                settings_json.Put()))
+            || DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                removed_text->c_str(),
+                removed_json.Put())))
+        {
+            return std::nullopt;
+        }
+
+        DasPtr<Das::ExportInterface::IDasJson> updated_json;
+        if (DAS::IsFailed(GraphWriteComponentNodeDocument(
+                document_json.Get(),
+                node_id_json.Get(),
+                settings_json.Get(),
+                removed_json.Get(),
+                updated_json.Put()))
+            || !updated_json)
+        {
+            return std::nullopt;
+        }
+        return ReadJsonInterface(updated_json.Get());
     }
 
     static std::optional<int64_t> GetBaseRevision(const yyjson::value& change)
@@ -3530,15 +3620,21 @@ namespace Das::Core::TaskScheduler
             }
         }
 
-        // 非图文档（无 nodes 数组）：零 faces 键，context 与现状逐字节一致。
-        auto props_obj = properties.as_object();
-        if (!PropertiesHoldGraphNodes(properties))
+        // 组件绑定清单（GraphRuntime 扫描入口产出的业务中立清单——图形状
+        // 判据零本地解析）：空清单（非图文档/扫描失败）→ 零 faces 键，
+        // context 与现状逐字节一致。
+        yyjson::value catalog_value(Das::Utils::MakeYyjsonArray());
+        if (auto context_obj = context.as_object();
+            context_obj
+            && context_obj->contains(std::string_view("actionCatalog")))
         {
-            return host_revision;
+            const auto& catalog_ref =
+                (*context_obj)[std::string_view("actionCatalog")];
+            catalog_value = CloneJsonValue(catalog_ref);
         }
-        const auto& nodes_ref = (*props_obj)[std::string_view("nodes")];
-        auto        nodes_arr = nodes_ref.as_array();
-        if (!nodes_arr)
+        const auto bindings =
+            ScanComponentBindingsOrEmpty(properties, catalog_value);
+        if (bindings.empty())
         {
             return host_revision;
         }
@@ -3547,8 +3643,6 @@ namespace Das::Core::TaskScheduler
         // 全部绑条目 revision 的混合，任一变化即触发宿主会话重建。
         uint64_t stamp = static_cast<uint64_t>(host_revision);
 
-        const auto repository_ref_fields = CollectRepositoryRefFields(context);
-
         auto& settings = plugin_manager_.GetSettingsManager();
 
         yyjson::value               node_faces(Das::Utils::MakeYyjsonArray());
@@ -3556,141 +3650,118 @@ namespace Das::Core::TaskScheduler
         std::unordered_set<int64_t> seen_entry_ids;
         std::unordered_set<std::string> seen_node_ids;
 
-        for (const auto& node_value : *nodes_arr)
+        for (const auto& binding : bindings)
         {
-            auto node_obj = node_value.as_object();
-            if (!node_obj || !node_obj->contains(std::string_view("nodeId")))
-            {
-                continue;
-            }
-            auto node_id = (*node_obj)[std::string_view("nodeId")].as_string();
-            if (!node_id || node_id->empty()
-                || !seen_node_ids.insert(std::string(*node_id)).second)
-            {
-                continue;
-            }
-
-            const std::string component_guid = ComponentGuidOfNode(node_value);
-            if (component_guid.empty())
+            if (!seen_node_ids.insert(binding.node_id).second)
             {
                 continue;
             }
 
             // ── 绑条目分支：entryFaces——条目文档口面经既有缓存会话现算
             //    （缺条目/无 capability/无 ports section 一律跳过不产诊断）。
-            const auto field_it = repository_ref_fields.find(component_guid);
-            if (field_it != repository_ref_fields.end())
+            if (binding.bound_entry_id.has_value())
             {
-                auto bound_entry =
-                    BoundEntryIdOfNode(node_value, field_it->second);
-                if (bound_entry.has_value())
+                const int64_t entry_id = *binding.bound_entry_id;
+                if (entry_id == host_id
+                    || !seen_entry_ids.insert(entry_id).second)
                 {
-                    const int64_t entry_id = *bound_entry;
-                    if (entry_id == host_id
-                        || !seen_entry_ids.insert(entry_id).second)
-                    {
-                        // 自引用防护（宿主条目会话锁自死锁）+ wire 契约
-                        // （entryFaces 每条目一条）。
-                        continue;
-                    }
-                    auto entry_json =
-                        settings.GetTaskRepositoryEntryJson("0", entry_id);
-                    if (entry_json.is_null() || !entry_json.is_object())
-                    {
-                        continue;
-                    }
-                    Repository::Dto::RepositoryEntryDto entry;
-                    try
-                    {
-                        entry =
-                            yyjson::cast<Repository::Dto::RepositoryEntryDto>(
-                                entry_json);
-                    }
-                    catch (const std::exception&)
-                    {
-                        continue;
-                    }
-                    // 条目 revision 并入宿主会话失效戳：该条目的持久层
-                    // revision 推进（对条目自身的 apply）必须连带重建宿主
-                    // 图会话，否则缓存会话带着旧 entryFaces 续命。
-                    {
-                        const uint64_t entry_revision = static_cast<uint64_t>(
-                            GetAuthoringRevision(entry_json));
-                        const uint64_t entry_key =
-                            static_cast<uint64_t>(entry_id);
-                        stamp ^= entry_key * 0x9E3779B97F4A7C15ULL;
-                        stamp *= 0xBF58476D1CE4E5B9ULL;
-                        stamp ^= entry_revision * 0x94D049BB133111EBULL;
-                        stamp *= 0xBF58476D1CE4E5B9ULL;
-                    }
-                    DasGuid entry_task_guid{};
-                    try
-                    {
-                        entry_task_guid =
-                            Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                                entry.task_type_guid);
-                    }
-                    catch (const std::exception&)
-                    {
-                        continue;
-                    }
-                    TaskAuthoringCapability entry_capability;
-                    {
-                        const std::scoped_lock lock(mutex_);
-                        if (ResolveAuthoringCapabilityLocked(
-                                entry_task_guid,
-                                entry_capability))
-                        {
-                            continue;
-                        }
-                    }
-                    auto entry_session = GetOrCreateAuthoringSession(
-                        repository_authoring_sessions_,
-                        entry_capability,
-                        entry_id,
-                        MakeRepositoryAuthoringContextJson(
-                            plugin_manager_,
-                            entry_id,
-                            entry.accepted_properties,
-                            entry_json),
-                        GetAuthoringRevision(entry_json),
-                        /*enforce_fresh=*/true);
-                    if (!entry_session || !entry_session->session)
-                    {
-                        continue;
-                    }
-                    AuthoringGetPipelineResult pipeline;
-                    {
-                        const std::shared_lock<std::shared_mutex> read_lock(
-                            entry_session->lock);
-                        pipeline = RunAuthoringGetPipeline(
-                            entry_session,
-                            MakeEmptyAuthoringGetRequest());
-                    }
-                    if (!pipeline.ok || !pipeline.parsed.has_document)
-                    {
-                        continue;
-                    }
-                    auto ports =
-                        ExtractFacePortsValue(pipeline.parsed.document);
-                    if (!ports.has_value())
-                    {
-                        continue;
-                    }
-                    yyjson::value face(Das::Utils::MakeYyjsonObject());
-                    auto          face_obj = face.as_object();
-                    (*face_obj)[std::string_view("entryId")] = entry_id;
-                    (*face_obj)[std::string_view("ports")] = std::move(*ports);
-                    if (auto types =
-                            ExtractFaceTypesValue(pipeline.parsed.document);
-                        types.has_value())
-                    {
-                        (*face_obj)[std::string_view("types")] =
-                            std::move(*types);
-                    }
-                    entry_faces.as_array()->emplace_back(std::move(face));
+                    // 自引用防护（宿主条目会话锁自死锁）+ wire 契约
+                    // （entryFaces 每条目一条）。
                     continue;
                 }
+                auto entry_json =
+                    settings.GetTaskRepositoryEntryJson("0", entry_id);
+                if (entry_json.is_null() || !entry_json.is_object())
+                {
+                    continue;
+                }
+                Repository::Dto::RepositoryEntryDto entry;
+                try
+                {
+                    entry = yyjson::cast<Repository::Dto::RepositoryEntryDto>(
+                        entry_json);
+                }
+                catch (const std::exception&)
+                {
+                    continue;
+                }
+                // 条目 revision 并入宿主会话失效戳：该条目的持久层
+                // revision 推进（对条目自身的 apply）必须连带重建宿主
+                // 图会话，否则缓存会话带着旧 entryFaces 续命。
+                {
+                    const uint64_t entry_revision =
+                        static_cast<uint64_t>(GetAuthoringRevision(entry_json));
+                    const uint64_t entry_key = static_cast<uint64_t>(entry_id);
+                    stamp ^= entry_key * 0x9E3779B97F4A7C15ULL;
+                    stamp *= 0xBF58476D1CE4E5B9ULL;
+                    stamp ^= entry_revision * 0x94D049BB133111EBULL;
+                    stamp *= 0xBF58476D1CE4E5B9ULL;
+                }
+                DasGuid entry_task_guid{};
+                try
+                {
+                    entry_task_guid =
+                        Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                            entry.task_type_guid);
+                }
+                catch (const std::exception&)
+                {
+                    continue;
+                }
+                TaskAuthoringCapability entry_capability;
+                {
+                    const std::scoped_lock lock(mutex_);
+                    if (ResolveAuthoringCapabilityLocked(
+                            entry_task_guid,
+                            entry_capability))
+                    {
+                        continue;
+                    }
+                }
+                auto entry_session = GetOrCreateAuthoringSession(
+                    repository_authoring_sessions_,
+                    entry_capability,
+                    entry_id,
+                    MakeRepositoryAuthoringContextJson(
+                        plugin_manager_,
+                        entry_id,
+                        entry.accepted_properties,
+                        entry_json),
+                    GetAuthoringRevision(entry_json),
+                    /*enforce_fresh=*/true);
+                if (!entry_session || !entry_session->session)
+                {
+                    continue;
+                }
+                AuthoringGetPipelineResult pipeline;
+                {
+                    const std::shared_lock<std::shared_mutex> read_lock(
+                        entry_session->lock);
+                    pipeline = RunAuthoringGetPipeline(
+                        entry_session,
+                        MakeEmptyAuthoringGetRequest());
+                }
+                if (!pipeline.ok || !pipeline.parsed.has_document)
+                {
+                    continue;
+                }
+                auto ports = ExtractFacePortsValue(pipeline.parsed.document);
+                if (!ports.has_value())
+                {
+                    continue;
+                }
+                yyjson::value face(Das::Utils::MakeYyjsonObject());
+                auto          face_obj = face.as_object();
+                (*face_obj)[std::string_view("entryId")] = entry_id;
+                (*face_obj)[std::string_view("ports")] = std::move(*ports);
+                if (auto types =
+                        ExtractFaceTypesValue(pipeline.parsed.document);
+                    types.has_value())
+                {
+                    (*face_obj)[std::string_view("types")] = std::move(*types);
+                }
+                entry_faces.as_array()->emplace_back(std::move(face));
+                continue;
             }
 
             // ── 未绑 componentRef 分支：nodeFaces——经注册面反查命中既有
@@ -3701,7 +3772,7 @@ namespace Das::Core::TaskScheduler
             {
                 component_guid_value =
                     Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                        component_guid);
+                        binding.component_guid);
             }
             catch (const std::exception&)
             {
@@ -3729,7 +3800,10 @@ namespace Das::Core::TaskScheduler
             auto node_session = BuildUncachedAuthoringSession(
                 plugin_manager_,
                 node_capability,
-                MakeNodeComponentContextJson(node_value, host_revision),
+                MakeNodeComponentContextJson(
+                    binding.settings,
+                    host_revision,
+                    /*component_context=*/true),
                 host_revision);
             if (!node_session || !node_session->session)
             {
@@ -3755,8 +3829,9 @@ namespace Das::Core::TaskScheduler
             }
             yyjson::value face(Das::Utils::MakeYyjsonObject());
             auto          face_obj = face.as_object();
-            (*face_obj)[std::string_view("nodeId")] =
-                std::make_pair(std::string_view(*node_id), yyjson::copy_string);
+            (*face_obj)[std::string_view("nodeId")] = std::make_pair(
+                std::string_view(binding.node_id),
+                yyjson::copy_string);
             (*face_obj)[std::string_view("ports")] = std::move(*node_ports);
             node_faces.as_array()->emplace_back(std::move(face));
         }
@@ -3776,6 +3851,432 @@ namespace Das::Core::TaskScheduler
             }
         }
         return static_cast<int64_t>(stamp);
+    }
+
+    std::optional<yyjson::value>
+    SchedulerService::GetBoundaryComponentAuthoringDocument(
+        const yyjson::value& host_json,
+        const yyjson::value& properties,
+        const yyjson::value& request,
+        int64_t              host_id,
+        bool                 repository_side)
+    {
+        const auto component_guid = ReadBoundaryComponentGuid(request);
+        if (!component_guid.has_value())
+        {
+            return std::nullopt;
+        }
+        const auto error = [&repository_side](
+                               std::string_view     kind,
+                               std::string_view     message,
+                               const yyjson::value* diagnostics = nullptr)
+        {
+            return repository_side
+                       ? MakeRepositoryResponseError(kind, message, diagnostics)
+                       : MakeAuthoringResponseError(kind, message, diagnostics);
+        };
+
+        {
+            const std::scoped_lock lock(mutex_);
+            auto                   idle_guard = CheckSchedulerIdleLocked();
+            if (idle_guard)
+            {
+                return error(idle_guard->error_kind, idle_guard->message);
+            }
+            if (!initialized_)
+            {
+                return error(
+                    "notInitialized",
+                    "Scheduler profile has not been initialized");
+            }
+        }
+
+        const int64_t host_revision = GetAuthoringRevision(host_json);
+        // 定位经 GraphRuntime 扫描入口（中立绑定清单——图形状知识零本地
+        // 解析）；非图文档/无该组件节点 → notFound。
+        const auto binding = FindBoundaryBinding(properties, *component_guid);
+        if (!binding.has_value())
+        {
+            return error(
+                "notFound",
+                "Graph node for the boundary component was not found");
+        }
+
+        DasGuid boundary_task_guid{};
+        try
+        {
+            boundary_task_guid =
+                Das::Core::ForeignInterfaceHost::MakeDasGuid(*component_guid);
+        }
+        catch (const std::exception&)
+        {
+            return error(
+                "invalidGuid",
+                "Boundary component guid could not be parsed");
+        }
+        TaskAuthoringCapability capability;
+        {
+            const std::scoped_lock lock(mutex_);
+            auto capability_guard = ResolveAuthoringCapabilityLocked(
+                boundary_task_guid,
+                capability);
+            if (capability_guard)
+            {
+                return error(
+                    capability_guard->error_kind,
+                    "Boundary component does not declare authoring "
+                    "capability");
+            }
+        }
+
+        auto session_entry = BuildUncachedAuthoringSession(
+            plugin_manager_,
+            capability,
+            MakeNodeComponentContextJson(
+                binding->settings,
+                host_revision,
+                ReadComponentContextFlag(request)),
+            host_revision);
+        if (!session_entry || !session_entry->session)
+        {
+            return error(
+                "sessionCreateFailed",
+                "Failed to create boundary authoring session");
+        }
+
+        AuthoringGetPipelineResult pipeline;
+        {
+            const std::shared_lock<std::shared_mutex> read_lock(
+                session_entry->lock);
+            pipeline = RunAuthoringGetPipeline(session_entry, request);
+        }
+        if (!pipeline.ok)
+        {
+            std::string message = std::move(pipeline.error_message);
+            if (pipeline.error_kind == "sessionCreateFailed")
+            {
+                message = "Failed to create boundary authoring session";
+            }
+            else if (pipeline.error_kind == "providerFailed")
+            {
+                message =
+                    "Boundary authoring provider failed to create document";
+            }
+            return error(pipeline.error_kind, message);
+        }
+
+        // 响应形状与条目/任务 Get 对齐（身份段按宿主路由面回填）。
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          obj = result.as_object();
+        if (repository_side)
+        {
+            (*obj)[std::string_view("entryId")] = host_id;
+            (*obj)[std::string_view("taskTypeGuid")] = std::make_pair(
+                std::string_view(*component_guid),
+                yyjson::copy_string);
+        }
+        else
+        {
+            (*obj)[std::string_view("taskId")] = host_id;
+            (*obj)[std::string_view("taskGuid")] = std::make_pair(
+                std::string_view(*component_guid),
+                yyjson::copy_string);
+        }
+        (*obj)[std::string_view("revision")] = host_revision;
+        if (pipeline.parsed.has_document)
+        {
+            (*obj)[std::string_view("document")] =
+                std::move(pipeline.parsed.document);
+        }
+        (*obj)[std::string_view("diagnostics")] =
+            std::move(pipeline.parsed.diagnostics);
+        (*obj)[std::string_view("acceptedProperties")] =
+            CloneJsonValue(binding->settings);
+        return result;
+    }
+
+    std::optional<yyjson::value>
+    SchedulerService::ApplyBoundaryComponentAuthoringChange(
+        const yyjson::value&                 host_json,
+        const yyjson::value&                 properties,
+        const yyjson::value&                 change,
+        int64_t                              host_id,
+        bool                                 repository_side,
+        std::shared_ptr<TaskRepositoryStore> store)
+    {
+        const auto component_guid = ReadBoundaryComponentGuid(change);
+        if (!component_guid.has_value())
+        {
+            return std::nullopt;
+        }
+        const auto error = [&repository_side](
+                               std::string_view     kind,
+                               std::string_view     message,
+                               const yyjson::value* diagnostics = nullptr)
+        {
+            return repository_side
+                       ? MakeRepositoryResponseError(kind, message, diagnostics)
+                       : MakeAuthoringResponseError(kind, message, diagnostics);
+        };
+
+        {
+            const std::scoped_lock lock(mutex_);
+            auto                   idle_guard = CheckSchedulerIdleLocked();
+            if (idle_guard)
+            {
+                return error(idle_guard->error_kind, idle_guard->message);
+            }
+            if (!initialized_ || (repository_side && !store))
+            {
+                return error(
+                    "notInitialized",
+                    "Scheduler profile has not been initialized");
+            }
+        }
+
+        const int64_t host_revision = GetAuthoringRevision(host_json);
+        // 定位经 GraphRuntime 扫描入口（中立绑定清单）；非图文档/无该组件
+        // 节点 → notFound。
+        const auto binding = FindBoundaryBinding(properties, *component_guid);
+        if (!binding.has_value())
+        {
+            return error(
+                "notFound",
+                "Graph node for the boundary component was not found");
+        }
+
+        DasGuid boundary_task_guid{};
+        try
+        {
+            boundary_task_guid =
+                Das::Core::ForeignInterfaceHost::MakeDasGuid(*component_guid);
+        }
+        catch (const std::exception&)
+        {
+            return error(
+                "invalidGuid",
+                "Boundary component guid could not be parsed");
+        }
+        TaskAuthoringCapability capability;
+        {
+            const std::scoped_lock lock(mutex_);
+            auto capability_guard = ResolveAuthoringCapabilityLocked(
+                boundary_task_guid,
+                capability);
+            if (capability_guard)
+            {
+                return error(
+                    capability_guard->error_kind,
+                    "Boundary component does not declare authoring "
+                    "capability");
+            }
+        }
+
+        // Envelope guard（③）：会话解析前校验 {kind,payload} 信封——
+        // 与条目/任务 Apply 同序（信封失败不建会话）。
+        auto validation = ValidateAuthoringChange(change);
+        if (!validation.valid)
+        {
+            return error(validation.error_kind, validation.message);
+        }
+
+        // 早 revision 检查（边界会话不经缓存，恒走早检查路径）。
+        {
+            const auto base_revision = GetBaseRevision(change);
+            if (!base_revision || *base_revision != host_revision)
+            {
+                yyjson::value err = error(
+                    "revisionConflict",
+                    "Boundary authoring change baseRevision is stale");
+                (*err.as_object())[std::string_view("currentRevision")] =
+                    host_revision;
+                return err;
+            }
+        }
+
+        auto session_entry = BuildUncachedAuthoringSession(
+            plugin_manager_,
+            capability,
+            MakeNodeComponentContextJson(
+                binding->settings,
+                host_revision,
+                ReadComponentContextFlag(change)),
+            host_revision);
+        if (!session_entry || !session_entry->session)
+        {
+            return error(
+                "sessionCreateFailed",
+                "Failed to create boundary authoring session");
+        }
+
+        AuthoringApplyPipelineResult pipeline;
+        {
+            const std::unique_lock<std::shared_mutex> write_lock(
+                session_entry->lock);
+
+            // 权威 revision 复检（新鲜持久层读数——与宿主管线同款缝隙）。
+            auto& settings = plugin_manager_.GetSettingsManager();
+            auto  fresh_json =
+                repository_side
+                    ? settings.GetTaskRepositoryEntryJson("0", host_id)
+                    : settings.GetTaskInstanceJson("0", host_id);
+            if (fresh_json.is_null() || !fresh_json.is_object())
+            {
+                return error(
+                    "notFound",
+                    repository_side ? "Repository entry was not found"
+                                    : "Task instance file was not found");
+            }
+            pipeline.current_revision = GetAuthoringRevision(fresh_json);
+            const auto base_revision = GetBaseRevision(change);
+            if (!base_revision || *base_revision != pipeline.current_revision)
+            {
+                yyjson::value err = error(
+                    "revisionConflict",
+                    "Boundary authoring change baseRevision is stale");
+                (*err.as_object())[std::string_view("currentRevision")] =
+                    pipeline.current_revision;
+                return err;
+            }
+
+            if (!RunAuthoringApplyPipelineLocked(
+                    session_entry,
+                    change,
+                    fresh_json,
+                    pipeline.current_revision,
+                    pipeline))
+            {
+                std::string message = std::move(pipeline.error_message);
+                if (pipeline.error_kind == "sessionCreateFailed")
+                {
+                    message = "Failed to create boundary authoring session";
+                }
+                else if (pipeline.error_kind == "providerFailed")
+                {
+                    message = "Boundary authoring provider rejected change";
+                }
+                if (!pipeline.error_locator.empty())
+                {
+                    message = pipeline.error_locator + ": " + message;
+                }
+                const yyjson::value* diags =
+                    (pipeline.error_kind == "applyRejected")
+                        ? &pipeline.parsed.diagnostics
+                        : nullptr;
+                return error(pipeline.error_kind, message, diags);
+            }
+
+            // 写回：节点 settings 新值（剥离请求期透传键）+ 被删口边级联
+            // 经 GraphWriteComponentNodeDocument C ABI（图形状知识零本地
+            // 解析）。基底取上方权威复检的新鲜持久层读数 fresh_json（并发
+            // 修改窗口内调用方入参快照可能已陈旧）。
+            yyjson::value fresh_properties(Das::Utils::MakeYyjsonObject());
+            bool          has_fresh_properties = false;
+            if (auto fresh_host_obj = fresh_json.as_object())
+            {
+                const std::string_view properties_key =
+                    repository_side ? std::string_view("acceptedProperties")
+                                    : std::string_view("properties");
+                if (fresh_host_obj->contains(properties_key))
+                {
+                    // const 引用接住元素视图（生命周期延展——宿主 json 在
+                    // 本块内存活），克隆为独立值供写回重建。
+                    const auto& element_ref = (*fresh_host_obj)[properties_key];
+                    fresh_properties = CloneJsonValue(element_ref);
+                    has_fresh_properties = true;
+                }
+            }
+            if (!has_fresh_properties)
+            {
+                return error(
+                    "persistenceFailed",
+                    "Failed to persist accepted boundary authoring change");
+            }
+            auto removed_port_ids =
+                ExtractRemovedBoundaryPortIds(pipeline.parsed.diagnostics);
+            auto updated_settings = StripTransientContextKeys(
+                CloneJsonValue(pipeline.parsed.accepted_properties));
+            auto updated_properties = WriteNodeDocumentViaGraphRuntime(
+                fresh_properties,
+                std::string_view(binding->node_id),
+                updated_settings,
+                removed_port_ids);
+            if (!updated_properties.has_value())
+            {
+                return error(
+                    "persistenceFailed",
+                    "Failed to persist accepted boundary authoring change");
+            }
+
+            if (repository_side)
+            {
+                yyjson::value updated_entry_json;
+                auto          persist_result = store->UpdateAuthoring(
+                    host_id,
+                    updated_properties,
+                    pipeline.authoring,
+                    updated_entry_json);
+                if (DAS::IsFailed(persist_result))
+                {
+                    return error(
+                        "persistenceFailed",
+                        "Failed to persist accepted boundary authoring "
+                        "change");
+                }
+            }
+            else
+            {
+                auto fresh_obj = fresh_json.as_object();
+                if (fresh_obj)
+                {
+                    (*fresh_obj)[std::string_view("properties")] =
+                        std::move(updated_properties);
+                    (*fresh_obj)[std::string_view("authoring")] =
+                        CloneJsonValue(pipeline.authoring);
+                    if (DAS::IsFailed(settings.UpdateTaskInstanceJson(
+                            "0",
+                            host_id,
+                            fresh_json)))
+                    {
+                        return error(
+                            "persistenceFailed",
+                            "Failed to persist accepted boundary authoring "
+                            "change");
+                    }
+                }
+                else
+                {
+                    return error(
+                        "persistenceFailed",
+                        "Failed to persist accepted boundary authoring "
+                        "change");
+                }
+            }
+        }
+
+        // 响应形状与条目/任务 Apply 对齐。
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          result_obj = result.as_object();
+        (*result_obj)[std::string_view("ok")] = true;
+        if (repository_side)
+        {
+            (*result_obj)[std::string_view("entryId")] = host_id;
+        }
+        else
+        {
+            (*result_obj)[std::string_view("taskId")] = host_id;
+        }
+        (*result_obj)[std::string_view("revision")] = pipeline.next_revision;
+        // acceptedProperties 与写回一致（剥离请求期透传键后的节点
+        // settings）。
+        (*result_obj)[std::string_view("acceptedProperties")] =
+            StripTransientContextKeys(
+                CloneJsonValue(pipeline.parsed.accepted_properties));
+        (*result_obj)[std::string_view("document")] =
+            std::move(pipeline.parsed.document);
+        (*result_obj)[std::string_view("diagnostics")] =
+            std::move(pipeline.parsed.diagnostics);
+        return result;
     }
 
     std::shared_ptr<AuthoringSessionEntry>
@@ -3882,6 +4383,19 @@ namespace Das::Core::TaskScheduler
             return MakeRepositoryResponseError(
                 "invalidGuid",
                 "Repository entry contains an invalid task GUID");
+        }
+
+        // begin/end 节点文档分发（MaaPI 对齐通道）：请求体携带 componentGuid
+        // 键时走边界管线（宿主图身份走既有 URL 通道），非边界请求落回既有
+        // 管线。
+        if (auto boundary = GetBoundaryComponentAuthoringDocument(
+                entry_json,
+                entry.accepted_properties,
+                request,
+                entry_id,
+                /*repository_side=*/true))
+        {
+            return *boundary;
         }
 
         {
@@ -4040,6 +4554,19 @@ namespace Das::Core::TaskScheduler
             return MakeRepositoryResponseError(
                 "invalidGuid",
                 "Repository entry contains an invalid task GUID");
+        }
+
+        // begin/end 节点文档分发（MaaPI 对齐通道）：请求体携带 componentGuid
+        // 键时走边界 apply 管线（写回宿主图文档节点+边级联+既有 persist）。
+        if (auto boundary = ApplyBoundaryComponentAuthoringChange(
+                entry_json,
+                entry.accepted_properties,
+                change,
+                entry_id,
+                /*repository_side=*/true,
+                store))
+        {
+            return *boundary;
         }
 
         {
@@ -5296,6 +5823,19 @@ namespace Das::Core::TaskScheduler
         auto& settings = plugin_manager_.GetSettingsManager();
         auto  task_json = settings.GetTaskInstanceJson("0", task_id);
 
+        // begin/end 节点文档分发（MaaPI 对齐通道）：请求体携带 componentGuid
+        // 键时走边界管线（宿主图身份走既有 URL 通道），非边界请求落回既有
+        // 管线。
+        if (auto boundary = GetBoundaryComponentAuthoringDocument(
+                task_json,
+                properties,
+                request,
+                task_id,
+                /*repository_side=*/false))
+        {
+            return *boundary;
+        }
+
         // Envelope guard: the contract requires the server to validate the
         // {kind, payload} envelope before invoking the Provider. The shared
         // Get pipeline owns ⑤ session -> ⑥⑦(GetDocument + parse); this caller
@@ -5580,6 +6120,19 @@ namespace Das::Core::TaskScheduler
             return MakeAuthoringResponseError(
                 "notFound",
                 "Task instance file was not found");
+        }
+
+        // begin/end 节点文档分发（MaaPI 对齐通道）：请求体携带 componentGuid
+        // 键时走边界 apply 管线（写回宿主图文档节点+边级联+既有 persist）。
+        if (auto boundary = ApplyBoundaryComponentAuthoringChange(
+                task_json,
+                properties,
+                change,
+                task_id,
+                /*repository_side=*/false,
+                nullptr))
+        {
+            return *boundary;
         }
 
         // Envelope guard (③): validate the {kind, payload} envelope before any

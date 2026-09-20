@@ -392,6 +392,35 @@ namespace Das::Core::TaskScheduler
             const yyjson::value& properties,
             int64_t              host_id);
 
+        /// begin/end 节点文档的 Get（MaaPI 对齐管线侧）：请求体携带可选
+        /// componentGuid 键（边界组件身份；宿主图身份走既有 URL 通道）时
+        /// 走本管线——定位宿主图文档中的该节点，经既有 capability QI 链
+        /// （注册面按 guid 命中，无特判）建边界会话，context=节点 settings+
+        /// componentContext 标记，GetDocument 双通道投影直返。请求无该键
+        /// 返回 nullopt（非边界请求，调用方走既有管线）。纯 Get 零写回。
+        /// host_json 为宿主条目/任务持久层原文（revision 源）。
+        std::optional<yyjson::value> GetBoundaryComponentAuthoringDocument(
+            const yyjson::value& host_json,
+            const yyjson::value& properties,
+            const yyjson::value& request,
+            int64_t              host_id,
+            bool                 repository_side);
+
+        /// begin/end 节点文档的 Apply（MaaPI 对齐管线侧）：批量 change 经
+        /// 边界会话解释，产物=节点 settings 新值 → 写回宿主图文档节点 +
+        /// 被删口的边级联（removeNodePort 级联 erase 语义）→ 随管线既有
+        /// persist 落盘（条目侧 store->UpdateAuthoring / 任务侧
+        /// UpdateTaskInstanceJson）+ 宿主 revision 推进（零新写回通道）。
+        /// 请求无 componentGuid 键返回 nullopt。repository_side 为 true 时
+        /// store 必须非空（条目持久化通道）。
+        std::optional<yyjson::value> ApplyBoundaryComponentAuthoringChange(
+            const yyjson::value&                 host_json,
+            const yyjson::value&                 properties,
+            const yyjson::value&                 change,
+            int64_t                              host_id,
+            bool                                 repository_side,
+            std::shared_ptr<TaskRepositoryStore> store);
+
         /// Get-or-create a cached authoring session for the given id. Returns a
         /// shared_ptr copy (refcount+1) so the caller can release mutex_ before
         /// using entry->session; the entry stays alive even if evicted from the

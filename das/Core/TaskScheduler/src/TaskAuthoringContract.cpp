@@ -3149,7 +3149,16 @@ namespace Das::Core::TaskScheduler
             }
         }
 
-        if (!OnlyKeys(obj, {"baseRevision", "changes"}))
+        // 请求级可选键（信封路由/语境标记，非 change 语义）：componentContext
+        // （组件语境标记，布尔缺省 false）与 componentGuid（begin/end 等组件
+        // 文档身份，字符串）——由管线在信封校验后读取消费，Provider 收到的
+        // 重包装单 change wire 不携带它们。
+        if (!OnlyKeys(
+                obj,
+                {"baseRevision",
+                 "changes",
+                 "componentContext",
+                 "componentGuid"}))
         {
             return Fail(
                 "unknownField",

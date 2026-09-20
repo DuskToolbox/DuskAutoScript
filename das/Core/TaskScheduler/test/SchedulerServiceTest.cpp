@@ -5958,6 +5958,447 @@ TEST_F(
     }
 }
 
+namespace
+{
+    // begin/end 边界文档管线用例共用：播种一个 graph 仓库条目（宿主图），
+    // acceptedProperties 为 raw GraphDocumentDto 形状（begin 节点带
+    // boundaryPorts，other 探针节点，可选边集）。返回播种后的条目 json。
+    yyjson::value SeedGraphRepositoryEntry(
+        Das::Core::SettingsManager::SettingsManager& settings,
+        int64_t                                      entry_id,
+        std::string_view                             edges_json)
+    {
+        yyjson::value entry(Das::Utils::MakeYyjsonObject());
+        (*entry.as_object())[std::string_view("entryId")] = entry_id;
+        (*entry.as_object())[std::string_view("displayName")] =
+            "Boundary host graph";
+        (*entry.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        (*entry.as_object())[std::string_view("taskTypeGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        {
+            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+            (*authoring.as_object())[std::string_view("revision")] = 5;
+            (*authoring.as_object())[std::string_view("lastChangeKind")] =
+                std::make_pair(
+                    std::string_view("addNodePort"),
+                    yyjson::copy_string);
+            (*authoring.as_object())[std::string_view("sourceFingerprint")] =
+                std::make_pair(
+                    std::string_view("boundary-seed"),
+                    yyjson::copy_string);
+            (*entry.as_object())[std::string_view("authoring")] =
+                std::move(authoring);
+        }
+        {
+            auto properties = Das::Utils::ParseYyjsonFromString(
+                std::string(
+                    R"json({
+                    "documentId": "boundary-host-graph",
+                    "version": 1,
+                    "nodes": [
+                        {
+                            "nodeId": "n_begin",
+                            "target": {
+                                "targetKind": "componentRef",
+                                "componentRef": {
+                                    "kind": "componentRef",
+                                    "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+                                    "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                                }
+                            },
+                            "settings": {
+                                "boundaryPorts": [
+                                    {"id": "p1", "type": "string"}
+                                ]
+                            }
+                        },
+                        {
+                            "nodeId": "other",
+                            "target": {
+                                "targetKind": "componentRef",
+                                "componentRef": {
+                                    "kind": "componentRef",
+                                    "componentGuid": "97BA1BE0-A199-47CB-9604-440B8BBC6555",
+                                    "pluginGuid": "12345678-9ABC-4DEF-8123-456789ABCDEF"
+                                }
+                            },
+                            "settings": {}
+                        }
+                    ],
+                    "edges": )json"
+                    + std::string(edges_json) + R"json(,
+                    "tags": []
+                })json"));
+            EXPECT_TRUE(properties.has_value());
+            (*entry.as_object())[std::string_view("acceptedProperties")] =
+                std::move(*properties);
+        }
+        (*entry.as_object())[std::string_view("graphDocument")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        (*entry.as_object())[std::string_view("compiledArtifact")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        {
+            yyjson::value availability(Das::Utils::MakeYyjsonObject());
+            (*availability.as_object())[std::string_view("state")] =
+                "available";
+            (*entry.as_object())[std::string_view("availability")] =
+                std::move(availability);
+        }
+        EXPECT_EQ(
+            settings.UpdateTaskRepositoryEntryJson("0", entry_id, entry),
+            DAS_S_OK);
+        return entry;
+    }
+
+    // 宿主图文档里指定节点的 settings 克隆（存储断言用）。
+    std::optional<yyjson::value> HostGraphNodeSettings(
+        const yyjson::value& properties,
+        std::string_view     node_id)
+    {
+        auto props_obj = properties.as_object();
+        if (!props_obj || !props_obj->contains(std::string_view("nodes")))
+        {
+            return std::nullopt;
+        }
+        const auto& nodes_ref = (*props_obj)[std::string_view("nodes")];
+        auto        nodes_arr = nodes_ref.as_array();
+        if (!nodes_arr)
+        {
+            return std::nullopt;
+        }
+        for (const auto& node_value : *nodes_arr)
+        {
+            auto node_obj = node_value.as_object();
+            if (!node_obj || !node_obj->contains(std::string_view("nodeId")))
+            {
+                continue;
+            }
+            auto current_id =
+                (*node_obj)[std::string_view("nodeId")].as_string();
+            if (current_id && *current_id == node_id)
+            {
+                if (node_obj->contains(std::string_view("settings")))
+                {
+                    const auto& settings_ref =
+                        (*node_obj)[std::string_view("settings")];
+                    return Das::Utils::CloneYyjsonValue(settings_ref);
+                }
+                return yyjson::value(Das::Utils::MakeYyjsonObject());
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::optional<yyjson::value> EntryAcceptedProperties(
+        Das::Core::SettingsManager::SettingsManager& settings,
+        int64_t                                      entry_id)
+    {
+        auto entry_json = settings.GetTaskRepositoryEntryJson("0", entry_id);
+        auto entry_obj = entry_json.as_object();
+        if (!entry_obj
+            || !entry_obj->contains(std::string_view("acceptedProperties")))
+        {
+            return std::nullopt;
+        }
+        const auto& props_ref =
+            (*entry_obj)[std::string_view("acceptedProperties")];
+        return Das::Utils::CloneYyjsonValue(props_ref);
+    }
+} // namespace
+
+// begin/end 节点文档 Get（MaaPI 对齐管线侧）：请求体 componentGuid 键承载
+// begin 身份（宿主图身份走既有条目 URL 通道；无 nodeId 请求体键）——经既有
+// capability QI 链取回边界文档（items 写通道+ports 读通道+chrome 三键，
+// direction 角色固化 input）。纯 Get 零写回：条目存储逐字节不变。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    BoundaryDocumentGetViaBeginGuidOnRepositoryEntry)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+
+    SeedGraphRepositoryEntry(*settings_manager_, 3, "[]");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const auto entry_json_before =
+        settings_manager_->GetTaskRepositoryEntryJson("0", 3);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    (*request.as_object())[std::string_view("componentGuid")] = std::make_pair(
+        Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID,
+        yyjson::copy_string);
+    (*request.as_object())[std::string_view("componentContext")] = true;
+
+    auto result = scheduler_->GetRepositoryEntryAuthoringDocument(3, request);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_FALSE(obj->contains(std::string_view("errorKind")));
+    ASSERT_TRUE(obj->contains(std::string_view("document")));
+    {
+        const auto doc_text = Das::Utils::SerializeYyjsonValue(
+            (*obj)[std::string_view("document")],
+            true);
+        const auto accepted_text = Das::Utils::SerializeYyjsonValue(
+            (*obj)[std::string_view("acceptedProperties")],
+            true);
+        const std::string doc_str = doc_text.value_or("");
+        const std::string accp_str = accepted_text.value_or("");
+        printf(
+            "TEMP-DIAG boundary doc=%.*s\nTEMP-DIAG accepted=%.*s\n",
+            static_cast<int>(doc_str.size()),
+            doc_str.data(),
+            static_cast<int>(accp_str.size()),
+            accp_str.data());
+    }
+
+    EXPECT_EQ(
+        (*obj)[std::string_view("taskTypeGuid")].as_string().value_or(""),
+        Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID);
+    EXPECT_EQ((*obj)[std::string_view("revision")].as_sint().value_or(-1), 5);
+
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    EXPECT_EQ(
+        (*document)[std::string_view("viewKind")].as_string().value_or(""),
+        "formSequence");
+    // items 写通道：boundaryPorts 一一对应。
+    auto form_sequence =
+        (*document)[std::string_view("formSequence")].as_object();
+    ASSERT_TRUE(form_sequence.has_value());
+    auto items = (*form_sequence)[std::string_view("items")].as_array();
+    ASSERT_TRUE(items.has_value());
+    EXPECT_EQ(items->size(), 1u);
+    // ports 读通道：方向角色固化（begin=input）。
+    auto ports = (*document)[std::string_view("ports")].as_array();
+    ASSERT_TRUE(ports.has_value());
+    ASSERT_EQ(ports->size(), 1u);
+    {
+        auto port_obj = (*ports)[0].as_object();
+        ASSERT_TRUE(port_obj.has_value());
+        EXPECT_EQ(
+            (*port_obj)[std::string_view("id")].as_string().value_or(""),
+            "p1");
+        EXPECT_EQ(
+            (*port_obj)[std::string_view("type")].as_string().value_or(""),
+            "string");
+        EXPECT_EQ(
+            (*port_obj)[std::string_view("direction")].as_string().value_or(""),
+            "input");
+    }
+    // chrome 三键（engaged 文案）。
+    for (const std::string_view chrome_key :
+         {"addButtonLabel", "emptyStateHint", "listTitle"})
+    {
+        EXPECT_TRUE(form_sequence->contains(chrome_key))
+            << "chrome key missing: " << chrome_key;
+    }
+    // acceptedProperties 随行（节点 settings 原文）。
+    {
+        auto accepted =
+            (*obj)[std::string_view("acceptedProperties")].as_object();
+        ASSERT_TRUE(accepted.has_value());
+        EXPECT_FALSE(accepted->contains(std::string_view("componentContext")))
+            << "transient request flag leaked into node settings";
+        auto boundary_ports =
+            (*accepted)[std::string_view("boundaryPorts")].as_array();
+        ASSERT_TRUE(boundary_ports.has_value());
+        EXPECT_EQ(boundary_ports->size(), 1u);
+    }
+
+    // 纯 Get 零写回：条目存储逐字节不变。
+    const auto entry_json_after =
+        settings_manager_->GetTaskRepositoryEntryJson("0", 3);
+    EXPECT_EQ(
+        Das::Utils::SerializeYyjsonValue(entry_json_before, true).value_or(""),
+        Das::Utils::SerializeYyjsonValue(entry_json_after, true).value_or(""));
+}
+
+// begin/end 节点文档 Apply 增口（MaaPI 对齐管线侧）：addFormSequenceItem
+// （payload {actionId}=begin guid——与 MaaPI 同款通道形态，URL 载宿主身份、
+// 请求体不载节点身份）→ 会话解释为口操作 → 产物=节点 settings 新值写回
+// 宿主图文档节点 → 随条目既有 persist 落盘 + revision 推进（零新写回通
+// 道）。componentContext 请求期标记不落存储。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    BoundaryDocumentApplyAddItemOnRepositoryEntry)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+
+    SeedGraphRepositoryEntry(*settings_manager_, 3, "[]");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    yyjson::value change(Das::Utils::MakeYyjsonObject());
+    (*change.as_object())[std::string_view("baseRevision")] =
+        static_cast<int64_t>(5);
+    {
+        yyjson::value element(Das::Utils::MakeYyjsonObject());
+        (*element.as_object())[std::string_view("kind")] = std::make_pair(
+            std::string_view("addFormSequenceItem"),
+            yyjson::copy_string);
+        yyjson::value payload(Das::Utils::MakeYyjsonObject());
+        (*payload.as_object())[std::string_view("actionId")] = std::make_pair(
+            Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID,
+            yyjson::copy_string);
+        (*element.as_object())[std::string_view("payload")] =
+            std::move(payload);
+        auto changes = Das::Utils::MakeYyjsonArray();
+        (*changes.as_array()).emplace_back(std::move(element));
+        (*change.as_object())[std::string_view("changes")] = std::move(changes);
+    }
+    (*change.as_object())[std::string_view("componentGuid")] = std::make_pair(
+        Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID,
+        yyjson::copy_string);
+    (*change.as_object())[std::string_view("componentContext")] = true;
+
+    auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(3, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_FALSE(obj->contains(std::string_view("errorKind")));
+    EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+    EXPECT_EQ((*obj)[std::string_view("revision")].as_sint().value_or(-1), 6);
+
+    // 存储对账：begin 节点 settings.boundaryPorts 增至 2（p1 + 分配的
+    // p_2）；无 componentContext 泄漏；图结构其余部分保留（other 节点与
+    // 顶层键）。
+    auto properties = EntryAcceptedProperties(*settings_manager_, 3);
+    ASSERT_TRUE(properties.has_value());
+    auto begin_settings = HostGraphNodeSettings(*properties, "n_begin");
+    ASSERT_TRUE(begin_settings.has_value());
+    {
+        auto begin_obj = begin_settings->as_object();
+        ASSERT_TRUE(begin_obj.has_value());
+        EXPECT_FALSE(begin_obj->contains(std::string_view("componentContext")))
+            << "transient request flag leaked into persisted node settings";
+        auto ports_arr =
+            (*begin_obj)[std::string_view("boundaryPorts")].as_array();
+        ASSERT_TRUE(ports_arr.has_value());
+        EXPECT_EQ(ports_arr->size(), 2u);
+    }
+    auto other_settings = HostGraphNodeSettings(*properties, "other");
+    ASSERT_TRUE(other_settings.has_value());
+    // 宿主 revision 推进（条目 authoring.revision=6）。
+    {
+        auto entry_json = settings_manager_->GetTaskRepositoryEntryJson("0", 3);
+        auto entry_obj = entry_json.as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        auto authoring =
+            (*entry_obj)[std::string_view("authoring")].as_object();
+        ASSERT_TRUE(authoring.has_value());
+        EXPECT_EQ(
+            (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
+            6);
+    }
+}
+
+// begin/end 节点文档 Apply 删口级联（MaaPI 对齐管线侧）：removeFormSequence
+// Item 删 p1 → 会话 diagnostics 携带被删口 id → 管线对宿主图文档执行边级
+// 联（removeNodePort 级联 erase 语义，双侧删）→ 不触该口的边保留。
+TEST_F(SchedulerRuntimeBackedTest, BoundaryDocumentApplyRemoveItemCascadesEdges)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+
+    SeedGraphRepositoryEntry(
+        *settings_manager_,
+        3,
+        R"json([
+            {"edgeId": "e1", "sourceNodeId": "n_begin", "sourcePortId": "p1",
+             "targetNodeId": "other", "targetPortId": "in", "edgeType": "data"},
+            {"edgeId": "e2", "sourceNodeId": "other", "sourcePortId": "out",
+             "targetNodeId": "n_begin", "targetPortId": "p9", "edgeType": "data"}
+        ])json");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    yyjson::value change(Das::Utils::MakeYyjsonObject());
+    (*change.as_object())[std::string_view("baseRevision")] =
+        static_cast<int64_t>(5);
+    {
+        yyjson::value element(Das::Utils::MakeYyjsonObject());
+        (*element.as_object())[std::string_view("kind")] = std::make_pair(
+            std::string_view("removeFormSequenceItem"),
+            yyjson::copy_string);
+        yyjson::value payload(Das::Utils::MakeYyjsonObject());
+        (*payload.as_object())[std::string_view("formSequenceItemId")] =
+            std::make_pair(std::string_view("p1"), yyjson::copy_string);
+        (*element.as_object())[std::string_view("payload")] =
+            std::move(payload);
+        auto changes = Das::Utils::MakeYyjsonArray();
+        (*changes.as_array()).emplace_back(std::move(element));
+        (*change.as_object())[std::string_view("changes")] = std::move(changes);
+    }
+    (*change.as_object())[std::string_view("componentGuid")] = std::make_pair(
+        Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID,
+        yyjson::copy_string);
+    (*change.as_object())[std::string_view("componentContext")] = true;
+
+    auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(3, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_FALSE(obj->contains(std::string_view("errorKind")));
+    EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+    EXPECT_EQ((*obj)[std::string_view("revision")].as_sint().value_or(-1), 6);
+
+    // 存储对账：e1（n_begin.p1 源端）被级联删除；e2（目标端口 p9 不在删
+    // 集）保留——级联按（节点, 口）精确命中，不误删同节点其它口。
+    auto properties = EntryAcceptedProperties(*settings_manager_, 3);
+    ASSERT_TRUE(properties.has_value());
+    {
+        auto props_obj = properties->as_object();
+        ASSERT_TRUE(props_obj.has_value());
+        const auto& edges_ref = (*props_obj)[std::string_view("edges")];
+        auto        edges_arr = edges_ref.as_array();
+        ASSERT_TRUE(edges_arr.has_value());
+        EXPECT_EQ(edges_arr->size(), 1u);
+        auto edge_obj = (*edges_arr)[0].as_object();
+        ASSERT_TRUE(edge_obj.has_value());
+        EXPECT_EQ(
+            (*edge_obj)[std::string_view("edgeId")].as_string().value_or(""),
+            "e2");
+    }
+    auto begin_settings = HostGraphNodeSettings(*properties, "n_begin");
+    ASSERT_TRUE(begin_settings.has_value());
+    {
+        auto begin_obj = begin_settings->as_object();
+        ASSERT_TRUE(begin_obj.has_value());
+        auto ports_arr =
+            (*begin_obj)[std::string_view("boundaryPorts")].as_array();
+        ASSERT_TRUE(ports_arr.has_value());
+        EXPECT_EQ(ports_arr->size(), 0u);
+    }
+}
+
 // 组件 kind 名与端口 label 走同一多语言 map 机制：definition 顶层 label
 // map（kind 兄弟字段，kind 本身保持机器名）经 BuildActionCatalogFromRegistry
 // 按进程默认 locale 解析成 entry label（回退链 locale→en→kind→guid）；
