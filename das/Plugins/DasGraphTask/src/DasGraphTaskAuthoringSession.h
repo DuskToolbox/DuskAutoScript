@@ -76,9 +76,6 @@ namespace Plugins::DasGraphTask
     private:
         // Opaque Core-owned authoring session (GraphAuthoringSessionState*).
         GraphAuthoringSessionState* state_ = nullptr;
-        // 会话自己的 actionCatalog 副本（context 原文）：边界推导的 C ABI
-        // 需要 catalog 端口面解析声明通道。
-        std::string catalog_json_;
     };
 } // namespace Plugins::DasGraphTask
 DAS_NS_END

@@ -142,16 +142,17 @@ namespace
         return serialized.value_or(std::string(context));
     }
 
-    // Direct wrapper over the SetActionCatalog C ABI — for tests asserting
-    // the entry point's own accept/reject semantics (the ABI stays live
-    // through the transition window; its retirement lands atomically with
-    // the last plugin caller in a later plan).
-    DasResult CatalogAbi(
-        GraphAuthoringSessionState* p,
-        const std::string&          json_array)
+    // Catalog accept/reject semantics assertion: seed the catalog through the
+    // context key and report whether it took (a well-formed catalog projects
+    // the actionCatalog section; a malformed one degrades to zero catalog —
+    // the session keeps running with no actionCatalog key at all).
+    bool CatalogSeededViaContext(std::string_view catalog_json)
     {
-        auto s = MakeStr(json_array);
-        return GraphAuthoringSessionSetActionCatalog(p, s.Get());
+        const SessionHandle s{WithActionCatalog("", catalog_json)};
+        const auto          document = DocumentOf(s.p);
+        auto                obj = document.as_object();
+        return obj.has_value()
+               && obj->contains(std::string_view("actionCatalog"));
     }
 
     // The Phase 84 strict AuthoringChange parser rejects the legacy flat
@@ -415,23 +416,13 @@ namespace
 
     TEST(GraphAuthoringSessionTest, ActionCatalogRejectsMalformedEntries)
     {
-        const SessionHandle s{""};
-        // Entry missing actionId.
-        EXPECT_EQ(
-            CatalogAbi(s.p, R"([{"label":"x"}])"),
-            DAS_E_INVALID_ARGUMENT);
-        // Non-object entry: the legacy flat guid-string array form is gone.
-        EXPECT_EQ(CatalogAbi(s.p, R"(["{g1}"])"), DAS_E_INVALID_ARGUMENT);
-        // Payload is not an array at all.
-        EXPECT_EQ(
-            CatalogAbi(s.p, R"({"actionId":"{g1}"})"),
-            DAS_E_INVALID_ARGUMENT);
-
-        // Rejections leave the session untouched: no catalog is projected.
-        const auto document = DocumentOf(s.p);
-        auto       obj = document.as_object();
-        ASSERT_TRUE(obj.has_value());
-        EXPECT_FALSE(obj->contains(std::string_view("actionCatalog")));
+        // Entry missing actionId / non-object entry (the legacy flat
+        // guid-string array form is gone) / payload is not an array at all:
+        // each degrades the whole key to zero catalog — the session keeps
+        // running and projects no actionCatalog section.
+        EXPECT_FALSE(CatalogSeededViaContext(R"([{"label":"x"}])"));
+        EXPECT_FALSE(CatalogSeededViaContext(R"(["{g1}"])"));
+        EXPECT_FALSE(CatalogSeededViaContext(R"({"actionId":"{g1}"})"));
     }
 
     // -----------------------------------------------------------------------
@@ -547,30 +538,16 @@ namespace
     // stays the all-or-nothing backstop behind the producer's skip rule.
     TEST(GraphAuthoringSessionTest, ActionCatalogRejectsMalformedPortEntries)
     {
-        const SessionHandle s{""};
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"bool","direction":"sideways"}]}])json"),
-            DAS_E_INVALID_ARGUMENT);
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"","direction":"input"}]}])json"),
-            DAS_E_INVALID_ARGUMENT);
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"bool","direction":"input","extra":1}]}])json"),
-            DAS_E_INVALID_ARGUMENT);
-        EXPECT_EQ(
-            CatalogAbi(s.p, R"json([{"actionId":"{g1}","ports":["x"]}])json"),
-            DAS_E_INVALID_ARGUMENT);
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"json([{"actionId":"{g1}","ports":{"portId":"x"}}])json"),
-            DAS_E_INVALID_ARGUMENT);
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"bool","direction":"sideways"}]}])json"));
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"","direction":"input"}]}])json"));
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"bool","direction":"input","extra":1}]}])json"));
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"json([{"actionId":"{g1}","ports":["x"]}])json"));
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"json([{"actionId":"{g1}","ports":{"portId":"x"}}])json"));
     }
 
     // The loopCarried declaration is the one extra key a port element may
@@ -582,17 +559,10 @@ namespace
     // text); a non-boolean value is a shape violation like any other.
     TEST(GraphAuthoringSessionTest, ActionCatalogAdmitsLoopCarriedPortKey)
     {
-        const SessionHandle s{""};
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"json([{"actionId":"{g1}","ports":[{"portId":"index","portType":"int64","direction":"output","loopCarried":true}]}])json"),
-            DAS_S_OK);
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"json([{"actionId":"{g1}","ports":[{"portId":"index","portType":"int64","direction":"output","loopCarried":"yes"}]}])json"),
-            DAS_E_INVALID_ARGUMENT);
+        EXPECT_TRUE(CatalogSeededViaContext(
+            R"json([{"actionId":"{g1}","ports":[{"portId":"index","portType":"int64","direction":"output","loopCarried":true}]}])json"));
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"json([{"actionId":"{g1}","ports":[{"portId":"index","portType":"int64","direction":"output","loopCarried":"yes"}]}])json"));
     }
 
     // Five-key port projection end to end through the C ABI session: the
@@ -1783,10 +1753,10 @@ namespace
     }
 
     // -----------------------------------------------------------------------
-    // Config channel — SetActionCatalog parses the manifest config
-    // declarations ({name,type,default?} three-key lockstep like the port
-    // channel) and the node fields[] projection merges them so a freshly
-    // added node is immediately editable.
+    // Config channel — the context actionCatalog key parses the manifest
+    // config declarations ({name,type,default?} three-key lockstep like the
+    // port channel) and the node fields[] projection merges them so a
+    // freshly added node is immediately editable.
     // -----------------------------------------------------------------------
 
     /// Field lookup in the graph node carrying the given componentGuid in a
@@ -1855,7 +1825,7 @@ namespace
         return std::nullopt;
     }
 
-    TEST(GraphAuthoringSessionTest, SetActionCatalogConfigProjectsIntoFields)
+    TEST(GraphAuthoringSessionTest, ActionCatalogConfigProjectsIntoFields)
     {
         const SessionHandle s{WithActionCatalog(
             "",
@@ -1884,42 +1854,31 @@ namespace
     }
 
     // Malformed config channel entries reject the whole catalog (same
-    // lockstep as the port channel); the previously accepted catalog stays
-    // in place so a single bad producer cannot silently blank the session.
-    TEST(GraphAuthoringSessionTest, SetActionCatalogConfigMalformedRejected)
+    // lockstep as the port channel): each malformed seed degrades to zero
+    // catalog so a single bad producer cannot silently half-apply.
+    TEST(GraphAuthoringSessionTest, ActionCatalogConfigMalformedRejected)
     {
+        // Unknown key on a config element.
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
+            R"("default":1,"extra":2}]}])"));
+        // Missing name / missing type / empty type.
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"([{"actionId":"{g1}","config":[{"type":"int"}]}])"));
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"([{"actionId":"{g1}","config":[{"name":"d"}]}])"));
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"([{"actionId":"{g1}","config":[{"name":"d","type":""}]}])"));
+        // Non-array config value.
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"([{"actionId":"{g1}","config":{"delay_ms":1}}])"));
+
+        // The well-formed control: the same config shape seeds and projects
+        // the delay_ms field.
         const SessionHandle s{WithActionCatalog(
             "",
             R"([{"actionId":"{g1}","config":[{"name":"delay_ms",)"
             R"("type":"int64","default":1000}]}])")};
-        // Unknown key on a config element.
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
-                R"("default":1,"extra":2}]}])"),
-            DAS_E_INVALID_ARGUMENT);
-        // Missing name / missing type / empty type.
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"([{"actionId":"{g1}","config":[{"type":"int"}]}])"),
-            DAS_E_INVALID_ARGUMENT);
-        EXPECT_EQ(
-            CatalogAbi(s.p, R"([{"actionId":"{g1}","config":[{"name":"d"}]}])"),
-            DAS_E_INVALID_ARGUMENT);
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"([{"actionId":"{g1}","config":[{"name":"d","type":""}]}])"),
-            DAS_E_INVALID_ARGUMENT);
-        // Non-array config value.
-        EXPECT_EQ(
-            CatalogAbi(s.p, R"([{"actionId":"{g1}","config":{"delay_ms":1}}])"),
-            DAS_E_INVALID_ARGUMENT);
-
-        // The first (well-formed) catalog survived the failed sets: the
-        // session still projects the delay_ms field.
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -1934,7 +1893,7 @@ namespace
     // The optional taskGuid declaration on a config element rides the
     // catalog channel onto the projected field (engaged-only wire key); a
     // non-string taskGuid is a shape violation rejecting the whole catalog.
-    TEST(GraphAuthoringSessionTest, SetActionCatalogConfigCarriesTaskGuid)
+    TEST(GraphAuthoringSessionTest, ActionCatalogConfigCarriesTaskGuid)
     {
         const SessionHandle s{WithActionCatalog(
             "",
@@ -1968,33 +1927,18 @@ namespace
         ASSERT_TRUE(inputs_obj.has_value());
         EXPECT_FALSE(inputs_obj->contains(std::string_view("taskGuid")));
 
-        // Non-string taskGuid rejects the whole catalog; the accepted
-        // catalog stays in place (same lockstep as the other shape rules).
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
-                R"("taskGuid":7}]}])"),
-            DAS_E_INVALID_ARGUMENT);
-        ApplyChange(
-            s.p,
-            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
-        const auto after_reject = DocumentOf(s.p);
-        const auto survived = FirstGraphNodeFieldDescriptorOf(
-            after_reject,
-            std::string_view("repositoryRef"),
-            std::string_view("{g1}"));
-        ASSERT_TRUE(survived.has_value());
-        auto survived_obj = survived->as_object();
-        ASSERT_TRUE(survived_obj.has_value());
-        EXPECT_TRUE(survived_obj->contains(std::string_view("taskGuid")));
+        // Non-string taskGuid rejects the whole catalog (zero-catalog
+        // degradation, same lockstep as the other shape rules).
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
+            R"("taskGuid":7}]}])"));
     }
 
     // The required declaration on a config element rides the catalog channel
     // onto the projected field (fields[].required); a non-bool required is a
     // shape violation rejecting the whole catalog — the whitelist opens for
     // exactly the bool-typed key and nothing else.
-    TEST(GraphAuthoringSessionTest, SetActionCatalogConfigCarriesRequired)
+    TEST(GraphAuthoringSessionTest, ActionCatalogConfigCarriesRequired)
     {
         const SessionHandle s{WithActionCatalog(
             "",
@@ -2028,35 +1972,18 @@ namespace
         EXPECT_FALSE(
             (*args_obj)[std::string_view("required")].as_bool().value_or(true));
 
-        // Non-bool required rejects the whole catalog; the accepted catalog
-        // stays in place (same lockstep as taskGuid/label shape rules).
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
-                R"("required":"yes"}]}])"),
-            DAS_E_INVALID_ARGUMENT);
-        ApplyChange(
-            s.p,
-            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
-        const auto after_reject = DocumentOf(s.p);
-        const auto survived = FirstGraphNodeFieldDescriptorOf(
-            after_reject,
-            std::string_view("exePath"),
-            std::string_view("{g1}"));
-        ASSERT_TRUE(survived.has_value());
-        auto survived_obj = survived->as_object();
-        ASSERT_TRUE(survived_obj.has_value());
-        EXPECT_TRUE(
-            (*survived_obj)[std::string_view("required")].as_bool().value_or(
-                false));
+        // Non-bool required rejects the whole catalog (zero-catalog
+        // degradation, same lockstep as taskGuid/label shape rules).
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
+            R"("required":"yes"}]}])"));
     }
 
     // The optional description declaration on a config element rides the
     // catalog channel onto the projected field (engaged-only wire key —
     // absent declaration never emits an empty string); a non-string
     // description is a shape violation rejecting the whole catalog.
-    TEST(GraphAuthoringSessionTest, SetActionCatalogConfigCarriesDescription)
+    TEST(GraphAuthoringSessionTest, ActionCatalogConfigCarriesDescription)
     {
         const SessionHandle s{WithActionCatalog(
             "",
@@ -2092,26 +2019,11 @@ namespace
         ASSERT_TRUE(args_obj.has_value());
         EXPECT_FALSE(args_obj->contains(std::string_view("description")));
 
-        // Non-string description rejects the whole catalog; the accepted
-        // catalog stays in place (same lockstep as taskGuid/label/required).
-        EXPECT_EQ(
-            CatalogAbi(
-                s.p,
-                R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
-                R"("description":7}]}])"),
-            DAS_E_INVALID_ARGUMENT);
-        ApplyChange(
-            s.p,
-            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
-        const auto after_reject = DocumentOf(s.p);
-        const auto survived = FirstGraphNodeFieldDescriptorOf(
-            after_reject,
-            std::string_view("exePath"),
-            std::string_view("{g1}"));
-        ASSERT_TRUE(survived.has_value());
-        auto survived_obj = survived->as_object();
-        ASSERT_TRUE(survived_obj.has_value());
-        EXPECT_TRUE(survived_obj->contains(std::string_view("description")));
+        // Non-string description rejects the whole catalog (zero-catalog
+        // degradation, same lockstep as taskGuid/label/required).
+        EXPECT_FALSE(CatalogSeededViaContext(
+            R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
+            R"("description":7}]}])"));
     }
 
     // -----------------------------------------------------------------------
@@ -2965,30 +2877,6 @@ namespace
             EXPECT_NE(not_found.find("dyn_in"), std::string::npos)
                 << faces_json;
         }
-    }
-
-    // 追加裁定二等价性：同一 catalog 经 context 键（SeedFromContext 播
-    // 种）与经 SetActionCatalog C ABI 两条通道进会话——GetDocument 投影
-    // 逐字节等价（MakeCatalogFromState 消费路径不变）。catalog 覆盖
-    // label/ports/config 三通道。
-    TEST(GraphAuthoringSessionTest, ActionCatalogContextKeyMatchesAbiSeeding)
-    {
-        constexpr std::string_view catalog =
-            R"json([{"actionId":"{g1}","label":"das.flow.branch","ports":[{"portId":"condition","portType":"bool","direction":"input"},{"portId":"true","portType":"signal","direction":"output"}],"config":[{"name":"mode","type":"string","default":"auto","required":true}]},{"actionId":"{g2}"}])json";
-        const SessionHandle via_context{WithActionCatalog("", catalog)};
-        const SessionHandle via_abi{""};
-        ASSERT_EQ(CatalogAbi(via_abi.p, std::string(catalog)), DAS_S_OK);
-
-        const auto context_projection = Compact(
-            Das::Utils::SerializeYyjsonValue(DocumentOf(via_context.p))
-                .value_or(""));
-        const auto abi_projection = Compact(
-            Das::Utils::SerializeYyjsonValue(DocumentOf(via_abi.p))
-                .value_or(""));
-        EXPECT_EQ(context_projection, abi_projection);
-        EXPECT_NE(
-            context_projection.find("\"actionCatalog\""),
-            std::string::npos);
     }
 
     // ======================================================================

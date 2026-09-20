@@ -10,7 +10,6 @@
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
 
-#include <format>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -381,8 +380,8 @@ namespace Plugins::DasGraphTask
         // 点注入条目边界端口。任一步失败降级零注入（投影尽力而为，不阻断
         // Get）。返回空 = 无修改（原样透传）。
         std::optional<std::string> InjectBoundaryPortsIntoDocument(
-            const std::string& envelope_text,
-            const std::string& catalog_json)
+            GraphAuthoringSessionState* state,
+            const std::string&          envelope_text)
         {
             // 显式持有 owned 可变文档：yyjson::read 的 auto 推导得到的是
             // const 视图 reader，后续节点 ports 的就地改写需要可变链。
@@ -448,10 +447,9 @@ namespace Plugins::DasGraphTask
                     }
                     DasPtr<IDasReadOnlyString> boundary_text;
                     auto document_str = MakeReadOnlyString(*document_source);
-                    auto catalog_str = MakeReadOnlyString(catalog_json);
                     if (DAS::IsFailed(GraphDeriveBoundaryPorts(
+                            state,
                             document_str.Get(),
-                            catalog_str.Get(),
                             boundary_text.Put()))
                         || !boundary_text)
                     {
@@ -502,102 +500,15 @@ namespace Plugins::DasGraphTask
         FetcherSlot() = std::move(fetcher);
     }
 
-    // actionCatalog wiring: the Provider must feed the
-    // session the registered IDasTaskComponent catalog so the Core can
-    // (a) emit actionCatalog.entries[] (with manifest kind labels) on
-    // GetDocument and (b) validate actionId on
-    // addGraphNode/addFormSequenceItem.
-    //
-    // The plugin cannot reach PluginManager directly (it is loaded BY
-    // PluginManager and only receives an IDasTaskComponentHost* which does not
-    // expose enumeration). The Scheduler / host process that creates
-    // the session context is the natural owner of the registry snapshot;
-    // it injects the catalog as a top-level `actionCatalog` JSON array of
-    // {actionId,label} objects inside the context document. The plugin
-    // re-serialises that array unchanged and forwards it to the Core via
-    // GraphAuthoringSessionSetActionCatalog — entry shape validation and
-    // the missing-label fallback live in the Core.
-    //
-    // Context shape:
-    //   {"properties": <GraphDocumentDto>,
-    //    "actionCatalog": [{"actionId":"{guid}","label":"kind"}, ...]}
-    // When `actionCatalog` is absent the session keeps an empty catalog;
-    // addGraphNode/addFormSequenceItem then reject every actionId as
-    // UnknownActionId.
-    namespace
-    {
-        std::optional<std::string> ExtractCatalogJson(
-            const std::string& context_json)
-        {
-            if (context_json.empty())
-            {
-                return std::nullopt;
-            }
-            yyjson::value root;
-            try
-            {
-                root = yyjson::read(context_json);
-            }
-            catch (...)
-            {
-                return std::nullopt;
-            }
-            auto obj = root.as_object();
-            if (!obj || !obj->contains(std::string_view("actionCatalog")))
-            {
-                return std::nullopt;
-            }
-            auto serialized = Das::Utils::SerializeYyjsonValue(
-                (*obj)[std::string_view("actionCatalog")]);
-            if (!serialized.has_value())
-            {
-                return std::nullopt;
-            }
-            return *serialized;
-        }
-
-        void WireActionCatalogFromContext(
-            GraphAuthoringSessionState* state,
-            const std::string&          catalog_json)
-        {
-            if (state == nullptr || catalog_json.empty())
-            {
-                return;
-            }
-            // Forward the catalog array as-is (object entries survive
-            // end-to-end; no flattening back to guid strings). A rejection
-            // leaves the session with an empty catalog — surface it loudly
-            // instead of silently degrading every addGraphNode to
-            // UnknownActionId.
-            auto            catalog_str = MakeReadOnlyString(catalog_json);
-            const DasResult catalog_result =
-                GraphAuthoringSessionSetActionCatalog(state, catalog_str.Get());
-            if (DAS::IsFailed(catalog_result))
-            {
-                const auto reason = std::format(
-                    "GraphAuthoringSessionSetActionCatalog rejected the "
-                    "context actionCatalog (result={}); the session keeps "
-                    "an empty catalog",
-                    catalog_result);
-                DAS_LOG_WARNING(reason.c_str());
-            }
-        }
-    } // namespace
-
     DasGraphTaskAuthoringSession::DasGraphTaskAuthoringSession(
         std::string context_json)
     {
         auto ctx_str = MakeReadOnlyString(context_json);
         // CreateGraphAuthoringSession seeds the Core-owned GraphDocumentDto
-        // store from the context (formSequence / graph / empty).
+        // store from the context (formSequence / graph / empty) —含
+        // actionCatalog/faces 键的自解析（SeedFromContext）。插件是纯管
+        // 道：完整 context 原文透传，零提取/零转发跳。
         CreateGraphAuthoringSession(ctx_str.Get(), &state_);
-        // actionCatalog wiring: inject the registry snapshot the Scheduler
-        // included in the context so GetDocument emits actionCatalog and
-        // addGraphNode/addFormSequenceItem can validate actionId. The raw
-        // array text is kept for the boundary-port derivation C ABI (its
-        // declared-port-surface channel).
-        catalog_json_ = ExtractCatalogJson(context_json).value_or("");
-        WireActionCatalogFromContext(state_, catalog_json_);
     }
 
     DasGraphTaskAuthoringSession::~DasGraphTaskAuthoringSession()
@@ -633,8 +544,8 @@ namespace Plugins::DasGraphTask
         if (!RequestDisablesBoundaryProjection(request_text))
         {
             auto enhanced = InjectBoundaryPortsIntoDocument(
-                JsonToUtf8(document_json.Get()),
-                catalog_json_);
+                state_,
+                JsonToUtf8(document_json.Get()));
             if (enhanced.has_value())
             {
                 DasPtr<Das::ExportInterface::IDasJson> enhanced_json;

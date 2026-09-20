@@ -664,9 +664,9 @@ TEST(DasGraphTaskTest, AdapterDoDelegatesToComponentKernel)
         DAS_E_INVALID_POINTER);
 }
 
-// 会话构造携带畸形 actionCatalog（空 portType 条目）时：Core 的
-// SetActionCatalog 整包拒绝，接线层记录 WARN 后会话保持可用（空目录），
-// 构造与 GetDocument 均不得崩溃或中断——拒绝路径的失败分支回归锁。
+// 会话构造携带畸形 actionCatalog（空 portType 条目）时：Core 在 context
+// 解析点整键降级（零 catalog + WARNING），会话保持可用（空目录），构造与
+// GetDocument 均不得崩溃或中断——拒绝路径的失败分支回归锁。
 TEST(DasGraphTaskTest, AuthoringSessionSurvivesMalformedCatalogContext)
 {
     const std::string context =
@@ -1306,14 +1306,37 @@ namespace
     private:
         std::atomic<uint32_t> ref_count_{1};
     };
+
+    // catalog 经 context 键播种的会话创建串（{"actionCatalog": [...]}——
+    // SeedFromContext 在 Core 解析点消费；catalog 原文转发通道已退役）。
+    DasPtr<IDasReadOnlyString> CatalogSeedString(const std::string& catalog)
+    {
+        const std::string context =
+            std::string(R"({"actionCatalog":)") + catalog + "}";
+        DasPtr<IDasReadOnlyString> context_string;
+        CreateIDasReadOnlyStringFromUtf8(context.c_str(), context_string.Put());
+        return context_string;
+    }
 } // namespace
 
 // 空 context 新建 graph 会话 → 预置 begin+end 恰两节点；加探针、连线
 // 探针.值→end.值、编译零 fatal，喂 Do 后返回码 == 子图探针产出 42。
 TEST(DasGraphTaskTest, PreservedBeginEndGraphExecutesAndReturnsEndValue)
 {
+    // catalog：begin（无口面）/end（值 int 入出对）/探针（值 int 出）。
+    const std::string action_catalog =
+        std::string(R"([{"actionId":")")
+        + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)" + R"({"actionId":")"
+        + std::string(END_COMPONENT_GUID_TEXT)
+        + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]},)"
+        + R"({"actionId":")" + std::string(PROBE_COMPONENT_GUID_TEXT)
+        + R"(","ports":[{"portId":"值","portType":"int","direction":"output"}]}])";
+
     GraphAuthoringSessionState* state = nullptr;
-    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
+    const auto catalog_seed = CatalogSeedString(action_catalog);
+    ASSERT_EQ(
+        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        DAS_S_OK);
     ASSERT_NE(state, nullptr);
 
     // 预置断言：恰两节点 n_0=begin / n_1=end，均为 componentRef。
@@ -1334,26 +1357,6 @@ TEST(DasGraphTaskTest, PreservedBeginEndGraphExecutesAndReturnsEndValue)
         EXPECT_EQ(preset_nodes[1].node_id, "n_1");
         EXPECT_EQ(preset_nodes[1].component_guid, END_COMPONENT_GUID_TEXT);
         EXPECT_EQ(preset_nodes[1].target_kind, "componentRef");
-    }
-
-    // catalog：begin（无口面）/end（值 int 入出对）/探针（值 int 出）。
-    const std::string action_catalog =
-        std::string(R"([{"actionId":")")
-        + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)" + R"({"actionId":")"
-        + std::string(END_COMPONENT_GUID_TEXT)
-        + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]},)"
-        + R"({"actionId":")" + std::string(PROBE_COMPONENT_GUID_TEXT)
-        + R"(","ports":[{"portId":"值","portType":"int","direction":"output"}]}])";
-    {
-        DasPtr<IDasReadOnlyString> catalog_string;
-        ASSERT_EQ(
-            CreateIDasReadOnlyStringFromUtf8(
-                action_catalog.c_str(),
-                catalog_string.Put()),
-            DAS_S_OK);
-        ASSERT_EQ(
-            GraphAuthoringSessionSetActionCatalog(state, catalog_string.Get()),
-            DAS_S_OK);
     }
 
     // 探针节点：预置占用 n_0/n_1 后计数器顺延到 n_2。
@@ -1474,26 +1477,18 @@ TEST(DasGraphTaskTest, PreservedBeginEndGraphExecutesAndReturnsEndValue)
 // 会被图输入直接注入。
 TEST(DasGraphTaskTest, TypedGraphInputDoesNotEchoThroughUnconnectedEndPorts)
 {
-    GraphAuthoringSessionState* state = nullptr;
-    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
-    ASSERT_NE(state, nullptr);
-
     const std::string action_catalog =
         std::string(R"([{"actionId":")")
         + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)" + R"({"actionId":")"
         + std::string(END_COMPONENT_GUID_TEXT)
         + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])";
-    {
-        DasPtr<IDasReadOnlyString> catalog_string;
-        ASSERT_EQ(
-            CreateIDasReadOnlyStringFromUtf8(
-                action_catalog.c_str(),
-                catalog_string.Put()),
-            DAS_S_OK);
-        ASSERT_EQ(
-            GraphAuthoringSessionSetActionCatalog(state, catalog_string.Get()),
-            DAS_S_OK);
-    }
+
+    GraphAuthoringSessionState* state = nullptr;
+    const auto catalog_seed = CatalogSeedString(action_catalog);
+    ASSERT_EQ(
+        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        DAS_S_OK);
+    ASSERT_NE(state, nullptr);
 
     // begin 长入参口「阈值」/end 长出参口「评分」——两节点首口同 id p_1，
     // 全部悬空（零连线）。
@@ -2125,9 +2120,6 @@ TEST(DasGraphTaskTest, BoundaryComponentTransposesEveryInputKey)
 // 务失败」的用户表达通道，不得夹 0）。
 TEST(DasGraphTaskTest, EndValuePassthroughCarriesNegativeReturnCode)
 {
-    GraphAuthoringSessionState* state = nullptr;
-    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
-
     const std::string action_catalog =
         std::string(R"([{"actionId":")")
         + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)" + R"({"actionId":")"
@@ -2135,17 +2127,12 @@ TEST(DasGraphTaskTest, EndValuePassthroughCarriesNegativeReturnCode)
         + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]},)"
         + R"({"actionId":")" + std::string(NEGATIVE_PROBE_COMPONENT_GUID_TEXT)
         + R"(","ports":[{"portId":"值","portType":"int","direction":"output"}]}])";
-    {
-        DasPtr<IDasReadOnlyString> catalog_string;
-        ASSERT_EQ(
-            CreateIDasReadOnlyStringFromUtf8(
-                action_catalog.c_str(),
-                catalog_string.Put()),
-            DAS_S_OK);
-        ASSERT_EQ(
-            GraphAuthoringSessionSetActionCatalog(state, catalog_string.Get()),
-            DAS_S_OK);
-    }
+
+    GraphAuthoringSessionState* state = nullptr;
+    const auto catalog_seed = CatalogSeedString(action_catalog);
+    ASSERT_EQ(
+        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        DAS_S_OK);
 
     std::string probe_node_id;
     {
@@ -2240,25 +2227,17 @@ TEST(DasGraphTaskTest, EndValuePassthroughCarriesNegativeReturnCode)
 // （宽容语义；WARN 记录缺口，不引入新失败面）。
 TEST(DasGraphTaskTest, EndNodeWithoutValuePortYieldsZeroReturnCode)
 {
-    GraphAuthoringSessionState* state = nullptr;
-    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
-
     const std::string action_catalog =
         std::string(R"([{"actionId":")")
         + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)" + R"({"actionId":")"
         + std::string(END_COMPONENT_GUID_TEXT)
         + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])";
-    {
-        DasPtr<IDasReadOnlyString> catalog_string;
-        ASSERT_EQ(
-            CreateIDasReadOnlyStringFromUtf8(
-                action_catalog.c_str(),
-                catalog_string.Put()),
-            DAS_S_OK);
-        ASSERT_EQ(
-            GraphAuthoringSessionSetActionCatalog(state, catalog_string.Get()),
-            DAS_S_OK);
-    }
+
+    GraphAuthoringSessionState* state = nullptr;
+    const auto catalog_seed = CatalogSeedString(action_catalog);
+    ASSERT_EQ(
+        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        DAS_S_OK);
 
     std::string shell_text;
     {
@@ -2611,25 +2590,17 @@ namespace
 // output；result 串口退役（缺席）。
 TEST(DasGraphTaskTest, TypedDirectTransferCarriesIntAndRetiresResultPort)
 {
-    GraphAuthoringSessionState* state = nullptr;
-    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
-
     const std::string action_catalog =
         std::string(R"([{"actionId":")")
         + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)" + R"({"actionId":")"
         + std::string(END_COMPONENT_GUID_TEXT)
         + R"(","ports":[{"portId":"值","portType":"int","direction":"input"},{"portId":"值","portType":"int","direction":"output"}]}])";
-    {
-        DasPtr<IDasReadOnlyString> catalog_string;
-        ASSERT_EQ(
-            CreateIDasReadOnlyStringFromUtf8(
-                action_catalog.c_str(),
-                catalog_string.Put()),
-            DAS_S_OK);
-        ASSERT_EQ(
-            GraphAuthoringSessionSetActionCatalog(state, catalog_string.Get()),
-            DAS_S_OK);
-    }
+
+    GraphAuthoringSessionState* state = nullptr;
+    const auto catalog_seed = CatalogSeedString(action_catalog);
+    ASSERT_EQ(
+        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        DAS_S_OK);
 
     std::string dynamic_port_id;
     {
@@ -2738,25 +2709,17 @@ TEST(DasGraphTaskTest, TypedDirectTransferCarriesIntAndRetiresResultPort)
 // 子图引用身份，JSON 桥做不到的半段）；缺 end 宽容返回 0。
 TEST(DasGraphTaskTest, TypedDirectTransferCarriesImageReferenceAcrossSubgraph)
 {
-    GraphAuthoringSessionState* state = nullptr;
-    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
-
     const std::string action_catalog =
         std::string(R"([{"actionId":")")
         + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)" + R"({"actionId":")"
         + std::string(IMAGE_ECHO_COMPONENT_GUID_TEXT)
         + R"(","ports":[{"portId":"in","portType":"image","direction":"input"},{"portId":"out","portType":"image","direction":"output"}]}])";
-    {
-        DasPtr<IDasReadOnlyString> catalog_string;
-        ASSERT_EQ(
-            CreateIDasReadOnlyStringFromUtf8(
-                action_catalog.c_str(),
-                catalog_string.Put()),
-            DAS_S_OK);
-        ASSERT_EQ(
-            GraphAuthoringSessionSetActionCatalog(state, catalog_string.Get()),
-            DAS_S_OK);
-    }
+
+    GraphAuthoringSessionState* state = nullptr;
+    const auto catalog_seed = CatalogSeedString(action_catalog);
+    ASSERT_EQ(
+        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        DAS_S_OK);
 
     std::string dynamic_port_id;
     {
@@ -4094,10 +4057,6 @@ namespace
     // 声明 end 的值 int 对 + 下次时间 string 对与探针的下次时间出线）。
     void CompileNextTimeProbePlanText(std::string& out_shell_text)
     {
-        GraphAuthoringSessionState* state = nullptr;
-        EXPECT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
-        ASSERT_NE(state, nullptr);
-
         const std::string action_catalog =
             std::string(R"([{"actionId":")")
             + std::string(BEGIN_COMPONENT_GUID_TEXT) + R"("},)"
@@ -4110,19 +4069,13 @@ namespace
             + R"({"actionId":")" + std::string(PROBE_COMPONENT_GUID_TEXT)
             + R"(","ports":[)"
             + R"({"portId":"下次时间","portType":"string","direction":"output"}]}])";
-        {
-            DasPtr<IDasReadOnlyString> catalog_string;
-            ASSERT_EQ(
-                CreateIDasReadOnlyStringFromUtf8(
-                    action_catalog.c_str(),
-                    catalog_string.Put()),
-                DAS_S_OK);
-            ASSERT_EQ(
-                GraphAuthoringSessionSetActionCatalog(
-                    state,
-                    catalog_string.Get()),
-                DAS_S_OK);
-        }
+
+        GraphAuthoringSessionState* state = nullptr;
+        const auto catalog_seed = CatalogSeedString(action_catalog);
+        EXPECT_EQ(
+            CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+            DAS_S_OK);
+        ASSERT_NE(state, nullptr);
 
         // 探针节点（预置 n_0/n_1 之后顺延 n_2）。
         std::string probe_node_id;

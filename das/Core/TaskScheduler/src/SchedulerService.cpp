@@ -448,11 +448,10 @@ namespace Das::Core::TaskScheduler
     // component manifest definition's top-level localized label map when
     // present (locale→en), falling back to the `kind` string and then the
     // guid, so the authoring UI always shows a friendly renderable name.
-    // Plugins that participate in the Add-Task affordance (DasGraphTask) read
-    // this array and forward it to the Core via
-    // GraphAuthoringSessionSetActionCatalog; plugins that do not simply
-    // ignore it. The array is sorted lexically by actionId for deterministic
-    // ordering.
+    // Plugins that receive the context forward it verbatim to the Core
+    // create entry; the Core consumes the `actionCatalog` key at its own
+    // context parse point. The array is sorted lexically by actionId for
+    // deterministic ordering.
     static std::string CatalogEntryLabel(
         const Das::Core::ForeignInterfaceHost::TaskComponentDefinitionInfo&
                          definition,

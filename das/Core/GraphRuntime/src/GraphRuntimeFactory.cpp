@@ -673,14 +673,11 @@ namespace
             return;
         }
 
-        // actionCatalog 键自解析（追加裁定二）：与 SetActionCatalog C ABI
-        // 共享同一逻辑源（ParseActionCatalogEntries——逐条 fail-closed，
-        // 形状语义搬运不重写），SeedFromContext 在此播种进既有
-        // action_entries 容器（MakeCatalogFromState 读 state 路径零改
-        // 动）。插件构造期的 SetActionCatalog 转发在过渡窗口仍发生——同
-        // 内容幂等全量替换，无行为差异（111.1-05 与全部调用者原子退
-        // 役）。畸形降级与 Wire 转发拒绝同款：零 catalog + WARNING，会话
-        // 继续加载文档。
+        // actionCatalog 键自解析（追加裁定二）：SeedFromContext 在此把
+        // context 携带的 registry 快照播种进既有 action_entries 容器
+        // （MakeCatalogFromState 读 state 路径零改动）——插件是纯管道
+        // （完整 context 原文透传，零提取/转发跳）。畸形降级：零 catalog
+        // + WARNING，会话继续加载文档。
         if (obj->contains(std::string_view("actionCatalog")))
         {
             auto entries = ParseActionCatalogEntries(
@@ -1710,12 +1707,9 @@ namespace
         return std::make_pair(std::move(faces), std::move(types));
     }
 
-    // actionCatalog 数组的逐条 fail-closed 解析——SetActionCatalog C ABI
-    // 与 SeedFromContext context 键播种共享的唯一逻辑源（追加裁定二：
-    // 解析循环的形状语义以原 SetActionCatalog 实现为唯一逻辑源，搬运
-    // 不重写）。任何形状违规→nullopt（整批拒绝语义由调用方决定：C ABI
-    // 返回 DAS_E_INVALID_ARGUMENT 且会话不动；context 键降级为零
-    // catalog+WARNING 且会话继续）。
+    // actionCatalog 数组的逐条 fail-closed 解析——SeedFromContext 的
+    // context 键播种通道的唯一逻辑源。任何形状违规→nullopt（调用方降
+    // 级为零 catalog+WARNING 且会话继续——fail-closed 不落半截结果）。
     std::optional<
         std::vector<Das::Core::GraphRuntime::Contract::ActionCatalogEntry>>
     ParseActionCatalogEntries(const yyjson::value& root)
@@ -1995,119 +1989,6 @@ namespace
         return entries;
     }
 
-    // 边界推导 C ABI 的 catalog 端口面解析：只消费 actionId + ports 通道，
-    // 元素形状与 SetActionCatalog 同锁（共享 CatalogPortShapeValid 单一
-    // 来源），同 all-or-nothing 拒绝语义——畸形输入整体拒绝（nullopt），
-    // 不落半截结果。
-    std::optional<std::unordered_map<
-        std::string,
-        Das::Core::GraphRuntime::GraphCompiler::ComponentPortSurface>>
-    ParseCatalogPortSurfaces(const yyjson::value& root)
-    {
-        auto arr = root.as_array();
-        if (!arr.has_value())
-        {
-            return std::nullopt;
-        }
-        std::unordered_map<
-            std::string,
-            Das::Core::GraphRuntime::GraphCompiler::ComponentPortSurface>
-            surfaces;
-        for (const auto& entry_value : *arr)
-        {
-            auto entry_obj = entry_value.as_object();
-            if (!entry_obj.has_value()
-                || !entry_obj->contains(std::string_view("actionId")))
-            {
-                return std::nullopt;
-            }
-            auto action_id =
-                (*entry_obj)[std::string_view("actionId")].as_string();
-            if (!action_id.has_value() || action_id->empty())
-            {
-                return std::nullopt;
-            }
-            Das::Core::GraphRuntime::GraphCompiler::ComponentPortSurface
-                surface;
-            if (entry_obj->contains(std::string_view("ports")))
-            {
-                auto ports_value =
-                    (*entry_obj)[std::string_view("ports")].as_array();
-                if (!ports_value.has_value())
-                {
-                    return std::nullopt;
-                }
-                for (const auto& port_value : *ports_value)
-                {
-                    auto port_obj = port_value.as_object();
-                    if (!port_obj.has_value()
-                        || !CatalogPortShapeValid(port_value))
-                    {
-                        return std::nullopt;
-                    }
-                    Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto
-                         definition;
-                    auto id =
-                        (*port_obj)[std::string_view("portId")].as_string();
-                    if (!id.has_value() || id->empty())
-                    {
-                        return std::nullopt;
-                    }
-                    definition.port_id = *id;
-                    auto type =
-                        (*port_obj)[std::string_view("portType")].as_string();
-                    if (!type.has_value() || type->empty())
-                    {
-                        return std::nullopt;
-                    }
-                    definition.port_type = *type;
-                    if (port_obj->contains(std::string_view("displayLabel")))
-                    {
-                        auto display_label =
-                            (*port_obj)[std::string_view("displayLabel")]
-                                .as_string();
-                        if (!display_label.has_value())
-                        {
-                            return std::nullopt;
-                        }
-                        definition.display_label = *display_label;
-                    }
-                    auto direction =
-                        (*port_obj)[std::string_view("direction")].as_string();
-                    if (!direction.has_value())
-                    {
-                        return std::nullopt;
-                    }
-                    if (port_obj->contains(std::string_view("loopCarried")))
-                    {
-                        auto carried =
-                            (*port_obj)[std::string_view("loopCarried")]
-                                .as_bool();
-                        if (!carried.has_value())
-                        {
-                            return std::nullopt;
-                        }
-                        definition.loop_carried = *carried;
-                    }
-                    if (*direction == std::string_view("input"))
-                    {
-                        surface.inputs.push_back(std::move(definition));
-                    }
-                    else if (*direction == std::string_view("output"))
-                    {
-                        surface.outputs.push_back(std::move(definition));
-                    }
-                    else
-                    {
-                        return std::nullopt;
-                    }
-                }
-            }
-            surfaces[std::string(*action_id)] = std::move(surface);
-        }
-        return surfaces;
-    }
-
     // 新建空图预置 begin+end 两节点：仅当 seed 后文档仍空且非
     // formSequence 视图（LINEAR_TAG）——formSequence 上下文与非空图不
     // 预置。内部 DTO 直写绕过 addGraphNode 校验（时序上 catalog 尚未就
@@ -2192,11 +2073,11 @@ DAS_C_API DasResult GraphAuthoringSessionGetDocument(
 
     try
     {
-        // Build the optional ActionCatalog projection from the Provider-fed
-        // entries. GraphAuthoringSessionSetActionCatalog stores
-        // the {actionId,label} objects as-is (label already carries the
-        // manifest kind, with the actionId fallback applied at parse time),
-        // so the projection is a direct copy of the stored catalog.
+        // Build the optional ActionCatalog projection from the seeded
+        // entries. SeedFromContext stores the context actionCatalog array's
+        // {actionId,label} objects as-is (label already carries the manifest
+        // kind, with the actionId fallback applied at parse time), so the
+        // projection is a direct copy of the stored catalog.
         const auto catalog = MakeCatalogFromState(*p);
         // D-84-08: 严格 Get envelope = {document, diagnostics}。
         // SchedulerService ValidateAuthoringGetResult 要求 top-level
@@ -2651,75 +2532,27 @@ GraphAuthoringSessionUpgradeToGraph(GraphAuthoringSessionState* p)
                : DAS_E_FAIL;
 }
 
-// Set the registered action catalog the session will accept on addGraphNode /
-// addFormSequenceItem (D-84-31/32/33) and surface as actionCatalog entries on
-// GetDocument. `p_action_catalog_json` is a JSON array of {actionId,label}
-// objects (the Provider translates
-// TaskComponentFactoryManager::EnumerateDefinitions() output into this form);
-// pass null to clear. Shape validation is business-neutral: every entry must
-// be an object carrying a non-empty string actionId; label is an optional
-// string and falls back to the actionId when absent or empty. Each entry may
-// also carry a `ports` array — the registry-declared static port surface of
-// the component — whose elements must be exactly
-// {portId,portType,direction[,displayLabel]} with direction in
-// {"input","output"}. Malformed input rejects the whole catalog and leaves
-// the session untouched. The parse loop itself lives in
-// ParseActionCatalogEntries (shared with the SeedFromContext context-key
-// seeding channel); this entry keeps the C ABI's whole-batch reject
-// semantics.
-DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
-    GraphAuthoringSessionState* p,
-    IDasReadOnlyString*         p_action_catalog_json)
-{
-    if (p == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    if (p_action_catalog_json == nullptr)
-    {
-        p->action_entries.clear();
-        return DAS_S_OK;
-    }
-    const char* utf8 = nullptr;
-    if (DAS::IsFailed(p_action_catalog_json->GetUtf8(&utf8)) || utf8 == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    try
-    {
-        auto       root = yyjson::read(std::string(utf8));
-        const auto entries = ParseActionCatalogEntries(root);
-        if (!entries.has_value())
-        {
-            return DAS_E_INVALID_ARGUMENT;
-        }
-        p->action_entries = std::move(*entries);
-        return DAS_S_OK;
-    }
-    catch (...)
-    {
-        return DAS_E_FAIL;
-    }
-}
-
+// 图文档边界口推导 C ABI：声明口面通道改读会话状态（action_entries——
+// 与编译路径的端口面注入同款形态：catalog 声明的静态口面按
+// actionId==component_guid 解析，direction 由 ports 声明携带）。会话与
+// 推导同步完成，p 在推导期内有效。
 DAS_C_API DasResult GraphDeriveBoundaryPorts(
-    IDasReadOnlyString*  p_document_json,
-    IDasReadOnlyString*  p_catalog_json,
-    IDasReadOnlyString** pp_out_boundary_json)
+    GraphAuthoringSessionState* p,
+    IDasReadOnlyString*         p_document_json,
+    IDasReadOnlyString**        pp_out_boundary_json)
 {
     if (pp_out_boundary_json == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
     *pp_out_boundary_json = nullptr;
-
-    std::string document_text;
-    if (!ReadUtf8(p_document_json, document_text) || document_text.empty())
+    if (p == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
-    std::string catalog_text;
-    if (!ReadUtf8(p_catalog_json, catalog_text))
+
+    std::string document_text;
+    if (!ReadUtf8(p_document_json, document_text) || document_text.empty())
     {
         return DAS_E_INVALID_POINTER;
     }
@@ -2732,29 +2565,38 @@ DAS_C_API DasResult GraphDeriveBoundaryPorts(
                 document_root);
 
         Das::Core::GraphRuntime::GraphCompiler::ComponentPortSurfaceProvider
-            provider;
-        if (!catalog_text.empty())
+            provider = [p](const std::string& component_guid)
+            -> std::optional<
+                Das::Core::GraphRuntime::GraphCompiler::ComponentPortSurface>
         {
-            auto catalog_root = yyjson::read(catalog_text);
-            auto surfaces = ParseCatalogPortSurfaces(catalog_root);
-            if (!surfaces.has_value())
+            for (const auto& entry : p->action_entries)
             {
-                return DAS_E_INVALID_ARGUMENT;
-            }
-            auto surface_map = std::move(*surfaces);
-            provider = [surface_map = std::move(surface_map)](
-                           const std::string& component_guid)
-                -> std::optional<Das::Core::GraphRuntime::GraphCompiler::
-                                     ComponentPortSurface>
-            {
-                auto found = surface_map.find(component_guid);
-                if (found == surface_map.end())
+                if (entry.action_id != component_guid)
                 {
-                    return std::nullopt;
+                    continue;
                 }
-                return found->second;
-            };
-        }
+                Das::Core::GraphRuntime::GraphCompiler::ComponentPortSurface
+                    surface;
+                for (const auto& port : entry.ports)
+                {
+                    Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto
+                        definition;
+                    definition.port_id = port.port_id;
+                    definition.display_label = port.display_label;
+                    definition.port_type = port.port_type;
+                    if (port.direction == std::string_view("input"))
+                    {
+                        surface.inputs.push_back(std::move(definition));
+                    }
+                    else
+                    {
+                        surface.outputs.push_back(std::move(definition));
+                    }
+                }
+                return surface;
+            }
+            return std::nullopt;
+        };
 
         auto boundary =
             Das::Core::GraphRuntime::GraphCompiler::DeriveBoundaryPorts(

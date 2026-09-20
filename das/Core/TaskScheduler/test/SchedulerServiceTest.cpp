@@ -5009,9 +5009,10 @@ TEST_F(SchedulerRuntimeBackedTest, GraphTaskShellExecutionInputPassesThrough)
 
 // graph authoring 的 actionCatalog 采用 {actionId,label} 对象条目：Scheduler
 // 从组件 manifest definition 的 label map 按默认 locale 解析出 label 注入
-// context，经 DasGraphTask 透传到 Core SetActionCatalog，GetDocument 投影
-// 保持对象形态。断言锚定真实插件的三个组件：FlowControl 的 merge/launch
-// 与 DasGraphTask 的 execute（默认 locale=en 取 map 的 en 值）。
+// context，经 DasGraphTask 纯管道透传由 Core 在 context 解析点播种，
+// GetDocument 投影保持对象形态。断言锚定真实插件的三个组件：FlowControl
+// 的 merge/launch 与 DasGraphTask 的 execute（默认 locale=en 取 map 的 en
+// 值）。
 TEST_F(
     SchedulerRuntimeBackedTest,
     GraphAuthoringActionCatalogCarriesManifestKindLabels)
@@ -5104,7 +5105,7 @@ TEST_F(
 
 // manifest required 声明全链透传：真实 DasFlowControl manifest 的 launch
 // exePath required:true 经 AppendConfigFromDefinition 发射 → catalog 通道
-// （SetActionCatalog 键集）→ 会话投影落到 addGraphNode 响应的节点
+// （context actionCatalog 键集）→ 会话投影落到 addGraphNode 响应的节点
 // fields[].required；同组件未声明的字段（args）保持 false。断言锚定真实
 // 插件部署（非手工 catalog 注入）——任何一层漏透传该断言即失败。
 TEST_F(
