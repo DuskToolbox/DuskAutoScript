@@ -1,5 +1,6 @@
 #include <das/Core/GraphRuntime/AuthoringDocContract.h>
 #include <das/Core/GraphRuntime/FormSequenceProjector.h>
+#include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
@@ -3339,5 +3340,62 @@ namespace
         // sourceFingerprint (D-84-04).
         EXPECT_EQ(json.find("\"settings\""), std::string::npos);
         EXPECT_EQ(json.find("\"sourceFingerprint\""), std::string::npos);
+    }
+
+    // 守卫保义回归钉：图文档尝试线性变更被拒后，viewData.positions、
+    // 节点用户 label、既有动态口分区在存储中逐字节不变。线性反向投影
+    // （GraphToSequence→FormSequenceProjector::Project 重建）只搬运
+    // item_id/target/settings——节点 label、动态口分区与 viewData 会被
+    // 重建路径丢弃；守卫使该路径对图文档不可达，本用例钉死拒绝后的
+    // 存储保义。注：口分区整体退役后，本用例的分区断言部分随分区
+    // DTO 的退役同步修剪。
+    TEST(
+        AuthoringDocContractTest,
+        LinearGuard_RejectionPreservesGraphOnlyPartitions)
+    {
+        GraphDocumentDto doc;
+        doc.version = 12;
+        doc.nodes.push_back(
+            MakeNode("n_begin", GRAPH_BEGIN_COMPONENT_GUID, 0.0));
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        // 图专属分区三件：viewData 坐标 + 用户 label + 动态口分区。
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n1", 10.0, 20.0))
+                .Ok());
+        AuthoringChange rename;
+        rename.kind = "renameGraphNode";
+        rename.item_or_node_id = "n1";
+        rename.rename_label = "my node";
+        ASSERT_TRUE(ApplyAuthoringChange(doc, rename).Ok()) << rename.kind;
+        ASSERT_TRUE(ApplyAuthoringChange(
+                        doc,
+                        MakeAddNodePort("n_begin", "左值", "input", "int"))
+                        .Ok());
+        const std::string source_before = SourceJsonOf(doc);
+        const int32_t     version_before = doc.version;
+
+        // 图文档尝试线性变更（convertView 退役方向 + item 家族）——拒绝。
+        AuthoringChange cv;
+        cv.kind = "convertView";
+        cv.target_view_kind = "formSequence";
+        EXPECT_FALSE(ApplyAuthoringChange(doc, cv).Ok());
+
+        AuthoringChange add;
+        add.kind = "addFormSequenceItem";
+        add.action_id = "{g1}";
+        EXPECT_FALSE(ApplyAuthoringChange(doc, add, {"{g1}"}).Ok());
+
+        // 保义：三件分区逐字节不变（既有 validate-all-then-mutate 断言
+        // 模式——存储 JSON 与拒绝前逐字节相等）。
+        ASSERT_TRUE(ViewPositionOf(doc, "n1", "x").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n1", "x"), 10.0);
+        ASSERT_TRUE(doc.nodes[1].label.has_value());
+        EXPECT_EQ(*doc.nodes[1].label, "my node");
+        ASSERT_EQ(doc.nodes[0].ports.size(), 1u);
+        EXPECT_EQ(doc.nodes[0].ports[0].name, "左值");
+        EXPECT_EQ(doc.nodes[0].ports[0].direction, "input");
+        EXPECT_EQ(doc.version, version_before);
+        EXPECT_EQ(SourceJsonOf(doc), source_before);
     }
 } // namespace
