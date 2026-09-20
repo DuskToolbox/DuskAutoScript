@@ -43,6 +43,12 @@ namespace Das::Core::TaskScheduler
             const DasGuid& task_guid) const;
         const DasGuid* FindExecutionComponent(const DasGuid& task_guid) const;
 
+        /// Reverse lookup by execution component guid: returns the record
+        /// whose execution_component_guid matches, or nullptr. Linear scan
+        /// over records_ — graph node counts are small, no index structure.
+        const TaskCapabilityRecord* FindByExecutionComponentGuid(
+            const DasGuid& component_guid) const;
+
     private:
         std::unordered_map<DasGuid, TaskCapabilityRecord> records_;
     };

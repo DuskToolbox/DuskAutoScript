@@ -146,11 +146,22 @@ struct FactoryTaskSharedState
     int64_t last_context_task_id = -1;
     bool    last_context_had_task_id = false;
     int64_t last_context_revision = -1;
+    // 组件语境标记（context 键 componentContext）的观测通道：had=false 表示
+    // 工厂收到的 context 无该键（缺省路径），true 表示有键且值为 component
+    // _context。
+    bool last_context_had_component_context = false;
+    bool last_context_component_context = false;
 
     // Fixed-size replacement for std::string.
     static constexpr size_t MAX_STRING_LEN = 256;
     char                    last_props_key1_value[MAX_STRING_LEN]{};
     char                    last_compile_purpose[MAX_STRING_LEN]{};
+    // 预备 pass 观测通道：置位时 Fake 会话的文档投影携带根 ports section
+    // （单口 {id=emit_ports_section_id,type=string,direction=input,label 固
+    // 定}），供 entryFaces 现算用例供源；口 id 可变以断言 revision 失效后的
+    // 新鲜度。
+    bool emit_ports_section = false;
+    char emit_ports_section_id[MAX_STRING_LEN]{};
     // Last "executionInput" port value received by a FakeTaskComponent Do —
     // observes the repository-invoke child execution path end to end.
     char last_execution_input[MAX_STRING_LEN]{};
@@ -195,6 +206,13 @@ struct FactoryTaskSharedState
         auto len = std::min(v.size(), MAX_STRING_LEN - 1);
         std::memcpy(last_execution_input, v.data(), len);
         last_execution_input[len] = '\0';
+    }
+
+    void set_emit_ports_section_id(std::string_view v)
+    {
+        auto len = std::min(v.size(), MAX_STRING_LEN - 1);
+        std::memcpy(emit_ports_section_id, v.data(), len);
+        emit_ports_section_id[len] = '\0';
     }
 
     std::string_view get_last_props_key1_value() const

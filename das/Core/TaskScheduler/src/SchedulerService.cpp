@@ -927,6 +927,337 @@ namespace Das::Core::TaskScheduler
         return context;
     }
 
+    // ------------------------------------------------------------------
+    // 组件文档口面预备 pass 的静态辅助（member 入口在
+    // AppendComponentFacesContextKeys）：图文档节点扫描、绑条目判据、
+    // faces 口条目重建与节点作用域 context 装配。
+    // ------------------------------------------------------------------
+
+    // 图文档节点列表判定：properties 为 GraphDocumentDto 序列化形状
+    // （顶层 nodes 数组）才算图文档；非图文档（formSequence 契约文档等）
+    // 返回 false——预备 pass 对其零动作，context 保持现状。
+    bool PropertiesHoldGraphNodes(const yyjson::value& properties)
+    {
+        auto props_obj = properties.as_object();
+        return props_obj.has_value()
+               && props_obj->contains(std::string_view("nodes"));
+    }
+
+    // 节点的 componentRef 组件 guid（targetKind 非 componentRef 或形状
+    // 不全时返回空串）。
+    std::string ComponentGuidOfNode(const yyjson::value& node_value)
+    {
+        auto node_obj = node_value.as_object();
+        if (!node_obj || !node_obj->contains(std::string_view("target")))
+        {
+            return {};
+        }
+        auto target = (*node_obj)[std::string_view("target")].as_object();
+        if (!target)
+        {
+            return {};
+        }
+        auto target_kind =
+            (*target)[std::string_view("targetKind")].as_string();
+        if (!target_kind || *target_kind != std::string_view("componentRef"))
+        {
+            return {};
+        }
+        if (!target->contains(std::string_view("componentRef")))
+        {
+            return {};
+        }
+        const auto& ref = (*target)[std::string_view("componentRef")];
+        if (ref.is_null())
+        {
+            return {};
+        }
+        auto ref_obj = ref.as_object();
+        if (!ref_obj)
+        {
+            return {};
+        }
+        auto guid = (*ref_obj)[std::string_view("componentGuid")].as_string();
+        if (!guid)
+        {
+            return {};
+        }
+        return std::string(*guid);
+    }
+
+    // 组件 guid → taskRepositoryRef 配置字段名列表（数据源=context 既有
+    // actionCatalog 快照的 config 声明——与编译侧绑条目判据同一目录语义，
+    // 业务中立不特判组件）。
+    std::unordered_map<std::string, std::vector<std::string>>
+    CollectRepositoryRefFields(const yyjson::value& context)
+    {
+        std::unordered_map<std::string, std::vector<std::string>> fields;
+        auto context_obj = context.as_object();
+        if (!context_obj
+            || !context_obj->contains(std::string_view("actionCatalog")))
+        {
+            return fields;
+        }
+        auto catalog =
+            (*context_obj)[std::string_view("actionCatalog")].as_array();
+        if (!catalog)
+        {
+            return fields;
+        }
+        for (const auto& entry_value : *catalog)
+        {
+            auto entry_obj = entry_value.as_object();
+            if (!entry_obj
+                || !entry_obj->contains(std::string_view("actionId")))
+            {
+                continue;
+            }
+            auto action_id =
+                (*entry_obj)[std::string_view("actionId")].as_string();
+            if (!action_id || action_id->empty())
+            {
+                continue;
+            }
+            if (!entry_obj->contains(std::string_view("config")))
+            {
+                continue;
+            }
+            auto config = (*entry_obj)[std::string_view("config")].as_array();
+            if (!config)
+            {
+                continue;
+            }
+            for (const auto& field_value : *config)
+            {
+                auto field_obj = field_value.as_object();
+                if (!field_obj
+                    || !field_obj->contains(std::string_view("type")))
+                {
+                    continue;
+                }
+                auto type = (*field_obj)[std::string_view("type")].as_string();
+                if (!type || *type != std::string_view("taskRepositoryRef"))
+                {
+                    continue;
+                }
+                if (!field_obj->contains(std::string_view("name")))
+                {
+                    continue;
+                }
+                auto name = (*field_obj)[std::string_view("name")].as_string();
+                if (!name || name->empty())
+                {
+                    continue;
+                }
+                fields[std::string(*action_id)].emplace_back(*name);
+            }
+        }
+        return fields;
+    }
+
+    // 绑条目判定（判据=编译侧 BoundRepositoryEntryIdOf 同款语义：声明的
+    // taskRepositoryRef 字段持正整数值）——返回该正整数，nullopt=未绑。
+    std::optional<int64_t> BoundEntryIdOfNode(
+        const yyjson::value&            node_value,
+        const std::vector<std::string>& repository_field_names)
+    {
+        auto node_obj = node_value.as_object();
+        if (!node_obj || !node_obj->contains(std::string_view("settings")))
+        {
+            return std::nullopt;
+        }
+        auto settings_obj =
+            (*node_obj)[std::string_view("settings")].as_object();
+        if (!settings_obj)
+        {
+            return std::nullopt;
+        }
+        for (const auto& field_name : repository_field_names)
+        {
+            if (!settings_obj->contains(std::string_view(field_name)))
+            {
+                continue;
+            }
+            const auto& value = (*settings_obj)[std::string_view(field_name)];
+            if (value.is_int())
+            {
+                const auto entry_id = value.as_int();
+                if (entry_id.has_value() && *entry_id > 0)
+                {
+                    return *entry_id;
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
+    // faces 口条目重建：从 Provider 文档根 ports section 提取
+    // {id,type,direction[,label]}（仅取四键、逐元素校验、畸形元素跳过——
+    // 输出恒符合 Core context 键解析的锁形规则）。缺 section 或全部
+    // 畸形/为空 → nullopt（跳过该面，不产诊断）。
+    std::optional<yyjson::value> ExtractFacePortsValue(
+        const yyjson::value& document)
+    {
+        auto doc_obj = document.as_object();
+        if (!doc_obj || !doc_obj->contains(std::string_view("ports")))
+        {
+            return std::nullopt;
+        }
+        auto ports_arr = (*doc_obj)[std::string_view("ports")].as_array();
+        if (!ports_arr)
+        {
+            return std::nullopt;
+        }
+        yyjson::value ports(Das::Utils::MakeYyjsonArray());
+        auto          ports_out = ports.as_array();
+        for (const auto& port_value : *ports_arr)
+        {
+            auto port_obj = port_value.as_object();
+            if (!port_obj || !port_obj->contains(std::string_view("id"))
+                || !port_obj->contains(std::string_view("type"))
+                || !port_obj->contains(std::string_view("direction")))
+            {
+                continue;
+            }
+            auto id = (*port_obj)[std::string_view("id")].as_string();
+            auto type = (*port_obj)[std::string_view("type")].as_string();
+            auto direction =
+                (*port_obj)[std::string_view("direction")].as_string();
+            if (!id || id->empty() || !type || type->empty() || !direction
+                || (*direction != std::string_view("input")
+                    && *direction != std::string_view("output")))
+            {
+                continue;
+            }
+            yyjson::value port(Das::Utils::MakeYyjsonObject());
+            auto          port_out = port.as_object();
+            (*port_out)[std::string_view("id")] =
+                std::make_pair(std::string_view(*id), yyjson::copy_string);
+            (*port_out)[std::string_view("type")] =
+                std::make_pair(std::string_view(*type), yyjson::copy_string);
+            (*port_out)[std::string_view("direction")] = std::make_pair(
+                std::string_view(*direction),
+                yyjson::copy_string);
+            if (port_obj->contains(std::string_view("label")))
+            {
+                if (auto label =
+                        (*port_obj)[std::string_view("label")].as_string();
+                    label.has_value())
+                {
+                    (*port_out)[std::string_view("label")] = std::make_pair(
+                        std::string_view(*label),
+                        yyjson::copy_string);
+                }
+            }
+            ports_out->emplace_back(std::move(port));
+        }
+        if (ports_out->empty())
+        {
+            return std::nullopt;
+        }
+        return ports;
+    }
+
+    // faces 注册类型重建：文档根 types section → {name[,compatibleWith]}
+    // （name 必填非空；compatibleWith 仅取字符串元素重建）。缺 section 或
+    // 全畸形 → nullopt。
+    std::optional<yyjson::value> ExtractFaceTypesValue(
+        const yyjson::value& document)
+    {
+        auto doc_obj = document.as_object();
+        if (!doc_obj || !doc_obj->contains(std::string_view("types")))
+        {
+            return std::nullopt;
+        }
+        auto types_arr = (*doc_obj)[std::string_view("types")].as_array();
+        if (!types_arr)
+        {
+            return std::nullopt;
+        }
+        yyjson::value types(Das::Utils::MakeYyjsonArray());
+        auto          types_out = types.as_array();
+        for (const auto& type_value : *types_arr)
+        {
+            auto type_obj = type_value.as_object();
+            if (!type_obj || !type_obj->contains(std::string_view("name")))
+            {
+                continue;
+            }
+            auto name = (*type_obj)[std::string_view("name")].as_string();
+            if (!name || name->empty())
+            {
+                continue;
+            }
+            yyjson::value type(Das::Utils::MakeYyjsonObject());
+            auto          type_out = type.as_object();
+            (*type_out)[std::string_view("name")] =
+                std::make_pair(std::string_view(*name), yyjson::copy_string);
+            if (type_obj->contains(std::string_view("compatibleWith")))
+            {
+                auto compatible =
+                    (*type_obj)[std::string_view("compatibleWith")].as_array();
+                if (compatible)
+                {
+                    yyjson::value compatible_value(
+                        Das::Utils::MakeYyjsonArray());
+                    auto compatible_out = compatible_value.as_array();
+                    for (const auto& compatible_name : *compatible)
+                    {
+                        auto compatible_text = compatible_name.as_string();
+                        if (!compatible_text)
+                        {
+                            continue;
+                        }
+                        compatible_out->emplace_back(
+                            yyjson::value(std::string(*compatible_text)));
+                    }
+                    (*type_out)[std::string_view("compatibleWith")] =
+                        std::move(compatible_value);
+                }
+            }
+            types_out->emplace_back(std::move(type));
+        }
+        if (types_out->empty())
+        {
+            return std::nullopt;
+        }
+        return types;
+    }
+
+    // 节点作用域组件会话 context：节点 settings 平铺 + 宿主 revision +
+    // componentContext 标记（true 时投影器按组件语境门控）。平铺形状与
+    // 边界会话的 context 契约一致（顶层 revision 剥离、其余键进
+    // settings），也兼容以 properties/平铺双形状解析的插件工厂。
+    yyjson::value MakeNodeComponentContextJson(
+        const yyjson::value& node_value,
+        int64_t              host_revision)
+    {
+        yyjson::value context(Das::Utils::MakeYyjsonObject());
+        auto          obj = context.as_object();
+        auto          node_obj = node_value.as_object();
+        if (node_obj && node_obj->contains(std::string_view("settings")))
+        {
+            const auto& settings_ref =
+                (*node_obj)[std::string_view("settings")];
+            if (auto settings_obj = settings_ref.as_object())
+            {
+                for (const auto& [key, value] : *settings_obj)
+                {
+                    (*obj)[std::string_view(key)] = CloneJsonValue(value);
+                }
+            }
+        }
+        (*obj)[std::string_view("revision")] = host_revision;
+        (*obj)[std::string_view("componentContext")] = true;
+        return context;
+    }
+
+    // 空 get 请求体（Provider GetDocument 的 {} 形态）。
+    yyjson::value MakeEmptyAuthoringGetRequest()
+    {
+        return Das::Utils::MakeYyjsonObject();
+    }
+
     static std::optional<int64_t> GetBaseRevision(const yyjson::value& change)
     {
         auto obj = change.as_object();
@@ -3155,6 +3486,270 @@ namespace Das::Core::TaskScheduler
             enforce_fresh);
     }
 
+    int64_t SchedulerService::AppendComponentFacesContextKeys(
+        yyjson::value&       context,
+        const yyjson::value& properties,
+        int64_t              host_id)
+    {
+        int64_t host_revision = -1;
+        if (auto context_obj = context.as_object();
+            context_obj && context_obj->contains(std::string_view("revision")))
+        {
+            if (auto revision =
+                    (*context_obj)[std::string_view("revision")].as_sint())
+            {
+                host_revision = *revision;
+            }
+        }
+
+        // 非图文档（无 nodes 数组）：零 faces 键，context 与现状逐字节一致。
+        auto props_obj = properties.as_object();
+        if (!PropertiesHoldGraphNodes(properties))
+        {
+            return host_revision;
+        }
+        const auto& nodes_ref = (*props_obj)[std::string_view("nodes")];
+        auto        nodes_arr = nodes_ref.as_array();
+        if (!nodes_arr)
+        {
+            return host_revision;
+        }
+
+        // 宿主会话缓存的有效 revision 戳（见头文件注释）：宿主 revision 与
+        // 全部绑条目 revision 的混合，任一变化即触发宿主会话重建。
+        uint64_t stamp = static_cast<uint64_t>(host_revision);
+
+        const auto repository_ref_fields = CollectRepositoryRefFields(context);
+
+        auto& settings = plugin_manager_.GetSettingsManager();
+
+        yyjson::value               node_faces(Das::Utils::MakeYyjsonArray());
+        yyjson::value               entry_faces(Das::Utils::MakeYyjsonArray());
+        std::unordered_set<int64_t> seen_entry_ids;
+        std::unordered_set<std::string> seen_node_ids;
+
+        for (const auto& node_value : *nodes_arr)
+        {
+            auto node_obj = node_value.as_object();
+            if (!node_obj || !node_obj->contains(std::string_view("nodeId")))
+            {
+                continue;
+            }
+            auto node_id = (*node_obj)[std::string_view("nodeId")].as_string();
+            if (!node_id || node_id->empty()
+                || !seen_node_ids.insert(std::string(*node_id)).second)
+            {
+                continue;
+            }
+
+            const std::string component_guid = ComponentGuidOfNode(node_value);
+            if (component_guid.empty())
+            {
+                continue;
+            }
+
+            // ── 绑条目分支：entryFaces——条目文档口面经既有缓存会话现算
+            //    （缺条目/无 capability/无 ports section 一律跳过不产诊断）。
+            const auto field_it = repository_ref_fields.find(component_guid);
+            if (field_it != repository_ref_fields.end())
+            {
+                auto bound_entry =
+                    BoundEntryIdOfNode(node_value, field_it->second);
+                if (bound_entry.has_value())
+                {
+                    const int64_t entry_id = *bound_entry;
+                    if (entry_id == host_id
+                        || !seen_entry_ids.insert(entry_id).second)
+                    {
+                        // 自引用防护（宿主条目会话锁自死锁）+ wire 契约
+                        // （entryFaces 每条目一条）。
+                        continue;
+                    }
+                    auto entry_json =
+                        settings.GetTaskRepositoryEntryJson("0", entry_id);
+                    if (entry_json.is_null() || !entry_json.is_object())
+                    {
+                        continue;
+                    }
+                    Repository::Dto::RepositoryEntryDto entry;
+                    try
+                    {
+                        entry =
+                            yyjson::cast<Repository::Dto::RepositoryEntryDto>(
+                                entry_json);
+                    }
+                    catch (const std::exception&)
+                    {
+                        continue;
+                    }
+                    // 条目 revision 并入宿主会话失效戳：该条目的持久层
+                    // revision 推进（对条目自身的 apply）必须连带重建宿主
+                    // 图会话，否则缓存会话带着旧 entryFaces 续命。
+                    {
+                        const uint64_t entry_revision = static_cast<uint64_t>(
+                            GetAuthoringRevision(entry_json));
+                        const uint64_t entry_key =
+                            static_cast<uint64_t>(entry_id);
+                        stamp ^= entry_key * 0x9E3779B97F4A7C15ULL;
+                        stamp *= 0xBF58476D1CE4E5B9ULL;
+                        stamp ^= entry_revision * 0x94D049BB133111EBULL;
+                        stamp *= 0xBF58476D1CE4E5B9ULL;
+                    }
+                    DasGuid entry_task_guid{};
+                    try
+                    {
+                        entry_task_guid =
+                            Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                                entry.task_type_guid);
+                    }
+                    catch (const std::exception&)
+                    {
+                        continue;
+                    }
+                    TaskAuthoringCapability entry_capability;
+                    {
+                        const std::scoped_lock lock(mutex_);
+                        if (ResolveAuthoringCapabilityLocked(
+                                entry_task_guid,
+                                entry_capability))
+                        {
+                            continue;
+                        }
+                    }
+                    auto entry_session = GetOrCreateAuthoringSession(
+                        repository_authoring_sessions_,
+                        entry_capability,
+                        entry_id,
+                        MakeRepositoryAuthoringContextJson(
+                            plugin_manager_,
+                            entry_id,
+                            entry.accepted_properties,
+                            entry_json),
+                        GetAuthoringRevision(entry_json),
+                        /*enforce_fresh=*/true);
+                    if (!entry_session || !entry_session->session)
+                    {
+                        continue;
+                    }
+                    AuthoringGetPipelineResult pipeline;
+                    {
+                        const std::shared_lock<std::shared_mutex> read_lock(
+                            entry_session->lock);
+                        pipeline = RunAuthoringGetPipeline(
+                            entry_session,
+                            MakeEmptyAuthoringGetRequest());
+                    }
+                    if (!pipeline.ok || !pipeline.parsed.has_document)
+                    {
+                        continue;
+                    }
+                    auto ports =
+                        ExtractFacePortsValue(pipeline.parsed.document);
+                    if (!ports.has_value())
+                    {
+                        continue;
+                    }
+                    yyjson::value face(Das::Utils::MakeYyjsonObject());
+                    auto          face_obj = face.as_object();
+                    (*face_obj)[std::string_view("entryId")] = entry_id;
+                    (*face_obj)[std::string_view("ports")] = std::move(*ports);
+                    if (auto types =
+                            ExtractFaceTypesValue(pipeline.parsed.document);
+                        types.has_value())
+                    {
+                        (*face_obj)[std::string_view("types")] =
+                            std::move(*types);
+                    }
+                    entry_faces.as_array()->emplace_back(std::move(face));
+                    continue;
+                }
+            }
+
+            // ── 未绑 componentRef 分支：nodeFaces——经注册面反查命中既有
+            //    QI 链（begin/end 无特判，与其它组件同一条链），无
+            //    authoring capability（纯 manifest 组件）跳过。
+            DasGuid component_guid_value{};
+            try
+            {
+                component_guid_value =
+                    Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                        component_guid);
+            }
+            catch (const std::exception&)
+            {
+                continue;
+            }
+            TaskAuthoringCapability node_capability;
+            bool                    has_node_capability = false;
+            {
+                const std::scoped_lock lock(mutex_);
+                const auto*            record =
+                    capability_registry_.FindByExecutionComponentGuid(
+                        component_guid_value);
+                if (record != nullptr && record->authoring.has_value())
+                {
+                    node_capability = *record->authoring;
+                    has_node_capability = true;
+                }
+            }
+            if (!has_node_capability)
+            {
+                continue;
+            }
+            // 节点会话瞬态现建（不经缓存——零新缓存层），context=节点
+            // settings + 宿主 revision + 组件语境标记。
+            auto node_session = BuildUncachedAuthoringSession(
+                plugin_manager_,
+                node_capability,
+                MakeNodeComponentContextJson(node_value, host_revision),
+                host_revision);
+            if (!node_session || !node_session->session)
+            {
+                continue;
+            }
+            AuthoringGetPipelineResult node_pipeline;
+            {
+                const std::shared_lock<std::shared_mutex> read_lock(
+                    node_session->lock);
+                node_pipeline = RunAuthoringGetPipeline(
+                    node_session,
+                    MakeEmptyAuthoringGetRequest());
+            }
+            if (!node_pipeline.ok || !node_pipeline.parsed.has_document)
+            {
+                continue;
+            }
+            auto node_ports =
+                ExtractFacePortsValue(node_pipeline.parsed.document);
+            if (!node_ports.has_value())
+            {
+                continue;
+            }
+            yyjson::value face(Das::Utils::MakeYyjsonObject());
+            auto          face_obj = face.as_object();
+            (*face_obj)[std::string_view("nodeId")] =
+                std::make_pair(std::string_view(*node_id), yyjson::copy_string);
+            (*face_obj)[std::string_view("ports")] = std::move(*node_ports);
+            node_faces.as_array()->emplace_back(std::move(face));
+        }
+
+        auto context_obj = context.as_object();
+        if (context_obj)
+        {
+            if (!node_faces.as_array()->empty())
+            {
+                (*context_obj)[std::string_view("nodeFaces")] =
+                    std::move(node_faces);
+            }
+            if (!entry_faces.as_array()->empty())
+            {
+                (*context_obj)[std::string_view("entryFaces")] =
+                    std::move(entry_faces);
+            }
+        }
+        return static_cast<int64_t>(stamp);
+    }
+
     std::shared_ptr<AuthoringSessionEntry>
     SchedulerService::FindCachedAuthoringSession(
         std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
@@ -3292,16 +3887,24 @@ namespace Das::Core::TaskScheduler
         // Get pipeline owns ⑤ session -> ⑥⑦(GetDocument + parse); this caller
         // owns ①② locks/IO, and ⑩ entryId/taskTypeGuid/revision response
         // assembly.
+        // 预备 pass 在锁外（上方 scoped_lock 段已闭合）现算组件文档口面，
+        // 随 context 注入（actionCatalog 旁）。返回的 revision 戳（宿主+
+        // 绑条目混合）作会话缓存失效键——faces 只在会话创建时播种。
+        auto context = MakeRepositoryAuthoringContextJson(
+            plugin_manager_,
+            entry_id,
+            entry.accepted_properties,
+            entry_json);
+        const int64_t faces_revision = AppendComponentFacesContextKeys(
+            context,
+            entry.accepted_properties,
+            entry_id);
         auto session_entry = GetOrCreateAuthoringSession(
             repository_authoring_sessions_,
             capability,
             entry_id,
-            MakeRepositoryAuthoringContextJson(
-                plugin_manager_,
-                entry_id,
-                entry.accepted_properties,
-                entry_json),
-            GetAuthoringRevision(entry_json),
+            std::move(context),
+            faces_revision,
             /*enforce_fresh=*/true);
         if (!session_entry)
         {
@@ -3472,19 +4075,25 @@ namespace Das::Core::TaskScheduler
         }
 
         // Resolve the session through the cache (hit: reuse; miss: create).
-        auto session_entry = cached_entry
-                                 ? cached_entry
-                                 : GetOrCreateAuthoringSession(
-                                       repository_authoring_sessions_,
-                                       capability,
-                                       entry_id,
-                                       MakeRepositoryAuthoringContextJson(
-                                           plugin_manager_,
-                                           entry_id,
-                                           entry.accepted_properties,
-                                           entry_json),
-                                       GetAuthoringRevision(entry_json),
-                                       /*enforce_fresh=*/false);
+        // 预备 pass 在锁外（上方 scoped_lock 段已闭合）现算组件文档口面。
+        // 返回的 revision 戳（宿主+绑条目混合）作会话缓存失效键。
+        auto context = MakeRepositoryAuthoringContextJson(
+            plugin_manager_,
+            entry_id,
+            entry.accepted_properties,
+            entry_json);
+        const int64_t faces_revision = AppendComponentFacesContextKeys(
+            context,
+            entry.accepted_properties,
+            entry_id);
+        auto session_entry = cached_entry ? cached_entry
+                                          : GetOrCreateAuthoringSession(
+                                                repository_authoring_sessions_,
+                                                capability,
+                                                entry_id,
+                                                std::move(context),
+                                                faces_revision,
+                                                /*enforce_fresh=*/false);
         if (!session_entry || !session_entry->session)
         {
             return MakeRepositoryResponseError(
@@ -3719,15 +4328,23 @@ namespace Das::Core::TaskScheduler
         // document. D-84-09 forbids client properties/document in Compile.
         // The shared Compile pipeline owns ⑤ session -> ⑥⑦(Compile + parse);
         // this caller owns ①② locks/IO, and ⑩ entryId response assembly.
+        // 预备 pass 在锁外（上方 scoped_lock 段已闭合）现算组件文档口面。
+        // 返回的 revision 戳（宿主+绑条目混合）作会话缓存失效键。
+        auto context = MakeRepositoryAuthoringContextJson(
+            plugin_manager_,
+            entry_id,
+            entry.accepted_properties,
+            entry_json);
+        const int64_t faces_revision = AppendComponentFacesContextKeys(
+            context,
+            entry.accepted_properties,
+            entry_id);
         auto compile_entry = GetOrCreateAuthoringSession(
             repository_authoring_sessions_,
             capability,
             entry_id,
-            MakeRepositoryAuthoringContextJson(
-                plugin_manager_,
-                entry_id,
-                entry.accepted_properties,
-                entry_json));
+            std::move(context),
+            faces_revision);
         if (!compile_entry)
         {
             return MakeRepositoryResponseError(
@@ -4652,16 +5269,22 @@ namespace Das::Core::TaskScheduler
         // {kind, payload} envelope before invoking the Provider. The shared
         // Get pipeline owns ⑤ session -> ⑥⑦(GetDocument + parse); this caller
         // owns ①② lock/IO, and ⑩ taskId response assembly.
+        // 预备 pass 在锁外（上方 scoped_lock 段已闭合）现算组件文档口面，
+        // 随 context 注入（actionCatalog 旁）。返回的 revision 戳（宿主+
+        // 绑条目混合）作会话缓存失效键——faces 只在会话创建时播种。
+        auto context = MakeAuthoringContextJson(
+            plugin_manager_,
+            task_id,
+            properties,
+            task_json);
+        const int64_t faces_revision =
+            AppendComponentFacesContextKeys(context, properties, task_id);
         auto entry = GetOrCreateAuthoringSession(
             task_authoring_sessions_,
             capability,
             task_id,
-            MakeAuthoringContextJson(
-                plugin_manager_,
-                task_id,
-                properties,
-                task_json),
-            GetAuthoringRevision(task_json),
+            std::move(context),
+            faces_revision,
             /*enforce_fresh=*/true);
         if (!entry)
         {
@@ -4965,17 +5588,22 @@ namespace Das::Core::TaskScheduler
         // Resolve the session through the cache (hit: reuse; miss: create — the
         // early check above already passed). Apply passes enforce_fresh=false
         // so consecutive Applies share one session (D-87-06 cache reuse).
+        // 预备 pass 在锁外（上方 scoped_lock 段已闭合）现算组件文档口面。
+        // 返回的 revision 戳（宿主+绑条目混合）作会话缓存失效键。
+        auto context = MakeAuthoringContextJson(
+            plugin_manager_,
+            task_id,
+            properties,
+            task_json);
+        const int64_t faces_revision =
+            AppendComponentFacesContextKeys(context, properties, task_id);
         auto entry = cached_entry ? cached_entry
                                   : GetOrCreateAuthoringSession(
                                         task_authoring_sessions_,
                                         capability,
                                         task_id,
-                                        MakeAuthoringContextJson(
-                                            plugin_manager_,
-                                            task_id,
-                                            properties,
-                                            task_json),
-                                        GetAuthoringRevision(task_json),
+                                        std::move(context),
+                                        faces_revision,
                                         /*enforce_fresh=*/false);
         if (!entry || !entry->session)
         {
@@ -5219,15 +5847,21 @@ namespace Das::Core::TaskScheduler
         // {kind, payload} envelope before invoking the Provider. The shared
         // Compile pipeline owns ⑤ session -> ⑥⑦(Compile + parse); this caller
         // owns ①② lock/IO, and ⑩ taskId response assembly.
+        // 预备 pass 在锁外（上方 scoped_lock 段已闭合）现算组件文档口面。
+        // 返回的 revision 戳（宿主+绑条目混合）作会话缓存失效键。
+        auto context = MakeAuthoringContextJson(
+            plugin_manager_,
+            task_id,
+            properties,
+            task_json);
+        const int64_t faces_revision =
+            AppendComponentFacesContextKeys(context, properties, task_id);
         auto compile_entry = GetOrCreateAuthoringSession(
             task_authoring_sessions_,
             capability,
             task_id,
-            MakeAuthoringContextJson(
-                plugin_manager_,
-                task_id,
-                properties,
-                task_json));
+            std::move(context),
+            faces_revision);
         if (!compile_entry)
         {
             return MakeAuthoringResponseError(

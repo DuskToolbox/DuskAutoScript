@@ -4,6 +4,7 @@
 #include <Windows.h>
 #include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
+#include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
@@ -5233,6 +5234,438 @@ TEST_F(
     }
     EXPECT_TRUE(exe_path_found) << "exePath field missing from projection";
     EXPECT_TRUE(args_found) << "args field missing from projection";
+}
+
+namespace
+{
+    // 预备 pass 用例的共用：构造一个 graph 任务实例（raw GraphDocumentDto
+    // 形状 properties 直书）并写入 settings——不 Enable，只走 Get/Apply
+    // authoring 管线。properties_json 为图文档原文。
+    void SeedGraphTaskInstance(
+        Das::Core::SettingsManager::SettingsManager& settings,
+        yyjson::value                                properties)
+    {
+        yyjson::value task0(Das::Utils::MakeYyjsonObject());
+        (*task0.as_object())[std::string_view("id")] = 0;
+        (*task0.as_object())[std::string_view("taskGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        (*task0.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        (*task0.as_object())[std::string_view("nextExecutionTime")] =
+            static_cast<int64_t>(1);
+        (*task0.as_object())[std::string_view("properties")] =
+            std::move(properties);
+        WriteSchedulerState(settings, 1, {0}, {task0});
+    }
+
+    // 图文档 Get 投影中按 componentGuid 定位节点（返回克隆值）；找不到
+    // 返回 disengaged。
+    std::optional<yyjson::value> FindGraphNodeByComponent(
+        const yyjson::value& document,
+        std::string_view     component_guid)
+    {
+        auto doc_obj = document.as_object();
+        if (!doc_obj || !doc_obj->contains(std::string_view("graph")))
+        {
+            return std::nullopt;
+        }
+        auto graph = (*doc_obj)[std::string_view("graph")].as_object();
+        if (!graph || !graph->contains(std::string_view("nodes")))
+        {
+            return std::nullopt;
+        }
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        if (!nodes)
+        {
+            return std::nullopt;
+        }
+        for (const auto& node : *nodes)
+        {
+            auto node_obj = node.as_object();
+            if (!node_obj
+                || !node_obj->contains(std::string_view("componentGuid")))
+            {
+                continue;
+            }
+            auto guid =
+                (*node_obj)[std::string_view("componentGuid")].as_string();
+            if (guid && *guid == component_guid)
+            {
+                return Das::Utils::CloneYyjsonValue(node);
+            }
+        }
+        return std::nullopt;
+    }
+
+    // 节点投影 ports[] 中是否存在指定 portId。
+    bool NodeProjectsPort(const yyjson::value& node, std::string_view port_id)
+    {
+        auto node_obj = node.as_object();
+        if (!node_obj || !node_obj->contains(std::string_view("ports")))
+        {
+            return false;
+        }
+        auto ports = (*node_obj)[std::string_view("ports")].as_array();
+        if (!ports)
+        {
+            return false;
+        }
+        for (const auto& port : *ports)
+        {
+            auto port_obj = port.as_object();
+            if (!port_obj || !port_obj->contains(std::string_view("portId")))
+            {
+                continue;
+            }
+            auto id = (*port_obj)[std::string_view("portId")].as_string();
+            if (id && *id == port_id)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+} // namespace
+
+// 预备 pass·nodeFaces 分支：begin 边界节点的 settings.boundaryPorts 经
+// 注册面反查（FindByExecutionComponentGuid）命中既有 QI 链，边界会话
+// GetDocument 现算口面注入图会话 context，Get 投影的该节点 ports[] 出现
+// 动态口（p1/string/input）。end 节点口为 output。纯 Get 零写回：两次
+// Get 之间任务存储文件内容逐字节不变。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    GraphFacesPassInjectsNodeFacesForBoundaryNodes)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+
+    {
+        auto properties = Das::Utils::ParseYyjsonFromString(R"json({
+            "documentId": "faces-node-graph",
+            "version": 1,
+            "nodes": [
+                {
+                    "nodeId": "n_begin",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {
+                        "boundaryPorts": [
+                            {"id": "p1", "type": "string"}
+                        ]
+                    }
+                },
+                {
+                    "nodeId": "n_end",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {
+                        "boundaryPorts": [
+                            {"id": "q1", "type": "int"}
+                        ]
+                    }
+                }
+            ],
+            "edges": [],
+            "tags": []
+        })json");
+        ASSERT_TRUE(properties.has_value());
+        SeedGraphTaskInstance(*settings_manager_, std::move(*properties));
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const auto task_json_before =
+        settings_manager_->GetTaskInstanceJson("0", 0);
+
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE(obj->contains(std::string_view("document")));
+    const auto& document = (*obj)[std::string_view("document")];
+
+    auto begin_node = FindGraphNodeByComponent(
+        document,
+        Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID);
+    ASSERT_TRUE(begin_node.has_value())
+        << "begin node missing from graph projection";
+    EXPECT_TRUE(NodeProjectsPort(*begin_node, "p1"))
+        << "begin node face port p1 missing from projection";
+
+    auto end_node = FindGraphNodeByComponent(
+        document,
+        Das::Core::GraphRuntime::GRAPH_END_COMPONENT_GUID);
+    ASSERT_TRUE(end_node.has_value())
+        << "end node missing from graph projection";
+    EXPECT_TRUE(NodeProjectsPort(*end_node, "q1"))
+        << "end node face port q1 missing from projection";
+
+    // 纯 Get 零写回：存储任务实例逐字节不变。
+    const auto task_json_after = settings_manager_->GetTaskInstanceJson("0", 0);
+    EXPECT_EQ(
+        Das::Utils::SerializeYyjsonValue(task_json_before, true).value_or(""),
+        Das::Utils::SerializeYyjsonValue(task_json_after, true).value_or(""));
+}
+
+// 预备 pass·entryFaces 分支：绑条目调用节点（taskRepositoryRef 字段持正
+// 整数）取条目缓存会话 GetDocument 现算口面注入；条目文档无 ports section
+// 时跳过（零 face 零诊断）；条目 revision 推进后下一次宿主 Get 重建会话
+// 取到新 face（无跨文档陈旧）。
+TEST_F(SchedulerRuntimeBackedTest, GraphFacesPassInjectsEntryFacesForBoundNode)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+    DeployRealPluginArtifacts(
+        "libDasFlowControl.dll",
+        "DasFlowControl.json",
+        /*force_ipc=*/false,
+        "DasFlowControl");
+
+    // 绑定目标条目：FactoryTask 类型（Fake 会话供源），entry id 7。
+    SeedRepositoryEntry(
+        *settings_manager_,
+        7,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        "Bound entry");
+
+    {
+        auto properties = Das::Utils::ParseYyjsonFromString(R"json({
+            "documentId": "faces-entry-graph",
+            "version": 1,
+            "nodes": [
+                {
+                    "nodeId": "n_begin",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {}
+                },
+                {
+                    "nodeId": "invoke",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "68F10007-0000-4000-8000-000000000007",
+                            "pluginGuid": "12345678-9ABC-4DEF-8123-456789ABCDEF"
+                        }
+                    },
+                    "settings": {
+                        "repositoryRef": 7
+                    }
+                }
+            ],
+            "edges": [],
+            "tags": []
+        })json");
+        ASSERT_TRUE(properties.has_value());
+        SeedGraphTaskInstance(*settings_manager_, std::move(*properties));
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // Fake 会话走严格 envelope 形态（ports section 探针挂在该形态上）。
+    EnableStrictAuthoringWire(*shared_state_);
+
+    const auto invoke_node_guid =
+        std::string_view("68F10007-0000-4000-8000-000000000007");
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+
+    // ① 条目文档无 ports section（A4）：跳过——绑节点无动态口，Get 正常。
+    {
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+        auto node = FindGraphNodeByComponent(
+            (*obj)[std::string_view("document")],
+            invoke_node_guid);
+        ASSERT_TRUE(node.has_value());
+        EXPECT_FALSE(NodeProjectsPort(*node, "e1"))
+            << "entry face leaked while the entry document carries no ports "
+               "section";
+    }
+
+    // ② 开 ports section（id=e1）并推进条目 revision（对条目本身 apply——
+    // face 内容变化必伴随条目 revision 推进，生产语义）→ 下一次宿主 Get
+    // 注入该 face，且条目会话因 revision 失效重建。
+    int64_t entry_revision_now = 5;
+    int     session_count_after_first_face = 0;
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->emit_ports_section = true;
+        shared_state_->set_emit_ports_section_id("e1");
+    }
+    {
+        auto entry_apply = scheduler_->ApplyRepositoryEntryAuthoringChange(
+            7,
+            MakeRepositoryAuthoringChange(5));
+        auto entry_obj = entry_apply.as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        EXPECT_TRUE(
+            (*entry_obj)[std::string_view("ok")].as_bool().value_or(false));
+        entry_revision_now =
+            (*entry_obj)[std::string_view("revision")].as_sint().value_or(5);
+        EXPECT_EQ(entry_revision_now, 6);
+    }
+    {
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+        auto node = FindGraphNodeByComponent(
+            (*obj)[std::string_view("document")],
+            invoke_node_guid);
+        ASSERT_TRUE(node.has_value());
+        EXPECT_TRUE(NodeProjectsPort(*node, "e1"))
+            << "bound node face port e1 missing from projection";
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        session_count_after_first_face = shared_state_->authoring_session_count;
+    }
+
+    // ③ face 内容再变（id=e2）+ 条目 revision 再推进 → 下一次宿主 Get 取到
+    // 新 face——无跨文档陈旧（宿主图会话随条目 revision 戳失效重建）。
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->set_emit_ports_section_id("e2");
+    }
+    {
+        auto entry_apply = scheduler_->ApplyRepositoryEntryAuthoringChange(
+            7,
+            MakeRepositoryAuthoringChange(entry_revision_now));
+        auto entry_obj = entry_apply.as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        EXPECT_TRUE(
+            (*entry_obj)[std::string_view("ok")].as_bool().value_or(false));
+    }
+    {
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+        auto node = FindGraphNodeByComponent(
+            (*obj)[std::string_view("document")],
+            invoke_node_guid);
+        ASSERT_TRUE(node.has_value());
+        EXPECT_FALSE(NodeProjectsPort(*node, "e1"))
+            << "stale entry face survived the entry revision advance";
+        EXPECT_TRUE(NodeProjectsPort(*node, "e2"))
+            << "fresh entry face missing after the entry revision advance";
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_GT(
+            shared_state_->authoring_session_count,
+            session_count_after_first_face)
+            << "entry session was not rebuilt after its revision advanced";
+    }
+}
+
+// 预备 pass·跳过分支：无注册面记录的 componentRef 节点（纯 manifest 或未
+// 知组件）不注入任何 face——Get 正常、无动态口。非图任务（线性文档）零
+// faces 键：Fake 会话收到的 context 与现状一致（无 nodeFaces/entryFaces
+// 消费面，既有契约用例背书）。
+TEST_F(SchedulerRuntimeBackedTest, GraphFacesPassSkipsNodesWithoutCapability)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+
+    {
+        auto properties = Das::Utils::ParseYyjsonFromString(R"json({
+            "documentId": "faces-skip-graph",
+            "version": 1,
+            "nodes": [
+                {
+                    "nodeId": "n_begin",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {}
+                },
+                {
+                    "nodeId": "unknown_component",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "11111111-2222-4333-8444-555555555555",
+                            "pluginGuid": "12345678-9ABC-4DEF-8123-456789ABCDEF"
+                        }
+                    },
+                    "settings": {}
+                }
+            ],
+            "edges": [],
+            "tags": []
+        })json");
+        ASSERT_TRUE(properties.has_value());
+        SeedGraphTaskInstance(*settings_manager_, std::move(*properties));
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE(obj->contains(std::string_view("document")));
+    auto node = FindGraphNodeByComponent(
+        (*obj)[std::string_view("document")],
+        std::string_view("11111111-2222-4333-8444-555555555555"));
+    ASSERT_TRUE(node.has_value());
+    EXPECT_FALSE(NodeProjectsPort(*node, "p1"))
+        << "face injected for a node whose component has no registry record";
 }
 
 // graph authoring 的 catalog 端口生产端全链：manifest definition 的独立

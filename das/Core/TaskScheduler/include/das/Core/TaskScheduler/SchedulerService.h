@@ -365,6 +365,33 @@ namespace Das::Core::TaskScheduler
             const DasGuid&           task_guid,
             TaskAuthoringCapability& out_capability);
 
+        /// 组件文档口面预备 pass：图会话 context 装配时（Get/Apply/Compile
+        /// 管线外圈、锁外）扫图文档节点，把组件文档的口面快照现算注入
+        /// context 的 nodeFaces/entryFaces 键。瞬态现算零持久化零新缓存
+        /// ——绑条目节点复用既有条目会话缓存（GetOrCreateAuthoringSession，
+        /// 按 revision+locale 失效），未绑 componentRef 节点（含 begin/end，
+        /// 经注册面反查命中既有 QI 链，无特判）现建临时会话。无该 section
+        /// 或无 authoring capability 的节点跳过不产诊断；非图文档（无
+        /// nodes 数组）直接返回，context 保持现状逐字节一致。host_id 用于
+        /// 自引用防护：绑条目等于宿主 id 时跳过（否则宿主会话锁自死锁）。
+        /// 调用位必须在 mutex_ 短锁段之外（内部会短暂取 mutex_ 做注册表
+        /// 反查与条目会话缓存 resolve）。
+        ///
+        /// 返回值 = 宿主会话缓存的有效 revision 戳：faces 经 context 只在
+        /// 会话创建时播种进 Core 会话状态，而宿主（图）会话缓存按宿主自身
+        /// revision 失效——条目 revision 推进若不反映到宿主会话的失效键，
+        /// 缓存会话会带着旧 faces 续命（跨文档陈旧）。本 pass 把宿主
+        /// revision 与全部绑条目 revision 混合成单一戳返回，调用位以它作
+        /// GetOrCreateAuthoringSession 的 current_revision——缓存仍是纯
+        /// revision 键控（零新缓存层），任一被依赖条目 revision 变化即重
+        /// 建宿主会话（faces 与文档快照同 freshness）。节点口面源自身是宿
+        /// 主文档的一部分（节点 settings），宿主 revision 已覆盖。非图文档
+        /// 返回宿主 revision 原值。
+        int64_t AppendComponentFacesContextKeys(
+            yyjson::value&       context,
+            const yyjson::value& properties,
+            int64_t              host_id);
+
         /// Get-or-create a cached authoring session for the given id. Returns a
         /// shared_ptr copy (refcount+1) so the caller can release mutex_ before
         /// using entry->session; the entry stays alive even if evicted from the

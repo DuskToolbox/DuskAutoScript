@@ -195,13 +195,35 @@ namespace
     // Builds a minimal strict-Authoring document for the fake session. Both
     // Get and Apply paths reuse this so the document shape stays consistent
     // with the strict Phase 84 validator (contractVersion/viewKind/revision).
-    yyjson::value MakeStrictAuthoringDocument(int64_t revision)
+    // emit_ports 置位时携带根 ports section（单口，id 由调用方从共享状态
+    // 读入）——组件口面预备 pass 的 entryFaces 供源探针。
+    yyjson::value MakeStrictAuthoringDocument(
+        int64_t          revision,
+        bool             emit_ports,
+        std::string_view ports_id)
     {
         yyjson::value document(Das::Utils::MakeYyjsonObject());
         auto          obj = document.as_object();
         (*obj)[std::string_view("contractVersion")] = static_cast<int64_t>(1);
         (*obj)[std::string_view("viewKind")] = "formSequence";
         (*obj)[std::string_view("revision")] = revision;
+        if (emit_ports)
+        {
+            yyjson::value ports(Das::Utils::MakeYyjsonArray());
+            yyjson::value port(Das::Utils::MakeYyjsonObject());
+            auto          port_obj = port.as_object();
+            (*port_obj)[std::string_view("id")] =
+                std::make_pair(ports_id, yyjson::copy_string);
+            (*port_obj)[std::string_view("type")] =
+                std::make_pair(std::string_view("string"), yyjson::copy_string);
+            (*port_obj)[std::string_view("direction")] =
+                std::make_pair(std::string_view("input"), yyjson::copy_string);
+            (*port_obj)[std::string_view("label")] = std::make_pair(
+                std::string_view("Entry Face Port"),
+                yyjson::copy_string);
+            ports.as_array()->emplace_back(std::move(port));
+            (*obj)[std::string_view("ports")] = std::move(ports);
+        }
         return document;
     }
 
@@ -219,13 +241,17 @@ DasResult FakeAuthoringSession::GetDocument(
     {
         return DAS_E_INVALID_POINTER;
     }
-    int64_t session_revision = 0;
-    bool    emit_strict = false;
+    int64_t     session_revision = 0;
+    bool        emit_strict = false;
+    bool        emit_ports = false;
+    std::string ports_id;
     {
         const ipc_scoped_lock lock(state_->mutex);
         ++state_->get_document_count;
         session_revision = state_->last_context_revision;
         emit_strict = state_->emit_strict_wire;
+        emit_ports = state_->emit_ports_section;
+        ports_id = state_->emit_ports_section_id;
     }
 
     if (emit_strict)
@@ -233,7 +259,7 @@ DasResult FakeAuthoringSession::GetDocument(
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
         (*obj)[std::string_view("document")] =
-            MakeStrictAuthoringDocument(session_revision);
+            MakeStrictAuthoringDocument(session_revision, emit_ports, ports_id);
         (*obj)[std::string_view("diagnostics")] = MakeStrictDiagnostics();
         auto wrapped = WrapJson(std::move(result));
         *pp_out_document_json = wrapped.Get();
@@ -278,11 +304,13 @@ DasResult FakeAuthoringSession::ApplyChange(
     {
         return DAS_E_INVALID_POINTER;
     }
-    bool    emit_strict = false;
-    bool    omit_document = false;
-    bool    inject_rejection = false;
-    int64_t revision_delta = 0;
-    int64_t session_revision = 0;
+    bool        emit_strict = false;
+    bool        omit_document = false;
+    bool        inject_rejection = false;
+    bool        emit_ports = false;
+    int64_t     revision_delta = 0;
+    int64_t     session_revision = 0;
+    std::string ports_id;
     {
         const ipc_scoped_lock lock(state_->mutex);
         ++state_->apply_change_count;
@@ -300,6 +328,8 @@ DasResult FakeAuthoringSession::ApplyChange(
         inject_rejection =
             state_->apply_reject_at_count >= 0
             && state_->apply_change_count == state_->apply_reject_at_count;
+        emit_ports = state_->emit_ports_section;
+        ports_id = state_->emit_ports_section_id;
         revision_delta = state_->apply_document_revision_delta;
         session_revision = state_->last_context_revision;
         state_->apply_entered = true;
@@ -347,7 +377,9 @@ DasResult FakeAuthoringSession::ApplyChange(
             // 的 revision 校验会先把它挡成 revisionMismatch。
             (*obj)[std::string_view("document")] = MakeStrictAuthoringDocument(
                 inject_rejection ? base_revision
-                                 : base_revision + 1 + revision_delta);
+                                 : base_revision + 1 + revision_delta,
+                emit_ports,
+                ports_id);
         }
         if (inject_rejection)
         {
@@ -594,6 +626,8 @@ DasResult FakeAuthoringSessionFactory::CreateSession(
     int64_t     entry_id = -1;
     int64_t     task_id = -1;
     bool        had_task_id = false;
+    bool        had_component_context = false;
+    bool        component_context = false;
     std::string key1_value;
     if (p_context_json)
     {
@@ -617,6 +651,18 @@ DasResult FakeAuthoringSessionFactory::CreateSession(
         {
             had_task_id =
                 DAS_S_OK == p_context_json->GetIntByName(key.Get(), &task_id);
+        }
+
+        key.Reset();
+        if (DAS_S_OK
+                == CreateIDasReadOnlyStringFromUtf8(
+                    "componentContext",
+                    key.Put())
+            && key)
+        {
+            had_component_context =
+                DAS_S_OK
+                == p_context_json->GetBoolByName(key.Get(), &component_context);
         }
 
         key.Reset();
@@ -662,6 +708,8 @@ DasResult FakeAuthoringSessionFactory::CreateSession(
         state_->last_context_task_id = task_id;
         state_->last_context_had_task_id = had_task_id;
         state_->last_context_revision = revision;
+        state_->last_context_had_component_context = had_component_context;
+        state_->last_context_component_context = component_context;
         state_->set_last_props_key1_value(key1_value);
     }
 

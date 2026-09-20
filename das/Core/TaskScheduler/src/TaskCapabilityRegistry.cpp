@@ -67,4 +67,20 @@ namespace Das::Core::TaskScheduler
         }
         return &*record->execution_component_guid;
     }
+
+    const TaskCapabilityRecord*
+    TaskCapabilityRegistry::FindByExecutionComponentGuid(
+        const DasGuid& component_guid) const
+    {
+        for (const auto& [task_guid, record] : records_)
+        {
+            (void)task_guid;
+            if (record.execution_component_guid
+                && *record.execution_component_guid == component_guid)
+            {
+                return &record;
+            }
+        }
+        return nullptr;
+    }
 }
