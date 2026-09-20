@@ -1021,30 +1021,42 @@ DasResult GraphBoundaryAuthoringSession::ApplyChange(
             diagnostics);
     }
 
+    // 先装配信封再提交状态（「拒绝零突变」的返回码语义边角收口）：接受
+    // 路径的 settings/revision 提交挪到 WrapJson 成功之后——装配失败
+    // （≈OOM，返回 DAS_E_FAIL）时调用方视为 providerFailed 整批拒绝，
+    // 会话内存态保持「已拒绝=零突变」（与类注释承诺一致）。next_settings
+    // 预写候选（仅接受路径），document 按结果 revision 预投影（成功 =
+    // base+1；拒绝 = 原值——拒绝路径的 candidate 从未被改动，直接投影
+    // 即未变状态）。
+    yyjson::value next_settings = CloneSettings(settings_);
     if (accepted)
     {
-        WriteBoundaryPorts(settings_, candidate);
-        ++revision_;
+        WriteBoundaryPorts(next_settings, candidate);
     }
 
     // 严格 Apply envelope = {acceptedProperties, document, diagnostics}。
-    // document 反映结果 revision（成功 = base+1；拒绝 = 原值）；拒绝路径
-    // 的 candidate 从未被改动，直接投影即未变状态。
     yyjson::value envelope(Das::Utils::MakeYyjsonObject());
     auto          env_obj = envelope.as_object();
     (*env_obj)[std::string_view("acceptedProperties")] =
-        CloneSettings(settings_);
-    (*env_obj)[std::string_view("document")] =
-        BuildDocumentValue(role_, candidate, revision_);
+        CloneSettings(next_settings);
+    (*env_obj)[std::string_view("document")] = BuildDocumentValue(
+        role_,
+        candidate,
+        accepted ? revision_ + 1 : revision_);
     (*env_obj)[std::string_view("diagnostics")] =
         BuildDiagnosticsValue(diagnostics);
 
     auto wrapped = Das::Utils::WrapJson(std::move(envelope));
-    *pp_out_result_json = wrapped.Get();
-    if (*pp_out_result_json == nullptr)
+    if (wrapped.Get() == nullptr)
     {
         return DAS_E_FAIL;
     }
+    if (accepted)
+    {
+        settings_ = std::move(next_settings);
+        ++revision_;
+    }
+    *pp_out_result_json = wrapped.Get();
     (*pp_out_result_json)->AddRef();
     return DAS_S_OK;
 }
