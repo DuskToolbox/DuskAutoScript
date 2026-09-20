@@ -2253,12 +2253,13 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         // 端口面注入（与 required 清单同范式）：catalog 声明的静态端口面
         // （direction 由 inputs/outputs 声明携带）喂给编译器，使无 factory
         // manager 的 authoring 编译路径也能做端口校验与边界端口推导——
-        // 生产执行输入正是这条编译路径的产物。begin/end 命中时在静态基
-        // 面之上按当前文档的节点动态口分区展开同名 in/out 口对（D-17 方
-        // 案 A：口 id=稳定分区 id——连线与哨兵绑定的寻址坐标，显示名=
-        // 口名），动态口因此进编译声明面参与边校验与边界推导。闭包捕
-        // 获会话指针 p：编译同步完成，p 在编译期内有效（与既有
-        // action_entries 引用捕获同生命周期前提）。
+        // 生产执行输入正是这条编译路径的产物。闭包形态=guid 级纯声明面：
+        // 动态口不在此展开——begin/end 文档口面经 nodeFaces 通道按节点并
+        // 入（ResolveNodePorts 合并、DeriveBoundaryPorts 直读注入面），
+        // 绑条目调用节点口面经 entryFaces（同按节点），guid 维分区聚合
+        // （同 guid 节点口串面）随之根除。闭包捕获会话指针 p：编译同步
+        // 完成，p 在编译期内有效（与既有 action_entries 引用捕获同生命
+        // 周期前提）。
         compiler.SetPortSurfaceProvider(
             [p](const std::string& component_guid)
                 -> std::optional<Das::Core::GraphRuntime::GraphCompiler::
@@ -2286,72 +2287,6 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
                         else
                         {
                             surface.outputs.push_back(std::move(definition));
-                        }
-                    }
-                    if (component_guid
-                            == Das::Core::GraphRuntime::
-                                GRAPH_BEGIN_COMPONENT_GUID
-                        || component_guid
-                               == Das::Core::GraphRuntime::
-                                   GRAPH_END_COMPONENT_GUID)
-                    {
-                        for (const auto& node : p->document.nodes)
-                        {
-                            const bool node_matches_guid =
-                                node.target.component_ref.has_value()
-                                && node.target.component_ref->component_guid
-                                       == component_guid;
-                            if (!node_matches_guid)
-                            {
-                                continue;
-                            }
-                            for (const auto& declared : node.ports)
-                            {
-                                Das::Core::GraphRuntime::Dto::
-                                    GraphPortDefinitionDto definition;
-                                definition.port_id = declared.id;
-                                definition.display_label = declared.name;
-                                definition.port_type = declared.value_type;
-                                surface.inputs.push_back(definition);
-                                surface.outputs.push_back(definition);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // 调用节点物化口（签名口物化通道）：按声明方向单侧
-                        // 展开——口坐标即子图边界口 id（运行期值通道的
-                        // 键），静态 manifest 面不携带它们。guid 维聚合与
-                        // begin/end 同构（同 guid 多节点的分区口并集）。
-                        for (const auto& node : p->document.nodes)
-                        {
-                            const bool node_matches_guid =
-                                node.target.component_ref.has_value()
-                                && node.target.component_ref->component_guid
-                                       == component_guid;
-                            if (!node_matches_guid || node.ports.empty())
-                            {
-                                continue;
-                            }
-                            for (const auto& declared : node.ports)
-                            {
-                                Das::Core::GraphRuntime::Dto::
-                                    GraphPortDefinitionDto definition;
-                                definition.port_id = declared.id;
-                                definition.display_label = declared.name;
-                                definition.port_type = declared.value_type;
-                                if (declared.direction
-                                    == std::string_view("input"))
-                                {
-                                    surface.inputs.push_back(
-                                        std::move(definition));
-                                }
-                                else
-                                {
-                                    surface.outputs.push_back(
-                                        std::move(definition));
-                                }
-                            }
                         }
                     }
                     return surface;

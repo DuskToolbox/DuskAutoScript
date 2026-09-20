@@ -380,13 +380,18 @@ private:
 
     /// Merge one document-face list onto a port surface: dedupe by port id
     /// with the face winning over a same-name surviving port (WARN on the
-    /// collision); each face joins only its declared direction side.
+    /// collision); each face joins only its declared direction side — except
+    /// on begin/end boundary nodes, where `expand_pair` mirrors every face
+    /// onto both sides (the boundary port-pair semantics: the in side
+    /// receives the caller graph input, the out side feeds in-graph edges;
+    /// the derivation layer excludes the role-mirrored side at D-14).
     /// Mutates only the caller's per-node copy — the guid-keyed declaration
     /// cache stays declared-only.
     void MergeFacesOntoSurface(
         ManifestPorts&                       ports,
         const std::string&                   node_id,
-        const std::vector<DocumentFacePort>& faces) const;
+        const std::vector<DocumentFacePort>& faces,
+        bool                                 expand_pair = false) const;
 
     /// Resolve the repository entry a node is bound to (nullopt = not a
     /// bound repository call node): the business-neutral judgment — a

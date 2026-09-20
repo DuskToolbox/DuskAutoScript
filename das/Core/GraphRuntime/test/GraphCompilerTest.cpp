@@ -2353,16 +2353,19 @@ TEST(BoundaryPortDerivationTest, BeginOutPortsExcludedFromBoundaryOutputs)
             std::vector<std::pair<std::string, std::string>>,
             std::vector<std::pair<std::string, std::string>>>>
         surfaces;
-    // begin 的动态口对形态（provider 展开后）：in/out 同键。
-    surfaces[std::string(BOUNDARY_BEGIN_COMPONENT_GUID)] = {
-        {{"左值", "int"}},
-        {{"左值", "int"}}};
     surfaces["BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"] = {
         {{"eat", "int"}},
         {{"result", "string"}}};
 
     GraphCompiler compiler;
     compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+    // begin 文档口面经 nodeFaces 直读注入（不经 provider 任何路径）——
+    // 口对双侧展开由推导层承担，输出侧排除见 D-14。
+    GraphCompiler::NodeFacesMap node_faces;
+    node_faces["n_begin"] = {
+        {"左值", "int", "左值", "input"},
+    };
+    compiler.BindNodeFaces(&node_faces);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(MakeComponentNode(
@@ -2400,21 +2403,16 @@ TEST(BoundaryPortDerivationTest, BeginOutPortsExcludedFromBoundaryOutputs)
 }
 
 // 防误伤对称断言：end 的输出口照常导出——排除规则只作用于 begin 节点
-// GUID，end 的口就是子图出参面。
+// GUID，end 的口就是子图出参面。口面经 nodeFaces 直读注入。
 TEST(BoundaryPortDerivationTest, EndOutPortsStillExported)
 {
-    std::unordered_map<
-        std::string,
-        std::pair<
-            std::vector<std::pair<std::string, std::string>>,
-            std::vector<std::pair<std::string, std::string>>>>
-        surfaces;
-    surfaces[std::string(BOUNDARY_END_COMPONENT_GUID)] = {
-        {{"值", "int"}},
-        {{"值", "int"}, {"右值", "string"}}};
-
-    GraphCompiler compiler;
-    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+    GraphCompiler               compiler;
+    GraphCompiler::NodeFacesMap node_faces;
+    node_faces["n_end"] = {
+        {"值", "int", "值", "output"},
+        {"右值", "string", "右值", "output"},
+    };
+    compiler.BindNodeFaces(&node_faces);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
@@ -2441,19 +2439,17 @@ TEST(BoundaryPortDerivationTest, EndInPortsExcludedFromBoundaryInputs)
             std::vector<std::pair<std::string, std::string>>,
             std::vector<std::pair<std::string, std::string>>>>
         surfaces;
-    // begin/end 动态口对形态（provider 展开后 in/out 同键，首口同 id p_1）。
-    surfaces[std::string(BOUNDARY_BEGIN_COMPONENT_GUID)] = {
-        {{"p_1", "int"}},
-        {{"p_1", "int"}}};
-    surfaces[std::string(BOUNDARY_END_COMPONENT_GUID)] = {
-        {{"p_1", "int"}},
-        {{"p_1", "int"}}};
     surfaces["BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"] = {
         {{"eat", "int"}},
         {{"result", "string"}}};
 
     GraphCompiler compiler;
     compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+    // begin/end 动态口对形态（首口同 id p_1）经 nodeFaces 按节点注入。
+    GraphCompiler::NodeFacesMap node_faces;
+    node_faces["n_begin"] = {{"p_1", "int", "p_1", "input"}};
+    node_faces["n_end"] = {{"p_1", "int", "p_1", "output"}};
+    compiler.BindNodeFaces(&node_faces);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(MakeComponentNode(
@@ -2493,6 +2489,34 @@ TEST(BoundaryPortDerivationTest, EndInPortsExcludedFromBoundaryInputs)
         }
     }
     EXPECT_TRUE(end_output_found);
+}
+
+// begin/end 口面直读注入后的唯一动态口源纪律：faces 条目缺席（编译宿主
+// 未跑预备 pass）=空口面降级——即便声明面 provider 对 begin/end guid 提
+// 供了口面也不得被采纳（begin/end 口面不经 provider 任何路径）。
+TEST(BoundaryPortDerivationTest, BoundaryFacesAbsentDegradeToEmpty)
+{
+    std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces;
+    surfaces[std::string(BOUNDARY_BEGIN_COMPONENT_GUID)] = {
+        {{"ghost", "int"}},
+        {{"ghost", "int"}}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeComponentNode(
+        "n_begin",
+        std::string(BOUNDARY_BEGIN_COMPONENT_GUID)));
+
+    auto boundary = compiler.DeriveBoundaryPorts(doc);
+    EXPECT_TRUE(boundary.inputs.empty());
+    EXPECT_TRUE(boundary.outputs.empty());
 }
 
 // ===================================================================

@@ -1,6 +1,8 @@
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/CompiledPlanFingerprint.h>
 #include <das/Core/GraphRuntime/Config.h>
+#include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 #include <das/Core/TaskScheduler/TaskAuthoringContract.h>
 #include <das/DasApi.h>
@@ -605,4 +607,232 @@ TEST(GraphRuntimeFactoryTest, ExecuteRejectsTamperedPlanPayloadInShell)
     const auto tampered_text = Das::Utils::SerializeYyjsonValue(shell);
     ASSERT_TRUE(tampered_text.has_value());
     EXPECT_TRUE(DAS::IsFailed(ExecuteArtifactText(*tampered_text)));
+}
+
+// ===========================================================================
+// 预备 pass 全链 E2E：begin/end 节点 settings → Core 边界会话（create 出
+// 口）GetDocument → faces 组入图会话创建 context（nodeFaces 键）→ 编译 →
+// begin/end 编译口面与边界签名（DeriveBoundaryPorts 输出）=文档口面。
+// faces 是唯一动态口源；方向展开双侧对语义保留为推导规则（begin 输出
+// 侧/end 输入侧由边界排除规则挡下）。
+// ===========================================================================
+
+namespace
+{
+    constexpr std::string_view kBoundaryBeginGuid =
+        Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID;
+    constexpr std::string_view kBoundaryEndGuid =
+        Das::Core::GraphRuntime::GRAPH_END_COMPONENT_GUID;
+
+    Das::DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>
+    CreateBoundarySession(
+        std::string_view   guid_text,
+        const std::string& context)
+    {
+        const DasGuid guid =
+            Das::Core::ForeignInterfaceHost::MakeDasGuid(guid_text);
+        Das::DasPtr<IDasReadOnlyString> context_string;
+        CreateIDasReadOnlyStringFromUtf8(context.c_str(), context_string.Put());
+        Das::DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        CreateGraphBoundaryAuthoringSession(
+            &guid,
+            context_string.Get(),
+            session.Put());
+        return session;
+    }
+
+    // GetDocument envelope（{document, diagnostics}）的 document 值。
+    yyjson::value BoundaryDocumentOf(
+        Das::PluginInterface::IDasTaskAuthoringSession* session)
+    {
+        Das::DasPtr<Das::ExportInterface::IDasJson> out;
+        session->GetDocument(nullptr, out.Put());
+        auto root = yyjson::read(JsonText(out.Get()));
+        auto obj = root.as_object();
+        if (!obj || !obj->contains(std::string_view("document")))
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("document")]);
+    }
+
+    // 文档根 ports section（faces wire 形状 [{id,type,direction}]）的序列
+    // 化文本——预备 pass 以此形状消费 GetDocument 投影。
+    std::string PortsSectionText(const yyjson::value& document)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("ports")))
+        {
+            return "[]";
+        }
+        const auto text =
+            Das::Utils::SerializeYyjsonValue((*obj)[std::string_view("ports")]);
+        return text.has_value() ? *text : std::string("[]");
+    }
+
+    // boundary 节点 JSON（pluginGuid 必带——ComponentRefDto 聚合 caster 对
+    // 缺席键抛出，节点会被逐节点 try/catch 静默跳过）。
+    std::string BoundaryNodeText(
+        std::string_view   node_id,
+        std::string_view   guid_text,
+        const std::string& settings_boundary_ports)
+    {
+        return std::string(R"({"nodeId":")") + std::string(node_id)
+               + R"(","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":")"
+               + std::string(guid_text) + R"(","pluginGuid":")"
+               + std::string(Das::Core::GraphRuntime::GRAPH_TASK_PLUGIN_GUID)
+               + R"("}},"settings":{"boundaryPorts":)" + settings_boundary_ports
+               + "}}";
+    }
+
+    // 模拟预备 pass 组装的全链 context：图文档（begin/end 节点携带
+    // settings.boundaryPorts）+ nodeFaces 键（边界会话 GetDocument 的 ports
+    // section 逐字组入）。
+    std::string MakeFacesChainContext(
+        const std::string& begin_settings_ports,
+        const std::string& end_settings_ports,
+        const std::string& begin_faces_text,
+        const std::string& end_faces_text)
+    {
+        return std::string(
+                   R"({"documentId":"faces_chain","version":3,"nodes":[)")
+               + BoundaryNodeText(
+                   "n_0",
+                   kBoundaryBeginGuid,
+                   begin_settings_ports)
+               + ","
+               + BoundaryNodeText("n_1", kBoundaryEndGuid, end_settings_ports)
+               + R"(],"edges":[],"nodeFaces":[{"nodeId":"n_0","ports":)"
+               + begin_faces_text + R"(},{"nodeId":"n_1","ports":)"
+               + end_faces_text + "}]}";
+    }
+
+    Das::Core::GraphRuntime::Dto::CompiledGraphPlanDto PlanOfContext(
+        const std::string& context)
+    {
+        const AuthoringSessionHandle session{context};
+        auto compiled = CompileSessionPlan(session.state);
+        auto root = yyjson::read(JsonText(compiled.Get())).as_object();
+        auto compile_section = (*root)[std::string_view("compile")].as_object();
+        auto shell =
+            (*compile_section)[std::string_view("executionInput")].as_object();
+        return yyjson::cast<Das::Core::GraphRuntime::Dto::CompiledGraphPlanDto>(
+            (*shell)[std::string_view("plan")]);
+    }
+} // namespace
+
+TEST(GraphRuntimeFactoryTest, BoundaryFacesFullChainDrivesBoundarySignature)
+{
+    // ① 以节点 settings 建 Core 边界会话——begin 声明两口、end 一口。
+    const auto begin_session = CreateBoundarySession(
+        kBoundaryBeginGuid,
+        R"({"revision":5,"boundaryPorts":[)"
+        R"({"id":"p_1","type":"string"},{"id":"p_2","type":"int"}]})");
+    ASSERT_NE(begin_session.Get(), nullptr);
+    const auto end_session = CreateBoundarySession(
+        kBoundaryEndGuid,
+        R"({"revision":7,"boundaryPorts":[{"id":"q_1","type":"image"}]})");
+    ASSERT_NE(end_session.Get(), nullptr);
+
+    // ② GetDocument 的 ports section（faces wire 形状）作为 nodeFaces 键
+    // 的组入源——方向由角色固化（begin 恒 input / end 恒 output）。
+    const std::string begin_faces =
+        PortsSectionText(BoundaryDocumentOf(begin_session.Get()));
+    const std::string end_faces =
+        PortsSectionText(BoundaryDocumentOf(end_session.Get()));
+    EXPECT_NE(begin_faces.find(R"("id":"p_1")"), std::string::npos);
+    EXPECT_NE(begin_faces.find(R"("direction":"input")"), std::string::npos);
+    EXPECT_NE(end_faces.find(R"("direction":"output")"), std::string::npos);
+
+    // ③ 编译——边界签名=文档口面：begin faces 全量进 inputs，end faces
+    // 全量进 outputs（口对展开的镜像侧由推导规则排除）。
+    const auto plan = PlanOfContext(MakeFacesChainContext(
+        R"([{"id":"p_1","type":"string"},{"id":"p_2","type":"int"}])",
+        R"([{"id":"q_1","type":"image"}])",
+        begin_faces,
+        end_faces));
+
+    ASSERT_EQ(plan.boundary_ports.inputs.size(), 2u);
+    EXPECT_EQ(plan.boundary_ports.inputs[0].port_id, "p_1");
+    EXPECT_EQ(plan.boundary_ports.inputs[0].port_type, "string");
+    EXPECT_EQ(plan.boundary_ports.inputs[1].port_id, "p_2");
+    EXPECT_EQ(plan.boundary_ports.inputs[1].port_type, "int");
+    ASSERT_EQ(plan.boundary_ports.inputs[0].node_ids.size(), 1u);
+    EXPECT_EQ(plan.boundary_ports.inputs[0].node_ids[0], "n_0");
+
+    ASSERT_EQ(plan.boundary_ports.outputs.size(), 1u);
+    EXPECT_EQ(plan.boundary_ports.outputs[0].port_id, "q_1");
+    EXPECT_EQ(plan.boundary_ports.outputs[0].port_type, "image");
+    ASSERT_EQ(plan.boundary_ports.outputs[0].node_ids.size(), 1u);
+    EXPECT_EQ(plan.boundary_ports.outputs[0].node_ids[0], "n_1");
+
+    // 广播绑定跟随 faces：begin 的悬空口各得一条 $graph_input 绑定。
+    std::size_t broadcast_bindings = 0;
+    for (const auto& binding : plan.binding_plan.bindings)
+    {
+        if (binding.source_node_id == "$graph_input")
+        {
+            ++broadcast_bindings;
+        }
+    }
+    EXPECT_EQ(broadcast_bindings, 2u);
+}
+
+TEST(GraphRuntimeFactoryTest, BoundaryFacesAbsentLeavesBoundaryEmpty)
+{
+    // 无 nodeFaces 注入（编译宿主未跑预备 pass）：begin/end 边界贡献为空
+    // ——不回退任何分区/manifest 通道（faces 是唯一动态口源）。
+    const auto plan = PlanOfContext(
+        std::string(R"({"documentId":"no_faces","nodes":[)")
+        + BoundaryNodeText(
+            "n_0",
+            kBoundaryBeginGuid,
+            R"([{"id":"p_1","type":"string"}])")
+        + "," + BoundaryNodeText("n_1", kBoundaryEndGuid, R"([])")
+        + R"(],"edges":[]})");
+    EXPECT_TRUE(plan.boundary_ports.inputs.empty());
+    EXPECT_TRUE(plan.boundary_ports.outputs.empty());
+}
+
+TEST(GraphRuntimeFactoryTest, CatalogDeclaredPortsRemainOnCompileSurface)
+{
+    // provider 闭包退守纯声明面不误删（Pitfall 3）：纯 manifest 组件的
+    // catalog 声明口仍在编译口面——两 launch 形态节点间的声明口连线编译
+    // 零诊断（口不解析即 PortNotFound）。
+    const std::string launch_guid = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA";
+    const auto        node_of = [&launch_guid](std::string_view node_id)
+    {
+        return std::string(R"({"nodeId":")") + std::string(node_id)
+               + R"(","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":")"
+               + launch_guid
+               + R"(","pluginGuid":"BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"}},)"
+               + R"("settings":{}})";
+    };
+    const std::string context =
+        std::string(R"({"documentId":"catalog_face","nodes":[)")
+        + BoundaryNodeText("n_0", kBoundaryBeginGuid, R"([])") + ","
+        + BoundaryNodeText("n_1", kBoundaryEndGuid, R"([])") + ","
+        + node_of("n_a") + "," + node_of("n_b")
+        + R"(],"edges":[{"edgeId":"e1","sourceNodeId":"n_a","sourcePortId":"out","targetNodeId":"n_b","targetPortId":"in","edgeType":"data"}],)"
+        + R"("actionCatalog":[{"actionId":")" + launch_guid
+        + R"(","label":"das.utils.launch","ports":[)"
+        + R"({"portId":"in","portType":"int","direction":"input"},)"
+        + R"({"portId":"out","portType":"int","direction":"output"}]}]})";
+
+    const AuthoringSessionHandle session{context};
+    auto                         compiled = CompileSessionPlan(session.state);
+    ASSERT_NE(compiled.Get(), nullptr);
+    auto root = yyjson::read(JsonText(compiled.Get())).as_object();
+    ASSERT_TRUE(root.has_value());
+    ASSERT_TRUE(root->contains(std::string_view("diagnostics")));
+    const auto diagnostics =
+        (*root)[std::string_view("diagnostics")].as_array();
+    ASSERT_TRUE(diagnostics.has_value());
+    for (const auto& diagnostic : *diagnostics)
+    {
+        const auto text = Das::Utils::SerializeYyjsonValue(diagnostic);
+        ADD_FAILURE() << "unexpected diagnostic: "
+                      << (text.has_value() ? *text : std::string("<null>"));
+    }
 }
