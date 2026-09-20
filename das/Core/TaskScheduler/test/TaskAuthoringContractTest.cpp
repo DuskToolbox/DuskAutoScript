@@ -3310,6 +3310,73 @@ TEST(TaskAuthoringContractTest, SchemaJsonFormSequenceChromeKeysLocked)
     }
 }
 
+// schema AuthoringGetRequest $def 对账：componentContext/componentGuid 两
+// 可选请求键与 Apply 侧同批同步（法则8 lockstep）——UI 实发（BuildGetBody
+// 携 {componentGuid, componentContext:true}）、服务端实消费（六路由读取
+// 两键），schema 不得禁止其实发形状。additionalProperties:false 保持（白
+// 名单闭集），两键非 required（缺省=宿主文档自身的 Get，逐字节现状）。
+TEST(
+    TaskAuthoringContractTest,
+    SchemaJsonAuthoringGetRequestComponentKeysLocked)
+{
+    const auto schema_path = ResolveSchemaJsonPath();
+    ASSERT_TRUE(schema_path.has_value())
+        << "TaskAuthoringHttpContract.schema.json not found above "
+        << std::filesystem::current_path();
+    const auto schema_text = ReadFileText(*schema_path);
+    ASSERT_TRUE(schema_text.has_value());
+
+    auto schema = ParseJson(*schema_text);
+    auto schema_object = schema.as_object();
+    ASSERT_TRUE(schema_object.has_value());
+    auto defs_value = (*schema_object)[std::string_view("$defs")];
+    auto defs_object = defs_value.as_object();
+    ASSERT_TRUE(defs_object.has_value());
+
+    auto get_def =
+        (*defs_object)[std::string_view("AuthoringGetRequest")].as_object();
+    ASSERT_TRUE(get_def.has_value());
+
+    auto no_extra_fields =
+        (*get_def)[std::string_view("additionalProperties")].as_bool();
+    ASSERT_TRUE(no_extra_fields.has_value());
+    EXPECT_FALSE(*no_extra_fields);
+
+    // 两键可选（非 required）：required 缺席或不含它们。
+    auto required_array = (*get_def)[std::string_view("required")].as_array();
+    if (required_array.has_value())
+    {
+        for (const auto& item : *required_array)
+        {
+            auto text = item.as_string();
+            ASSERT_TRUE(text.has_value());
+            EXPECT_NE(*text, std::string_view("componentContext"));
+            EXPECT_NE(*text, std::string_view("componentGuid"));
+        }
+    }
+
+    auto properties = (*get_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(properties.has_value());
+    ASSERT_TRUE(properties->contains(std::string_view("componentContext")));
+    {
+        auto definition =
+            (*properties)[std::string_view("componentContext")].as_object();
+        ASSERT_TRUE(definition.has_value());
+        EXPECT_EQ(
+            (*definition)[std::string_view("type")].as_string().value(),
+            "boolean");
+    }
+    ASSERT_TRUE(properties->contains(std::string_view("componentGuid")));
+    {
+        auto definition =
+            (*properties)[std::string_view("componentGuid")].as_object();
+        ASSERT_TRUE(definition.has_value());
+        EXPECT_EQ(
+            (*definition)[std::string_view("type")].as_string().value(),
+            "string");
+    }
+}
+
 // GraphNodePort 可选 dynamic 键：布尔真值放行（engaged-only——呈现层只在
 // 动态口上出该键）、非布尔值拒绝。
 TEST(TaskAuthoringContractTest, GraphNodePortDynamicKeyValidation)

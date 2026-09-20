@@ -907,7 +907,15 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "endpoint": { "$ref": "#/$defs/Endpoint" }
+        "endpoint": { "$ref": "#/$defs/Endpoint" },
+        "componentContext": {
+          "type": "boolean",
+          "$comment": "Optional component-context flag (default false): when the UI drills into a component from inside a graph, the projector gates component-only projections on it. Same key, same semantics as the Apply side. Absent = standalone editing, byte-identical legacy behavior."
+        },
+        "componentGuid": {
+          "type": "string",
+          "$comment": "Optional component document identity (e.g. a graph begin/end boundary component GUID): routes the get to that component's own authoring document within the host graph addressed by the URL. Same key, same semantics as the Apply side. Absent = the host document's own get."
+        }
       }
     },
     "AuthoringCompileRequest": {
