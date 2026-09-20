@@ -4208,6 +4208,18 @@ namespace Das::Core::TaskScheduler
                     "Failed to persist accepted boundary authoring change");
             }
 
+            // revision 墙同源化：宿主图文档 version 与 authoring.revision 的
+            // 生产不变量在边界写回后保持——宿主 apply 的 revision 域校验要
+            // 求会话文档 version == baseRevision（返回 base+1），写回通道推
+            // 进 authoring 域的同时把文档 version 推进到同一 next_revision；
+            // 否则两域分叉后下一次宿主 apply 恒 revisionMismatch（文档
+            // version 落后于 authoring 域，永不再会合）。
+            if (auto updated_obj = updated_properties->as_object())
+            {
+                (*updated_obj)[std::string_view("version")] =
+                    pipeline.next_revision;
+            }
+
             if (repository_side)
             {
                 yyjson::value updated_entry_json;
@@ -4252,6 +4264,21 @@ namespace Das::Core::TaskScheduler
                         "change");
                 }
             }
+        }
+
+        // 写回落盘后逐出宿主图缓存会话：这是首个绕过宿主会话直接改写宿主
+        // 文档的进程内通道（普通 apply 是同会话内先突变后持久化，缓存与
+        // 会话天然同步）——不逐出的话，enforce_fresh=false 的复用方（执行
+        // 链 ExecuteSelectedTask、宿主 Apply 的缓存命中分支）会拿写回前的
+        // 旧文档续命（编译用旧口面/后续 apply 覆盖丢边界编辑）。与既有
+        // rollback/删除逐出同款锁序：mutex_ 短临界段直擦，在途调用方持
+        // shared_ptr 副本自保（无 drain）。
+        {
+            const std::scoped_lock lock(mutex_);
+            EvictAuthoringSession(
+                repository_side ? repository_authoring_sessions_
+                                : task_authoring_sessions_,
+                host_id);
         }
 
         // 响应形状与条目/任务 Apply 对齐。

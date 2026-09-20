@@ -6094,6 +6094,9 @@ namespace
     // begin/end 边界文档管线用例共用：播种一个 graph 仓库条目（宿主图），
     // acceptedProperties 为 raw GraphDocumentDto 形状（begin 节点带
     // boundaryPorts，other 探针节点，可选边集）。返回播种后的条目 json。
+    // document_version：宿主图文档 version 字段（生产不变量=与
+    // authoring.revision 同步推进；宿主自身 Apply 的 revision 域校验依赖
+    // 该同步。边界管线用例缺省 1 即可——它们只走边界会话通道）。
     yyjson::value SeedGraphRepositoryEntry(
         Das::Core::SettingsManager::SettingsManager& settings,
         int64_t                                      entry_id,
@@ -6442,6 +6445,159 @@ TEST_F(
         EXPECT_EQ(
             (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
             6);
+    }
+}
+
+// 边界写回后宿主缓存会话新鲜度时序：Get 建会话（D0, rev5）→ boundary
+// apply 落盘 D1/rev6（begin 增口 p_2）→ 宿主自身 Apply（缓存命中分支，
+// enforce_fresh=false）必须编译/突变自 D1——写回通道落盘后逐出宿主缓存
+// 会话，否则缓存会话带着 D0 续命，后续宿主 apply 的持久化会把边界编辑
+// 覆盖丢失（begin 口回退 p1、p_2 消失）。
+TEST_F(SchedulerRuntimeBackedTest, BoundaryWriteBackEvictsHostGraphSessionCache)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+
+    // document_version=5 与 authoring.revision 同步（宿主自身 Apply 的
+    // revision 域校验依赖该生产不变量）。
+    SeedGraphRepositoryEntry(
+        *settings_manager_,
+        3,
+        "[]",
+        /*document_version=*/5);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // ① UI Get 建宿主缓存会话（D0 视图：begin 口 p1，rev5）。
+    {
+        const yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto                result =
+            scheduler_->GetRepositoryEntryAuthoringDocument(3, request);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        EXPECT_FALSE(obj->contains(std::string_view("errorKind")));
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+    }
+
+    // ② boundary apply 增口（写回 D1/rev6：begin boundaryPorts p1+p_2）。
+    {
+        yyjson::value change(Das::Utils::MakeYyjsonObject());
+        (*change.as_object())[std::string_view("baseRevision")] =
+            static_cast<int64_t>(5);
+        {
+            yyjson::value element(Das::Utils::MakeYyjsonObject());
+            (*element.as_object())[std::string_view("kind")] = std::make_pair(
+                std::string_view("addFormSequenceItem"),
+                yyjson::copy_string);
+            yyjson::value payload(Das::Utils::MakeYyjsonObject());
+            (*payload.as_object())[std::string_view("actionId")] =
+                std::make_pair(
+                    Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID,
+                    yyjson::copy_string);
+            (*element.as_object())[std::string_view("payload")] =
+                std::move(payload);
+            auto changes = Das::Utils::MakeYyjsonArray();
+            (*changes.as_array()).emplace_back(std::move(element));
+            (*change.as_object())[std::string_view("changes")] =
+                std::move(changes);
+        }
+        (*change.as_object())[std::string_view("componentGuid")] =
+            std::make_pair(
+                Das::Core::GraphRuntime::GRAPH_BEGIN_COMPONENT_GUID,
+                yyjson::copy_string);
+        (*change.as_object())[std::string_view("componentContext")] = true;
+
+        auto result =
+            scheduler_->ApplyRepositoryEntryAuthoringChange(3, change);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        EXPECT_FALSE(obj->contains(std::string_view("errorKind")));
+        EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+        EXPECT_EQ(
+            (*obj)[std::string_view("revision")].as_sint().value_or(-1),
+            6);
+    }
+
+    // ③ 宿主自身 Apply（baseRevision=6 过 revision 墙；缓存若未逐出则命中
+    // D0 旧会话）：加一个普通节点。成功后落盘文档必须同时保有边界编辑
+    // （begin 口 p1+p_2）与新节点——旧会话续命则会用 D0 覆盖（p_2 丢）。
+    {
+        yyjson::value change(Das::Utils::MakeYyjsonObject());
+        (*change.as_object())[std::string_view("baseRevision")] =
+            static_cast<int64_t>(6);
+        {
+            yyjson::value element(Das::Utils::MakeYyjsonObject());
+            (*element.as_object())[std::string_view("kind")] = std::make_pair(
+                std::string_view("addGraphNode"),
+                yyjson::copy_string);
+            yyjson::value payload(Das::Utils::MakeYyjsonObject());
+            (*payload.as_object())[std::string_view("actionId")] =
+                std::make_pair(
+                    Das::Core::GraphRuntime::GRAPH_END_COMPONENT_GUID,
+                    yyjson::copy_string);
+            (*element.as_object())[std::string_view("payload")] =
+                std::move(payload);
+            auto changes = Das::Utils::MakeYyjsonArray();
+            (*changes.as_array()).emplace_back(std::move(element));
+            (*change.as_object())[std::string_view("changes")] =
+                std::move(changes);
+        }
+
+        auto result =
+            scheduler_->ApplyRepositoryEntryAuthoringChange(3, change);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        EXPECT_FALSE(obj->contains(std::string_view("errorKind")))
+            << "host apply after boundary write-back failed: "
+            << Das::Utils::SerializeYyjsonValue(result).value_or("");
+        EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+    }
+
+    // ④ 存储对账：新节点在（3 节点）+ 边界编辑保住（begin 口 2 个）+
+    // 宿主 revision 再推进（7）。
+    {
+        auto properties = EntryAcceptedProperties(*settings_manager_, 3);
+        ASSERT_TRUE(properties.has_value());
+        auto props_obj = properties->as_object();
+        ASSERT_TRUE(props_obj.has_value());
+        ASSERT_TRUE(props_obj->contains(std::string_view("nodes")));
+        auto nodes = (*props_obj)[std::string_view("nodes")].as_array();
+        ASSERT_TRUE(nodes.has_value());
+        EXPECT_EQ(nodes->size(), 3u)
+            << "host apply node add lost after boundary write-back";
+
+        auto begin_settings = HostGraphNodeSettings(*properties, "n_begin");
+        ASSERT_TRUE(begin_settings.has_value());
+        auto begin_obj = begin_settings->as_object();
+        ASSERT_TRUE(begin_obj.has_value());
+        auto ports_arr =
+            (*begin_obj)[std::string_view("boundaryPorts")].as_array();
+        ASSERT_TRUE(ports_arr.has_value());
+        EXPECT_EQ(ports_arr->size(), 2u)
+            << "boundary edit was clobbered by the stale cached host session";
+    }
+    {
+        auto entry_json = settings_manager_->GetTaskRepositoryEntryJson("0", 3);
+        auto entry_obj = entry_json.as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        auto authoring =
+            (*entry_obj)[std::string_view("authoring")].as_object();
+        ASSERT_TRUE(authoring.has_value());
+        // 宿主 revision 再推进（5 →边界 6 →宿主 apply 7）：边界写回把文档
+        // version 与 authoring 域同源推进（revision 墙同源化），宿主 apply
+        // 的 revision 域校验（base+1）依赖该不变量。
+        EXPECT_EQ(
+            (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
+            7);
     }
 }
 
