@@ -2675,3 +2675,492 @@ DAS_C_API DasResult CreateGraphBoundaryAuthoringSession(
         return DAS_E_OUT_OF_MEMORY;
     }
 }
+
+// ===========================================================================
+// 组件绑定扫描 / 节点写回（调度编排支持）——图文档形状判据知识本体。
+// ===========================================================================
+namespace
+{
+    // 节点的 componentRef 组件 guid（targetKind 非 componentRef 或形状
+    // 不全时返回空串）。
+    std::string ComponentGuidOfNode(const yyjson::value& node_value)
+    {
+        auto node_obj = node_value.as_object();
+        if (!node_obj || !node_obj->contains(std::string_view("target")))
+        {
+            return {};
+        }
+        auto target = (*node_obj)[std::string_view("target")].as_object();
+        if (!target)
+        {
+            return {};
+        }
+        auto target_kind =
+            (*target)[std::string_view("targetKind")].as_string();
+        if (!target_kind || *target_kind != std::string_view("componentRef"))
+        {
+            return {};
+        }
+        if (!target->contains(std::string_view("componentRef")))
+        {
+            return {};
+        }
+        const auto& ref = (*target)[std::string_view("componentRef")];
+        if (ref.is_null())
+        {
+            return {};
+        }
+        auto ref_obj = ref.as_object();
+        if (!ref_obj)
+        {
+            return {};
+        }
+        auto guid = (*ref_obj)[std::string_view("componentGuid")].as_string();
+        if (!guid)
+        {
+            return {};
+        }
+        return std::string(*guid);
+    }
+
+    // 组件 guid → taskRepositoryRef 配置字段名列表（数据源=actionCatalog
+    // 数组的 config 声明——与编译侧绑条目判据同一目录语义，业务中立不
+    // 特判组件）。catalog 缺席/非数组/畸形 → 空表（无绑定判据可用）。
+    std::unordered_map<std::string, std::vector<std::string>>
+    CollectRepositoryRefFields(const yyjson::value& catalog_root)
+    {
+        std::unordered_map<std::string, std::vector<std::string>> fields;
+        auto catalog = catalog_root.as_array();
+        if (!catalog)
+        {
+            return fields;
+        }
+        for (const auto& entry_value : *catalog)
+        {
+            auto entry_obj = entry_value.as_object();
+            if (!entry_obj
+                || !entry_obj->contains(std::string_view("actionId")))
+            {
+                continue;
+            }
+            auto action_id =
+                (*entry_obj)[std::string_view("actionId")].as_string();
+            if (!action_id || action_id->empty())
+            {
+                continue;
+            }
+            if (!entry_obj->contains(std::string_view("config")))
+            {
+                continue;
+            }
+            auto config = (*entry_obj)[std::string_view("config")].as_array();
+            if (!config)
+            {
+                continue;
+            }
+            for (const auto& field_value : *config)
+            {
+                auto field_obj = field_value.as_object();
+                if (!field_obj
+                    || !field_obj->contains(std::string_view("type")))
+                {
+                    continue;
+                }
+                auto type = (*field_obj)[std::string_view("type")].as_string();
+                if (!type || *type != std::string_view("taskRepositoryRef"))
+                {
+                    continue;
+                }
+                if (!field_obj->contains(std::string_view("name")))
+                {
+                    continue;
+                }
+                auto name = (*field_obj)[std::string_view("name")].as_string();
+                if (!name || name->empty())
+                {
+                    continue;
+                }
+                fields[std::string(*action_id)].emplace_back(*name);
+            }
+        }
+        return fields;
+    }
+
+    // 绑条目判定（判据=编译侧 BoundRepositoryEntryIdOf 同款语义：声明的
+    // taskRepositoryRef 字段持正整数值）——返回该正整数，nullopt=未绑。
+    std::optional<int64_t> BoundEntryIdOfNode(
+        const yyjson::value&            node_value,
+        const std::vector<std::string>& repository_field_names)
+    {
+        auto node_obj = node_value.as_object();
+        if (!node_obj || !node_obj->contains(std::string_view("settings")))
+        {
+            return std::nullopt;
+        }
+        auto settings_obj =
+            (*node_obj)[std::string_view("settings")].as_object();
+        if (!settings_obj)
+        {
+            return std::nullopt;
+        }
+        for (const auto& field_name : repository_field_names)
+        {
+            if (!settings_obj->contains(std::string_view(field_name)))
+            {
+                continue;
+            }
+            const auto& value = (*settings_obj)[std::string_view(field_name)];
+            if (value.is_int())
+            {
+                const auto entry_id = value.as_int();
+                if (entry_id.has_value() && *entry_id > 0)
+                {
+                    return *entry_id;
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
+    // 节点 settings 的克隆读取（绑定清单的 settings 段）。
+    yyjson::value NodeSettingsOf(const yyjson::value& node_value)
+    {
+        auto node_obj = node_value.as_object();
+        if (node_obj && node_obj->contains(std::string_view("settings")))
+        {
+            const auto& settings_ref =
+                (*node_obj)[std::string_view("settings")];
+            return Das::Utils::CloneYyjsonValue(settings_ref);
+        }
+        return Das::Utils::MakeYyjsonObject();
+    }
+
+    // 单条边的级联命中判定：任一端点落在（node_id, removed_port_ids）内
+    // 即删（removeNodePort apply 级联 erase 的双侧删语义）。
+    bool EdgeReferencesRemovedPort(
+        const yyjson::value&            edge,
+        std::string_view                node_id,
+        const std::vector<std::string>& removed_port_ids)
+    {
+        auto edge_obj = edge.as_object();
+        if (!edge_obj)
+        {
+            return false;
+        }
+        auto source_node =
+            (*edge_obj)[std::string_view("sourceNodeId")].as_string();
+        auto source_port =
+            (*edge_obj)[std::string_view("sourcePortId")].as_string();
+        auto target_node =
+            (*edge_obj)[std::string_view("targetNodeId")].as_string();
+        auto target_port =
+            (*edge_obj)[std::string_view("targetPortId")].as_string();
+        const bool source_hit = source_node.has_value()
+                                && *source_node == node_id
+                                && source_port.has_value()
+                                && std::find(
+                                       removed_port_ids.begin(),
+                                       removed_port_ids.end(),
+                                       *source_port)
+                                       != removed_port_ids.end();
+        const bool target_hit = target_node.has_value()
+                                && *target_node == node_id
+                                && target_port.has_value()
+                                && std::find(
+                                       removed_port_ids.begin(),
+                                       removed_port_ids.end(),
+                                       *target_port)
+                                       != removed_port_ids.end();
+        return source_hit || target_hit;
+    }
+
+    // 序列化 + 经 ParseDasJsonFromString 装配 IDasJson 出参（本文件 C ABI
+    // 的既有出参形态）。
+    DasResult EmitJsonOutput(
+        const yyjson::value&             value,
+        Das::ExportInterface::IDasJson** pp_out)
+    {
+        auto serialized = Das::Utils::SerializeYyjsonValue(value);
+        if (!serialized.has_value())
+        {
+            return DAS_E_FAIL;
+        }
+        return ParseDasJsonFromString(serialized->c_str(), pp_out);
+    }
+} // namespace
+
+// 图文档组件绑定扫描：非图文档（无 nodes 数组）输出空数组（调用方零
+// faces 零动作）；畸形文档 JSON 返回 DAS_E_INVALID_JSON（fail-closed）。
+// catalog 缺席（null/空串）= 无绑定判据（全部按未绑输出）。
+DAS_C_API DasResult GraphScanComponentBindings(
+    IDasReadOnlyString*              p_graph_document_json,
+    IDasReadOnlyString*              p_action_catalog_json,
+    Das::ExportInterface::IDasJson** pp_out_bindings)
+{
+    if (pp_out_bindings == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out_bindings = nullptr;
+
+    std::string document_text;
+    if (p_graph_document_json == nullptr
+        || !ReadUtf8(p_graph_document_json, document_text)
+        || document_text.empty())
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    yyjson::value bindings(Das::Utils::MakeYyjsonArray());
+    try
+    {
+        yyjson::value catalog_root(Das::Utils::MakeYyjsonArray());
+        if (p_action_catalog_json != nullptr)
+        {
+            std::string catalog_text;
+            if (ReadUtf8(p_action_catalog_json, catalog_text)
+                && !catalog_text.empty())
+            {
+                try
+                {
+                    catalog_root = yyjson::read(catalog_text);
+                }
+                catch (...)
+                {
+                    // catalog 畸形：无绑定判据可用（空表），扫描继续——
+                    // 绑定判据缺席不阻断清单产出。
+                    catalog_root = Das::Utils::MakeYyjsonArray();
+                }
+            }
+        }
+        const auto repository_ref_fields =
+            CollectRepositoryRefFields(catalog_root);
+
+        auto document_root = yyjson::read(document_text);
+        auto document_obj = document_root.as_object();
+        if (document_obj && document_obj->contains(std::string_view("nodes")))
+        {
+            const auto& nodes_ref = (*document_obj)[std::string_view("nodes")];
+            auto        nodes_arr = nodes_ref.as_array();
+            if (nodes_arr)
+            {
+                for (const auto& node_value : *nodes_arr)
+                {
+                    auto node_obj = node_value.as_object();
+                    if (!node_obj
+                        || !node_obj->contains(std::string_view("nodeId")))
+                    {
+                        continue;
+                    }
+                    auto node_id =
+                        (*node_obj)[std::string_view("nodeId")].as_string();
+                    if (!node_id || node_id->empty())
+                    {
+                        continue;
+                    }
+                    const std::string component_guid =
+                        ComponentGuidOfNode(node_value);
+                    if (component_guid.empty())
+                    {
+                        continue;
+                    }
+
+                    yyjson::value binding(Das::Utils::MakeYyjsonObject());
+                    auto          binding_obj = binding.as_object();
+                    (*binding_obj)[std::string_view("nodeId")] = std::make_pair(
+                        std::string_view(*node_id),
+                        yyjson::copy_string);
+                    (*binding_obj)[std::string_view("componentGuid")] =
+                        std::make_pair(
+                            std::string_view(component_guid),
+                            yyjson::copy_string);
+                    const auto field_it =
+                        repository_ref_fields.find(component_guid);
+                    if (field_it != repository_ref_fields.end())
+                    {
+                        auto bound_entry =
+                            BoundEntryIdOfNode(node_value, field_it->second);
+                        if (bound_entry.has_value())
+                        {
+                            (*binding_obj)[std::string_view("boundEntryId")] =
+                                *bound_entry;
+                        }
+                    }
+                    (*binding_obj)[std::string_view("settings")] =
+                        NodeSettingsOf(node_value);
+                    bindings.as_array()->emplace_back(std::move(binding));
+                }
+            }
+        }
+        return EmitJsonOutput(bindings, pp_out_bindings);
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+    catch (...)
+    {
+        return DAS_E_INVALID_JSON;
+    }
+}
+
+// 图文档节点写回：settings 整体替换 + 被删口边级联（重建式——nodes 逐
+// 条克隆、edges 过滤、其余顶层键原样克隆）。节点不存在时输出原文档的
+// 副本（调用方按需持久化）。
+DAS_C_API DasResult GraphWriteComponentNodeDocument(
+    IDasReadOnlyString*              p_graph_document_json,
+    IDasReadOnlyString*              p_node_id,
+    IDasReadOnlyString*              p_node_settings_json,
+    IDasReadOnlyString*              p_removed_port_ids_json,
+    Das::ExportInterface::IDasJson** pp_out_document)
+{
+    if (pp_out_document == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out_document = nullptr;
+
+    std::string document_text;
+    std::string node_id_text;
+    std::string settings_text;
+    std::string removed_text;
+    if (p_graph_document_json == nullptr
+        || !ReadUtf8(p_graph_document_json, document_text)
+        || document_text.empty() || p_node_id == nullptr
+        || !ReadUtf8(p_node_id, node_id_text) || node_id_text.empty()
+        || p_node_settings_json == nullptr
+        || !ReadUtf8(p_node_settings_json, settings_text))
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    try
+    {
+        auto                     document_root = yyjson::read(document_text);
+        yyjson::value            new_settings = yyjson::read(settings_text);
+        std::vector<std::string> removed_port_ids;
+        if (p_removed_port_ids_json != nullptr
+            && ReadUtf8(p_removed_port_ids_json, removed_text)
+            && !removed_text.empty())
+        {
+            auto removed_root = yyjson::read(removed_text);
+            auto removed_arr = removed_root.as_array();
+            if (removed_arr)
+            {
+                for (const auto& removed_value : *removed_arr)
+                {
+                    if (auto removed_id = removed_value.as_string();
+                        removed_id && !removed_id->empty())
+                    {
+                        removed_port_ids.emplace_back(*removed_id);
+                    }
+                }
+            }
+        }
+
+        bool          node_found = false;
+        yyjson::value nodes_out(Das::Utils::MakeYyjsonArray());
+        {
+            auto document_obj = document_root.as_object();
+            if (document_obj
+                && document_obj->contains(std::string_view("nodes")))
+            {
+                const auto& nodes_ref =
+                    (*document_obj)[std::string_view("nodes")];
+                auto nodes_arr = nodes_ref.as_array();
+                if (nodes_arr)
+                {
+                    for (const auto& node_value : *nodes_arr)
+                    {
+                        auto node_obj = node_value.as_object();
+                        if (node_obj
+                            && node_obj->contains(std::string_view("nodeId")))
+                        {
+                            auto current_id =
+                                (*node_obj)[std::string_view("nodeId")]
+                                    .as_string();
+                            if (current_id
+                                && *current_id
+                                       == std::string_view(node_id_text))
+                            {
+                                node_found = true;
+                                yyjson::value updated =
+                                    Das::Utils::CloneYyjsonValue(node_value);
+                                auto updated_obj = updated.as_object();
+                                if (updated_obj)
+                                {
+                                    (*updated_obj)[std::string_view(
+                                        "settings")] =
+                                        Das::Utils::CloneYyjsonValue(
+                                            new_settings);
+                                }
+                                nodes_out.as_array()->emplace_back(
+                                    std::move(updated));
+                                continue;
+                            }
+                        }
+                        nodes_out.as_array()->emplace_back(
+                            Das::Utils::CloneYyjsonValue(node_value));
+                    }
+                }
+            }
+        }
+        if (!node_found)
+        {
+            return EmitJsonOutput(document_root, pp_out_document);
+        }
+
+        yyjson::value updated_properties(Das::Utils::MakeYyjsonObject());
+        auto          out_obj = updated_properties.as_object();
+        {
+            auto document_obj = document_root.as_object();
+            if (document_obj)
+            {
+                for (const auto& [key, value] : *document_obj)
+                {
+                    if (key == std::string_view("nodes"))
+                    {
+                        (*out_obj)[std::string_view(key)] =
+                            std::move(nodes_out);
+                    }
+                    else if (key == std::string_view("edges"))
+                    {
+                        yyjson::value edges_out(Das::Utils::MakeYyjsonArray());
+                        auto          edges_arr = value.as_array();
+                        if (edges_arr)
+                        {
+                            for (const auto& edge_value : *edges_arr)
+                            {
+                                if (EdgeReferencesRemovedPort(
+                                        edge_value,
+                                        std::string_view(node_id_text),
+                                        removed_port_ids))
+                                {
+                                    continue;
+                                }
+                                edges_out.as_array()->emplace_back(
+                                    Das::Utils::CloneYyjsonValue(edge_value));
+                            }
+                        }
+                        (*out_obj)[std::string_view(key)] =
+                            std::move(edges_out);
+                    }
+                    else
+                    {
+                        (*out_obj)[std::string_view(key)] =
+                            Das::Utils::CloneYyjsonValue(value);
+                    }
+                }
+            }
+        }
+        return EmitJsonOutput(updated_properties, pp_out_document);
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+    catch (...)
+    {
+        return DAS_E_INVALID_JSON;
+    }
+}

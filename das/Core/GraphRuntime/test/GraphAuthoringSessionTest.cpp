@@ -3879,4 +3879,274 @@ namespace
             EXPECT_TRUE(*execution == component_guid);
         }
     }
+
+    // =====================================================================
+    // 组件绑定扫描 / 节点写回（调度编排支持）——图形状判据知识的
+    // GraphRuntime 侧测试。
+    // =====================================================================
+
+    DasPtr<Das::ExportInterface::IDasJson> ScanBindings(
+        const std::string& document,
+        const std::string& catalog = "{}")
+    {
+        DasPtr<Das::ExportInterface::IDasJson> out;
+        const auto                             hr = GraphScanComponentBindings(
+            MakeStr(document).Get(),
+            MakeStr(catalog).Get(),
+            out.Put());
+        EXPECT_EQ(hr, DAS_S_OK);
+        return out;
+    }
+
+    std::string ScanBindingsText(
+        const std::string& document,
+        const std::string& catalog = "{}")
+    {
+        const auto bindings = ScanBindings(document, catalog);
+        return bindings.Get() ? JsonToUtf8(bindings.Get()) : std::string();
+    }
+
+    TEST(ComponentBindingsScanTest, ScanEmptyForNonGraphDocument)
+    {
+        // 非图文档（formSequence 契约形状，无顶层 nodes）→ 空数组。
+        EXPECT_EQ(
+            Compact(ScanBindingsText(R"json({
+                "viewKind": "formSequence",
+                "formSequence": {"items": []}
+            })json")),
+            "[]");
+        EXPECT_EQ(Compact(ScanBindingsText(R"json({"version": 1})json")), "[]");
+    }
+
+    TEST(ComponentBindingsScanTest, ScanListsComponentRefNodesWithSettings)
+    {
+        const auto text = ScanBindingsText(R"json({
+            "nodes": [
+                {
+                    "nodeId": "n_begin",
+                    "target": {"targetKind": "componentRef",
+                               "componentRef": {"kind": "componentRef",
+                                                "componentGuid": "G-1"}},
+                    "settings": {"boundaryPorts": [{"id": "p1"}]}
+                },
+                {"nodeId": "not_component_ref",
+                 "target": {"targetKind": "other"}, "settings": {}}
+            ],
+            "edges": []
+        })json");
+        const auto compact = Compact(text);
+        // componentRef 节点产出一条（nodeId/componentGuid/settings 随行，
+        // 无 boundEntryId 键）；非 componentRef 节点跳过。
+        EXPECT_NE(compact.find("\"nodeId\":\"n_begin\""), std::string::npos);
+        EXPECT_NE(compact.find("\"componentGuid\":\"G-1\""), std::string::npos);
+        EXPECT_NE(
+            compact.find("\"settings\":{\"boundaryPorts\":[{\"id\":\"p1\"}]}"),
+            std::string::npos);
+        EXPECT_EQ(compact.find("boundEntryId"), std::string::npos);
+        EXPECT_EQ(compact.find("not_component_ref"), std::string::npos);
+    }
+
+    TEST(ComponentBindingsScanTest, ScanResolvesBoundEntryViaTaskRepositoryRef)
+    {
+        const auto catalog = R"json([
+            {"actionId": "G-1", "label": "Invoke",
+             "config": [
+                 {"name": "repositoryRef", "type": "taskRepositoryRef"},
+                 {"name": "plain", "type": "int"}
+             ]}
+        ])json";
+        const auto compact = Compact(ScanBindingsText(
+            R"json({
+                "nodes": [
+                    {"nodeId": "n1",
+                     "target": {"targetKind": "componentRef",
+                                "componentRef": {"kind": "componentRef",
+                                                 "componentGuid": "G-1"}},
+                     "settings": {"repositoryRef": 7, "plain": 3}}
+                ]
+            })json",
+            catalog));
+        EXPECT_NE(compact.find("\"boundEntryId\":7"), std::string::npos);
+    }
+
+    TEST(
+        ComponentBindingsScanTest,
+        ScanSkipsNonPositiveOrMalformedRepositoryRefValues)
+    {
+        const auto catalog = R"json([
+            {"actionId": "G-1", "label": "Invoke",
+             "config": [{"name": "repositoryRef", "type": "taskRepositoryRef"}]}
+        ])json";
+        const auto document = R"json({
+            "nodes": [
+                {"nodeId": "zero",
+                 "target": {"targetKind": "componentRef",
+                            "componentRef": {"kind": "componentRef",
+                                             "componentGuid": "G-1"}},
+                 "settings": {"repositoryRef": 0}},
+                {"nodeId": "negative",
+                 "target": {"targetKind": "componentRef",
+                            "componentRef": {"kind": "componentRef",
+                                             "componentGuid": "G-1"}},
+                 "settings": {"repositoryRef": -3}},
+                {"nodeId": "string_ref",
+                 "target": {"targetKind": "componentRef",
+                            "componentRef": {"kind": "componentRef",
+                                             "componentGuid": "G-1"}},
+                 "settings": {"repositoryRef": "7"}},
+                {"nodeId": "missing",
+                 "target": {"targetKind": "componentRef",
+                            "componentRef": {"kind": "componentRef",
+                                             "componentGuid": "G-1"}},
+                 "settings": {}}
+            ]
+        })json";
+        // 非正/畸形/缺席的 ref 值一律不产 boundEntryId（判据边界：正值才
+        // 绑定），节点本身仍列清单。
+        EXPECT_EQ(
+            Compact(ScanBindingsText(document, catalog)).find("boundEntryId"),
+            std::string::npos);
+        for (const std::string_view node_id :
+             {"zero", "negative", "string_ref", "missing"})
+        {
+            const auto text = ScanBindingsText(document, catalog);
+            EXPECT_NE(
+                Compact(text).find(
+                    std::string("\"nodeId\":\"") + std::string(node_id) + "\""),
+                std::string::npos)
+                << node_id;
+        }
+    }
+
+    TEST(ComponentBindingsScanTest, ScanWithoutCatalogLeavesEntriesUnbound)
+    {
+        // catalog 缺席/非数组（{} 对象）：无绑定判据——全部按未绑输出，
+        // 不报错不阻断。
+        const auto document = R"json({
+            "nodes": [
+                {"nodeId": "n1",
+                 "target": {"targetKind": "componentRef",
+                            "componentRef": {"kind": "componentRef",
+                                             "componentGuid": "G-1"}},
+                 "settings": {"repositoryRef": 7}}
+            ]
+        })json";
+        EXPECT_EQ(
+            Compact(ScanBindingsText(document)).find("boundEntryId"),
+            std::string::npos);
+        EXPECT_EQ(
+            Compact(ScanBindingsText(document, "{}")).find("boundEntryId"),
+            std::string::npos);
+    }
+
+    TEST(ComponentBindingsScanTest, ScanRejectsInvalidDocumentJson)
+    {
+        DasPtr<Das::ExportInterface::IDasJson> out;
+        EXPECT_EQ(
+            GraphScanComponentBindings(
+                MakeStr("{not json").Get(),
+                nullptr,
+                out.Put()),
+            DAS_E_INVALID_JSON);
+        EXPECT_EQ(
+            GraphScanComponentBindings(nullptr, nullptr, out.Put()),
+            DAS_E_INVALID_POINTER);
+    }
+
+    std::string WriteNodeDocumentText(
+        const std::string& document,
+        const std::string& node_id,
+        const std::string& settings,
+        const std::string& removed_ids = "[]")
+    {
+        DasPtr<Das::ExportInterface::IDasJson> out;
+        const auto hr = GraphWriteComponentNodeDocument(
+            MakeStr(document).Get(),
+            MakeStr(node_id).Get(),
+            MakeStr(settings).Get(),
+            MakeStr(removed_ids).Get(),
+            out.Put());
+        EXPECT_EQ(hr, DAS_S_OK);
+        return out.Get() ? JsonToUtf8(out.Get()) : std::string();
+    }
+
+    TEST(ComponentBindingsWriteTest, WriteReplacesNodeSettingsAndKeepsRest)
+    {
+        const auto updated = WriteNodeDocumentText(
+            R"json({
+                "documentId": "doc",
+                "version": 3,
+                "nodes": [
+                    {"nodeId": "n1",
+                     "target": {"targetKind": "componentRef",
+                                "componentRef": {"kind": "componentRef",
+                                                 "componentGuid": "G-1"}},
+                     "settings": {"old": true}}
+                ],
+                "edges": [],
+                "viewData": {"positions": {"n1": [1, 2]}}
+            })json",
+            "n1",
+            R"json({"boundaryPorts": [{"id": "p1", "type": "string"}]})json");
+        const auto compact = Compact(updated);
+        // settings 整体替换（旧键消失）。
+        EXPECT_EQ(compact.find("\"old\"", 0), std::string::npos);
+        EXPECT_NE(compact.find("\"boundaryPorts\""), std::string::npos);
+        // 其余顶层键与其它节点字段原样保留。
+        EXPECT_NE(compact.find("\"documentId\":\"doc\""), std::string::npos);
+        EXPECT_NE(compact.find("\"version\":3"), std::string::npos);
+        EXPECT_NE(compact.find("\"viewData\""), std::string::npos);
+    }
+
+    TEST(ComponentBindingsWriteTest, WriteCascadesEdgesOnRemovedPorts)
+    {
+        const auto updated = WriteNodeDocumentText(
+            R"json({
+                "nodes": [
+                    {"nodeId": "n1",
+                     "target": {"targetKind": "componentRef",
+                                "componentRef": {"kind": "componentRef",
+                                                 "componentGuid": "G-1"}},
+                     "settings": {}},
+                    {"nodeId": "n2",
+                     "target": {"targetKind": "componentRef",
+                                "componentRef": {"kind": "componentRef",
+                                                 "componentGuid": "G-2"}},
+                     "settings": {}}
+                ],
+                "edges": [
+                    {"edgeId": "e1", "sourceNodeId": "n1",
+                     "sourcePortId": "p1", "targetNodeId": "n2",
+                     "targetPortId": "in", "edgeType": "data"},
+                    {"edgeId": "e2", "sourceNodeId": "n2",
+                     "sourcePortId": "out", "targetNodeId": "n1",
+                     "targetPortId": "p9", "edgeType": "data"}
+                ]
+            })json",
+            "n1",
+            "{}",
+            R"json(["p1"])json");
+        const auto compact = Compact(updated);
+        // 引用（n1, p1）的 e1 双侧删；目标口不在删集的 e2 保留。
+        EXPECT_EQ(compact.find("\"edgeId\":\"e1\"", 0), std::string::npos);
+        EXPECT_NE(compact.find("\"edgeId\":\"e2\""), std::string::npos);
+    }
+
+    TEST(ComponentBindingsWriteTest, WriteUnknownNodeReturnsVerbatimCopy)
+    {
+        const auto document = R"json({
+            "nodes": [
+                {"nodeId": "n1",
+                 "target": {"targetKind": "componentRef",
+                            "componentRef": {"kind": "componentRef",
+                                             "componentGuid": "G-1"}},
+                 "settings": {"old": true}}
+            ]
+        })json";
+        const auto updated = WriteNodeDocumentText(
+            document,
+            "missing_node",
+            R"json({"boundaryPorts": []})json");
+        EXPECT_EQ(Compact(updated), Compact(document));
+    }
 } // namespace

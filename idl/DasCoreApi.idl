@@ -322,4 +322,33 @@ module
         const DasGuid* p_component_guid,
         IDasReadOnlyString* p_context_json,
         [out] Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session);
+
+    //=============================================================================
+    // Graph document component bindings (scheduler orchestration support)
+    //=============================================================================
+
+    // 图文档组件绑定扫描（业务中立清单）：解析 graph 文档
+    // （GraphDocumentDto 序列化形状，顶层 nodes 数组；非图文档输出空数
+    // 组），对每个 componentRef 节点输出
+    // {nodeId, componentGuid, boundEntryId?, settings}。boundEntryId 仅当
+    // action catalog（数组形状）声明该组件的 taskRepositoryRef 配置字段
+    // 且节点 settings 持正整数值时输出（编译侧绑条目判据同源语义）。
+    // 图形状判据知识归 GraphRuntime——调用方（SchedulerService 预备
+    // pass / begin/end 文档管线）纯编排。
+    [ export, c_abi ] DasResult GraphScanComponentBindings(
+        IDasReadOnlyString* p_graph_document_json,
+        IDasReadOnlyString* p_action_catalog_json,
+        [out] Das::ExportInterface::IDasJson** pp_out_bindings);
+
+    // 图文档节点写回（组件文档会话产物落宿主图）：把 node_id 节点的
+    // settings 整体替换为 node_settings_json，并按 removed_port_ids_json
+    // （字符串数组）级联删除引用该节点被删口的边（双侧删——
+    // removeNodePort apply 级联 erase 同款语义）。输出更新后的完整图文
+    // 档（其余顶层键原样保留）；节点不存在时输出原文档副本。
+    [ export, c_abi ] DasResult GraphWriteComponentNodeDocument(
+        IDasReadOnlyString* p_graph_document_json,
+        IDasReadOnlyString* p_node_id,
+        IDasReadOnlyString* p_node_settings_json,
+        IDasReadOnlyString* p_removed_port_ids_json,
+        [out] Das::ExportInterface::IDasJson** pp_out_document);
 }

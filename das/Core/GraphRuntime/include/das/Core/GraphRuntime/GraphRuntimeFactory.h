@@ -163,4 +163,38 @@ DAS_C_API DasResult CreateGraphBoundaryAuthoringSession(
     IDasReadOnlyString*                              p_context_json,
     Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session);
 
+// ---------------------------------------------------------------------------
+// Component bindings scan / node document write-back (scheduler
+// orchestration support)
+// ---------------------------------------------------------------------------
+// Graph-document shape knowledge (componentRef extraction, taskRepositoryRef
+// binding judgment, node settings read/replace, removed-port edge cascade)
+// lives in GraphRuntime; the scheduler (authoring faces pre-pass, boundary
+// document pipeline) orchestrates on the business-neutral binding list these
+// entries emit. Primary declarations are auto-generated in
+// DasCoreApi.generated.h; these forward declarations follow the same
+// build-shim convention as CreateGraphBoundaryAuthoringSession above.
+// ---------------------------------------------------------------------------
+
+// Scan a graph document (raw GraphDocumentDto shape, top-level nodes array;
+// non-graph documents yield an empty array) for componentRef nodes:
+// [{nodeId, componentGuid, boundEntryId?, settings}]. boundEntryId is emitted
+// only when the action catalog declares a taskRepositoryRef config field for
+// the component and the node settings carry a positive integer under it.
+DAS_C_API DasResult GraphScanComponentBindings(
+    IDasReadOnlyString*              p_graph_document_json,
+    IDasReadOnlyString*              p_action_catalog_json,
+    Das::ExportInterface::IDasJson** pp_out_bindings);
+
+// Replace the node's settings wholesale and cascade-delete edges referencing
+// the node's removed ports (both sides — same erase semantics as the
+// removeNodePort apply path). Emits the updated full graph document (other
+// top-level keys preserved verbatim; an unknown node yields a verbatim copy).
+DAS_C_API DasResult GraphWriteComponentNodeDocument(
+    IDasReadOnlyString*              p_graph_document_json,
+    IDasReadOnlyString*              p_node_id,
+    IDasReadOnlyString*              p_node_settings_json,
+    IDasReadOnlyString*              p_removed_port_ids_json,
+    Das::ExportInterface::IDasJson** pp_out_document);
+
 #endif // DAS_CORE_GRAPHRUNTIME_GRAPHRUNTIMEFACTORY_H
