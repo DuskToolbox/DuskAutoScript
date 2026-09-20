@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include "../src/DasGraphTaskAuthoringSession.h"
+#include "../src/DasGraphTaskAuthoringSessionFactory.h"
 #include "../src/GraphTaskFocusLog.h"
 #include "../src/GraphTaskFocusLogComponent.h"
 
@@ -1668,6 +1669,161 @@ TEST(DasGraphTaskTest, NonEmptyGraphContextDoesNotAppendBoundaryNodes)
     EXPECT_EQ(nodes[0].node_id, "x1");
     EXPECT_EQ(nodes[0].component_guid, "{g9}");
     DestroyGraphAuthoringSession(state);
+}
+
+// ---------------------------------------------------------------------
+// 工厂 begin/end 分支（边界会话托管）：begin/end 组件 guid 命中时工厂
+// 包装 Core 边界 authoring 会话（CreateGraphBoundaryAuthoringSession 出
+// 口）；非边界 guid 走既有图会话路径。context 原文透传——faces/catalog
+// 键由 Core 在既有解析点消费，插件纯管道零加工。
+// ---------------------------------------------------------------------
+
+namespace
+{
+    // 经工厂 CreateSession 建会话（context 原文包装为 IDasJson；null 上下
+    // 文合法——空 settings 起步）。
+    DasResult CreateFactorySession(
+        const DasGuid&                                          task_guid,
+        const char*                                             context_json,
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>& session)
+    {
+        DasPtr<Das::ExportInterface::IDasJson> context;
+        if (context_json != nullptr)
+        {
+            const auto parse =
+                ParseDasJsonFromString(context_json, context.Put());
+            if (DAS::IsFailed(parse))
+            {
+                return parse;
+            }
+        }
+        DasGraphTaskAuthoringSessionFactory factory;
+        return factory.CreateSession(task_guid, context.Get(), session.Put());
+    }
+
+    // 会话 GetDocument 响应文本（失败返回空串）。
+    std::string SessionDocumentText(
+        Das::PluginInterface::IDasTaskAuthoringSession* session)
+    {
+        if (session == nullptr)
+        {
+            return {};
+        }
+        DasPtr<Das::ExportInterface::IDasJson> document;
+        if (DAS::IsFailed(session->GetDocument(nullptr, document.Put())))
+        {
+            return {};
+        }
+        return JsonTextOf(document.Get());
+    }
+} // namespace
+
+// begin guid：工厂返回 Core 边界会话，GetDocument 双通道投影（items 写通
+// 道 + ports 读通道），方向由角色固化为 input。
+TEST(DasGraphTaskTest, FactoryCreateSessionWrapsBoundarySessionForBeginGuid)
+{
+    DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+    ASSERT_EQ(
+        CreateFactorySession(
+            GuidOfText(BEGIN_COMPONENT_GUID_TEXT),
+            R"({"boundaryPorts":[{"id":"p1","type":"string"}],"revision":5})",
+            session),
+        DAS_S_OK);
+    ASSERT_NE(session.Get(), nullptr);
+
+    // QI：会话的 COM 身份即 IDasTaskAuthoringSession。
+    DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> qi_session;
+    EXPECT_EQ(
+        session->QueryInterface(
+            DasIidOf<Das::PluginInterface::IDasTaskAuthoringSession>(),
+            reinterpret_cast<void**>(qi_session.Put())),
+        DAS_S_OK);
+    EXPECT_NE(qi_session.Get(), nullptr);
+
+    const auto text = SessionDocumentText(session.Get());
+    ASSERT_FALSE(text.empty());
+    yyjson::value envelope = yyjson::read(text);
+    auto          envelope_obj = envelope.as_object();
+    ASSERT_TRUE(envelope_obj.has_value());
+    auto document = (*envelope_obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    EXPECT_EQ(
+        (*document)[std::string_view("viewKind")].as_string().value_or(""),
+        std::string_view("formSequence"));
+    EXPECT_EQ(
+        (*document)[std::string_view("revision")].as_sint().value_or(0),
+        5);
+    auto ports = (*document)[std::string_view("ports")].as_array();
+    ASSERT_TRUE(ports.has_value());
+    ASSERT_EQ(ports->size(), 1u);
+    auto port_obj = (*ports)[0].as_object();
+    ASSERT_TRUE(port_obj.has_value());
+    EXPECT_EQ(
+        (*port_obj)[std::string_view("id")].as_string().value_or(""),
+        std::string_view("p1"));
+    EXPECT_EQ(
+        (*port_obj)[std::string_view("type")].as_string().value_or(""),
+        std::string_view("string"));
+    EXPECT_EQ(
+        (*port_obj)[std::string_view("direction")].as_string().value_or(""),
+        std::string_view("input"));
+    auto form_sequence =
+        (*document)[std::string_view("formSequence")].as_object();
+    ASSERT_TRUE(form_sequence.has_value());
+    auto items = (*form_sequence)[std::string_view("items")].as_array();
+    ASSERT_TRUE(items.has_value());
+    EXPECT_EQ(items->size(), 1u);
+}
+
+// end guid：同款托管，方向由角色固化为 output。
+TEST(DasGraphTaskTest, FactoryCreateSessionWrapsBoundarySessionForEndGuid)
+{
+    DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+    ASSERT_EQ(
+        CreateFactorySession(
+            GuidOfText(END_COMPONENT_GUID_TEXT),
+            R"({"boundaryPorts":[{"id":"p_out","type":"int"}]})",
+            session),
+        DAS_S_OK);
+    ASSERT_NE(session.Get(), nullptr);
+
+    const auto text = SessionDocumentText(session.Get());
+    ASSERT_FALSE(text.empty());
+    yyjson::value envelope = yyjson::read(text);
+    auto          envelope_obj = envelope.as_object();
+    ASSERT_TRUE(envelope_obj.has_value());
+    auto document = (*envelope_obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    auto ports = (*document)[std::string_view("ports")].as_array();
+    ASSERT_TRUE(ports.has_value());
+    ASSERT_EQ(ports->size(), 1u);
+    auto port_obj = (*ports)[0].as_object();
+    ASSERT_TRUE(port_obj.has_value());
+    EXPECT_EQ(
+        (*port_obj)[std::string_view("id")].as_string().value_or(""),
+        std::string_view("p_out"));
+    EXPECT_EQ(
+        (*port_obj)[std::string_view("direction")].as_string().value_or(""),
+        std::string_view("output"));
+}
+
+// 普通图 task guid：既有图会话路径不变（graph 文档上下文 → graph 视图文
+// 档——会话仍是插件自有的图会话，非 Core 边界会话）。
+TEST(DasGraphTaskTest, FactoryCreateSessionKeepsGraphPathForGraphTaskGuid)
+{
+    DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+    ASSERT_EQ(
+        CreateFactorySession(
+            GuidOfText("F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3"),
+            R"({"nodes":[{"nodeId":"x1","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{g9}","pluginGuid":"{p}"}},"settings":{}}],"edges":[]})",
+            session),
+        DAS_S_OK);
+    ASSERT_NE(session.Get(), nullptr);
+
+    const auto text = SessionDocumentText(session.Get());
+    ASSERT_FALSE(text.empty());
+    const auto compacted = CompactText(text);
+    EXPECT_NE(compacted.find("\"viewKind\":\"graph\""), std::string::npos);
 }
 
 // begin 组件经真工厂实例化：GetGuid 按 kind 分派 begin GUID；Do 把输入
