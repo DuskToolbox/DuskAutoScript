@@ -13,6 +13,7 @@ namespace Das::PluginInterface
     DAS_INTERFACE IDasComponent;
     DAS_INTERFACE IDasPluginPackage;
     DAS_INTERFACE IDasBasicErrorLens;
+    DAS_INTERFACE IDasTaskAuthoringSession;
 } // namespace Das::PluginInterface
 
 namespace Das::ExportInterface

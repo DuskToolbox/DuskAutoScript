@@ -1,5 +1,6 @@
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 
+#include "GraphBoundaryAuthoringSession.h"
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 #include <das/Core/GraphRuntime/AuthoringDocContract.h>
@@ -2776,5 +2777,59 @@ DAS_C_API DasResult GraphDeriveBoundaryPorts(
     catch (...)
     {
         return DAS_E_FAIL;
+    }
+}
+
+// begin/end 边界组件 authoring 会话的 create 出口。component_guid 参数
+// 决定会话角色（begin/end 之一；方向固化的信任基础）——其它 guid 拒绝
+// （fail-closed）。context_json 携带该节点 settings（含 boundaryPorts）
+// 与顶层 revision；null/空串 = 空 settings 起步（engaged-only）。
+DAS_C_API DasResult CreateGraphBoundaryAuthoringSession(
+    const DasGuid*                                   p_component_guid,
+    IDasReadOnlyString*                              p_context_json,
+    Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+{
+    if (pp_out_session == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out_session = nullptr;
+    if (p_component_guid == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    const auto role =
+        Das::Core::GraphRuntime::GraphBoundaryAuthoringSession::RoleOfGuid(
+            *p_component_guid);
+    if (role
+        == Das::Core::GraphRuntime::GraphBoundaryAuthoringSession::
+            BoundaryRole::kNone)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateGraphBoundaryAuthoringSession: component guid is not a "
+            "boundary component (begin/end)");
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::string context;
+    if (!ReadUtf8(p_context_json, context))
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    try
+    {
+        auto* session =
+            new Das::Core::GraphRuntime::GraphBoundaryAuthoringSession(
+                role,
+                context);
+        session->AddRef();
+        *pp_out_session = session;
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
     }
 }

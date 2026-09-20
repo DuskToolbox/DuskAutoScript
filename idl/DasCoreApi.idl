@@ -309,4 +309,17 @@ module
 
     [ export, c_abi ] DasResult CreateGraphRuntime(
         [out] Das::ExportInterface::IDasGraphRuntime * *pp_out_runtime);
+
+    //=============================================================================
+    // Boundary component (graph begin/end) authoring session
+    //=============================================================================
+
+    // begin/end 边界组件的自有 authoring 会话（Core GraphRuntime 内实现）。
+    // component_guid 必须是 begin/end 边界组件 GUID 之一——其它 guid 返回
+    // DAS_E_INVALID_ARGUMENT（角色决定口方向固化：begin 只入 / end 只出）；
+    // context_json 携带该节点 settings（boundaryPorts 键）与顶层 revision。
+    [ export, c_abi ] DasResult CreateGraphBoundaryAuthoringSession(
+        const DasGuid* p_component_guid,
+        IDasReadOnlyString* p_context_json,
+        [out] Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session);
 }

@@ -1,3 +1,4 @@
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 #include <das/Core/TaskScheduler/TaskAuthoringContract.h>
@@ -3226,5 +3227,225 @@ namespace
             Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
         EXPECT_TRUE(result.valid)
             << result.error_kind << ": " << result.message;
+    }
+
+    // ------------------------------------------------------------------
+    // Boundary component (graph begin/end) authoring session
+    // ------------------------------------------------------------------
+
+    constexpr std::string_view kBoundaryBeginGuidText =
+        "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E";
+    constexpr std::string_view kBoundaryEndGuidText =
+        "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D";
+
+    DasGuid BoundaryGuidOf(std::string_view text)
+    {
+        return Das::Core::ForeignInterfaceHost::MakeDasGuid(text);
+    }
+
+    // begin/end 会话 create 出口（DAS_C_API）直调包装。
+    struct BoundarySession
+    {
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        explicit BoundarySession(
+            std::string_view   guid_text,
+            const std::string& context)
+        {
+            const DasGuid guid = BoundaryGuidOf(guid_text);
+            auto          ctx = MakeStr(context);
+            CreateGraphBoundaryAuthoringSession(
+                &guid,
+                ctx.Get(),
+                session.Put());
+        }
+    };
+
+    // GetDocument envelope 的 document 值（envelope = {document,
+    // diagnostics}——与 MaaPI 会话同构）。
+    yyjson::value BoundaryDocumentOf(
+        Das::PluginInterface::IDasTaskAuthoringSession* session)
+    {
+        DasPtr<Das::ExportInterface::IDasJson> out;
+        session->GetDocument(nullptr, out.Put());
+        auto json = JsonToUtf8(out.Get());
+        auto root = yyjson::read(json);
+        auto obj = root.as_object();
+        if (!obj || !obj->contains(std::string_view("document")))
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("document")]);
+    }
+
+    TEST(BoundaryAuthoringSessionTest, CreateAcceptsBeginAndEndGuids)
+    {
+        for (const auto guid_text :
+             {kBoundaryBeginGuidText, kBoundaryEndGuidText})
+        {
+            const BoundarySession s{guid_text, "{}"};
+            ASSERT_NE(s.session.Get(), nullptr);
+            void*           queried = nullptr;
+            const DasResult hr = s.session->QueryInterface(
+                DasIidOf<Das::PluginInterface::IDasTaskAuthoringSession>(),
+                &queried);
+            EXPECT_EQ(hr, DAS_S_OK);
+            ASSERT_NE(queried, nullptr);
+            static_cast<Das::PluginInterface::IDasTaskAuthoringSession*>(
+                queried)
+                ->Release();
+        }
+    }
+
+    TEST(BoundaryAuthoringSessionTest, CreateRejectsNullPointer)
+    {
+        const DasGuid guid = BoundaryGuidOf(kBoundaryBeginGuidText);
+        Das::PluginInterface::IDasTaskAuthoringSession* out = nullptr;
+        EXPECT_EQ(
+            CreateGraphBoundaryAuthoringSession(nullptr, nullptr, &out),
+            DAS_E_INVALID_POINTER);
+        EXPECT_EQ(
+            CreateGraphBoundaryAuthoringSession(&guid, nullptr, nullptr),
+            DAS_E_INVALID_POINTER);
+    }
+
+    TEST(BoundaryAuthoringSessionTest, CreateRejectsNonBoundaryGuid)
+    {
+        // 反证 guid：DasGraphTask 插件 guid（非 begin/end 边界组件）。
+        const DasGuid other =
+            BoundaryGuidOf("C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D");
+        Das::PluginInterface::IDasTaskAuthoringSession* out = nullptr;
+        EXPECT_EQ(
+            CreateGraphBoundaryAuthoringSession(&other, nullptr, &out),
+            DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(out, nullptr);
+    }
+
+    TEST(BoundaryAuthoringSessionTest, BeginGetDocumentProjectsBothChannels)
+    {
+        const BoundarySession s{
+            kBoundaryBeginGuidText,
+            R"({"revision":5,"boundaryPorts":[)"
+            R"({"id":"p1","type":"string"},{"id":"p2","type":"int"}]})"};
+        const auto document = BoundaryDocumentOf(s.session.Get());
+
+        // 投影过严格校验器（formSequence + chrome 三键 + ports section
+        // 与文档协议立法层 lockstep）。
+        auto validation =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_TRUE(validation.valid)
+            << validation.error_kind << ": " << validation.message;
+
+        auto doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        EXPECT_TRUE(doc_obj->contains(std::string_view("revision")));
+        auto revision = (*doc_obj)[std::string_view("revision")].as_int();
+        ASSERT_TRUE(revision.has_value());
+        EXPECT_EQ(*revision, 5);
+
+        // items 写通道：与 boundaryPorts 一一对应（id 顺序一致）。
+        auto form_seq = (*doc_obj)[std::string_view("formSequence")];
+        auto fs_obj = form_seq.as_object();
+        ASSERT_TRUE(fs_obj.has_value());
+        auto items = (*fs_obj)[std::string_view("items")].as_array();
+        ASSERT_TRUE(items.has_value());
+        ASSERT_EQ(items->size(), 2);
+        auto first_item = (*items)[0].as_object();
+        ASSERT_TRUE(first_item.has_value());
+        auto first_id = (*first_item)[std::string_view("id")].as_string();
+        ASSERT_TRUE(first_id.has_value());
+        EXPECT_EQ(*first_id, "p1");
+        // 条目字段：id 文本 + type select（candidates=九词）。
+        auto fields = (*first_item)[std::string_view("fields")].as_array();
+        ASSERT_TRUE(fields.has_value());
+        ASSERT_EQ(fields->size(), 2);
+        auto type_field = (*fields)[1].as_object();
+        ASSERT_TRUE(type_field.has_value());
+        auto input_type = (*type_field)[std::string_view("inputType")].as_int();
+        ASSERT_TRUE(input_type.has_value());
+        EXPECT_EQ(*input_type, 1); // select
+        auto candidates =
+            (*type_field)[std::string_view("candidates")].as_array();
+        ASSERT_TRUE(candidates.has_value());
+        EXPECT_EQ(candidates->size(), 9);
+
+        // chrome 三键非空字符串。
+        for (const std::string_view chrome_key :
+             {"listTitle", "addButtonLabel", "emptyStateHint"})
+        {
+            ASSERT_TRUE(fs_obj->contains(chrome_key));
+            auto text = (*fs_obj)[chrome_key].as_string();
+            ASSERT_TRUE(text.has_value());
+            EXPECT_FALSE(text->empty()) << chrome_key;
+        }
+
+        // ports 读通道：begin 恒 input。
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports.has_value());
+        ASSERT_EQ(ports->size(), 2);
+        for (const auto& port : *ports)
+        {
+            auto port_obj = port.as_object();
+            ASSERT_TRUE(port_obj.has_value());
+            auto direction =
+                (*port_obj)[std::string_view("direction")].as_string();
+            ASSERT_TRUE(direction.has_value());
+            EXPECT_EQ(*direction, "input");
+        }
+    }
+
+    TEST(BoundaryAuthoringSessionTest, EndGetDocumentPortsAllOutput)
+    {
+        const BoundarySession s{
+            kBoundaryEndGuidText,
+            R"({"boundaryPorts":[{"id":"out1","type":"double"}]})"};
+        const auto document = BoundaryDocumentOf(s.session.Get());
+        auto       doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports.has_value());
+        ASSERT_EQ(ports->size(), 1);
+        auto port_obj = (*ports)[0].as_object();
+        ASSERT_TRUE(port_obj.has_value());
+        auto direction = (*port_obj)[std::string_view("direction")].as_string();
+        ASSERT_TRUE(direction.has_value());
+        EXPECT_EQ(*direction, "output");
+    }
+
+    TEST(BoundaryAuthoringSessionTest, EmptyStartProjectsEmptyChannels)
+    {
+        // 无 boundaryPorts 键：engaged-only 起步态——两通道均为空数组。
+        const BoundarySession s{kBoundaryBeginGuidText, R"({"other":1})"};
+        const auto            document = BoundaryDocumentOf(s.session.Get());
+        auto                  doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        auto form_seq = (*doc_obj)[std::string_view("formSequence")];
+        auto fs_obj = form_seq.as_object();
+        ASSERT_TRUE(fs_obj.has_value());
+        auto items = (*fs_obj)[std::string_view("items")].as_array();
+        ASSERT_TRUE(items.has_value());
+        EXPECT_EQ(items->size(), 0);
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports.has_value());
+        EXPECT_EQ(ports->size(), 0);
+    }
+
+    TEST(BoundaryAuthoringSessionTest, MalformedBoundaryPortsDegradesToEmpty)
+    {
+        // 畸形状态键整体降级为零口（faces 通道同款降级语义）——投影恒为
+        // 合法空文档，不携畸形进 wire。
+        const BoundarySession s{
+            kBoundaryEndGuidText,
+            R"({"boundaryPorts":[{"id":"bad","type":"signal"}]})"};
+        const auto document = BoundaryDocumentOf(s.session.Get());
+        auto       validation =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_TRUE(validation.valid)
+            << validation.error_kind << ": " << validation.message;
+        auto doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports.has_value());
+        EXPECT_EQ(ports->size(), 0);
     }
 } // namespace

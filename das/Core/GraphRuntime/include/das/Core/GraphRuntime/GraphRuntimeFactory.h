@@ -7,6 +7,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasGraphRuntime.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSession.Implements.hpp>
 
 #include <string>
 
@@ -147,5 +148,28 @@ DAS_C_API DasResult GraphDeriveBoundaryPorts(
     IDasReadOnlyString*  p_document_json,
     IDasReadOnlyString*  p_catalog_json,
     IDasReadOnlyString** pp_out_boundary_json);
+
+// ---------------------------------------------------------------------------
+// Boundary component (graph begin/end) authoring session create export
+// ---------------------------------------------------------------------------
+// begin/end are GraphRuntime-internal structural components with their own
+// authoring session (homologous to the plugin-provided MaaPI session): the
+// state domain is the node's settings (boundaryPorts key), the document is a
+// pure projection (formSequence items = write channel, root ports section =
+// read channel), and the port direction is role-fixed (begin = input only,
+// end = output only). The session class lives in
+// GraphBoundaryAuthoringSession.{h,cpp}; this create entry is its C ABI
+// export.
+// ---------------------------------------------------------------------------
+
+// C ABI factory — primary declaration is auto-generated in
+// DasCoreApi.generated.h (the [ export, c_abi ] entry in
+// idl/DasCoreApi.idl). This forward declaration ensures C++ code can call it
+// before CMake reconfigure (same build-shim convention as CreateGraphRuntime
+// above).
+DAS_C_API DasResult CreateGraphBoundaryAuthoringSession(
+    const DasGuid*                                   p_component_guid,
+    IDasReadOnlyString*                              p_context_json,
+    Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session);
 
 #endif // DAS_CORE_GRAPHRUNTIME_GRAPHRUNTIMEFACTORY_H
