@@ -5098,15 +5098,27 @@ namespace Das::Core::TaskScheduler
             }
 
             auto entry_json = CloneJsonValue(yyjson::object(entry));
+            // faces 预备 pass（执行链编译宿主与 HTTP 管线外圈同源）：嵌套
+            // 调用（graph→graph）经本通道编译子图时，子图动态边界口面
+            // （begin/end 文档口、绑条目文档口）经 context 注入编译知识源
+            // ——冷启动执行不依赖任何 UI Get 预热。混合 stamp 作缓存失效
+            // 键 + enforce_fresh=true：执行编译恒用最新口面。
+            auto context = MakeRepositoryAuthoringContextJson(
+                plugin_manager_,
+                entry.entry_id,
+                entry.accepted_properties,
+                entry_json);
+            const int64_t faces_revision = AppendComponentFacesContextKeys(
+                context,
+                entry.accepted_properties,
+                entry.entry_id);
             auto compile_entry = GetOrCreateAuthoringSession(
                 repository_authoring_sessions_,
                 capability,
                 entry.entry_id,
-                MakeRepositoryAuthoringContextJson(
-                    plugin_manager_,
-                    entry.entry_id,
-                    entry.accepted_properties,
-                    entry_json));
+                std::move(context),
+                faces_revision,
+                /*enforce_fresh=*/true);
             if (!compile_entry)
             {
                 RepositoryInvoke::RepositoryInvokeProviderCompileResult result;
@@ -5923,15 +5935,24 @@ namespace Das::Core::TaskScheduler
         }
 
         // Compile 走 IPC 长耗时，必须在 mutex_ 外执行。
+        // faces 预备 pass（执行链编译宿主与 HTTP 管线外圈同源）：首跑
+        // next_execution_time 计算的编译口面与 HTTP 路径同源（动态口不
+        // 因无 UI Get 预热而从编译口面消失）。混合 stamp 作缓存失效键 +
+        // enforce_fresh=true：执行编译恒用最新口面。
+        auto context = MakeAuthoringContextJson(
+            plugin_manager_,
+            task_id,
+            properties,
+            task_json);
+        const int64_t faces_revision =
+            AppendComponentFacesContextKeys(context, properties, task_id);
         auto entry = GetOrCreateAuthoringSession(
             task_authoring_sessions_,
             capability,
             task_id,
-            MakeAuthoringContextJson(
-                plugin_manager_,
-                task_id,
-                properties,
-                task_json));
+            std::move(context),
+            faces_revision,
+            /*enforce_fresh=*/true);
         if (!entry || !entry->session)
         {
             DAS_CORE_LOG_WARN(
@@ -6881,15 +6902,29 @@ namespace Das::Core::TaskScheduler
                     "0",
                     selected_id);
 
+            // faces 预备 pass（执行链编译宿主与 HTTP 管线外圈同源）：进程
+            // 重启后调度器自动跑图任务（无任何 UI Get 预热）时，图编译口
+            // 面的动态口（begin/end 边界口、绑条目文档口）经 context 注
+            // 入——$graph_input 广播绑定与嵌套调用边界输入不因冷启动丢
+            // 失。混合 stamp 作缓存失效键 + enforce_fresh=true：执行编译
+            // 恒用最新口面（缓存会话创建戳过期即重建）。
+            auto ontick_context = MakeAuthoringContextJson(
+                plugin_manager_,
+                selected_id,
+                properties_copy,
+                task_json);
+            const int64_t ontick_faces_revision =
+                AppendComponentFacesContextKeys(
+                    ontick_context,
+                    properties_copy,
+                    selected_id);
             auto ontick_entry = GetOrCreateAuthoringSession(
                 task_authoring_sessions_,
                 *authoring_capability,
                 selected_id,
-                MakeAuthoringContextJson(
-                    plugin_manager_,
-                    selected_id,
-                    properties_copy,
-                    task_json));
+                std::move(ontick_context),
+                ontick_faces_revision,
+                /*enforce_fresh=*/true);
             if (!ontick_entry || !ontick_entry->session)
             {
                 compile_failed = true;

@@ -366,8 +366,11 @@ namespace Das::Core::TaskScheduler
             TaskAuthoringCapability& out_capability);
 
         /// 组件文档口面预备 pass：图会话 context 装配时（Get/Apply/Compile
-        /// 管线外圈、锁外）扫图文档节点，把组件文档的口面快照现算注入
-        /// context 的 nodeFaces/entryFaces 键。瞬态现算零持久化零新缓存
+        /// 管线外圈 + 执行链编译宿主——ExecuteSelectedTask/
+        /// ComputeInitialNextExecutionTime/RepositoryInvoke 的
+        /// compile_authoring，锁外）扫图文档节点，把组件文档的口面快照现
+        /// 算注入 context 的 nodeFaces/entryFaces
+        /// 键。瞬态现算零持久化零新缓存层
         /// ——绑条目节点复用既有条目会话缓存（GetOrCreateAuthoringSession，
         /// 按 revision+locale 失效），未绑 componentRef 节点（含 begin/end，
         /// 经注册面反查命中既有 QI 链，无特判）现建临时会话。无该 section
@@ -375,7 +378,8 @@ namespace Das::Core::TaskScheduler
         /// nodes 数组）直接返回，context 保持现状逐字节一致。host_id 用于
         /// 自引用防护：绑条目等于宿主 id 时跳过（否则宿主会话锁自死锁）。
         /// 调用位必须在 mutex_ 短锁段之外（内部会短暂取 mutex_ 做注册表
-        /// 反查与条目会话缓存 resolve）。
+        /// 反查与条目会话缓存 resolve）。执行链编译宿主与 HTTP 路径同源
+        /// 调用（编译知识源单一——冷启动执行不依赖 UI Get 预热）。
         ///
         /// 返回值 = 宿主会话缓存的有效 revision 戳：faces 经 context 只在
         /// 会话创建时播种进 Core 会话状态，而宿主（图）会话缓存按宿主自身

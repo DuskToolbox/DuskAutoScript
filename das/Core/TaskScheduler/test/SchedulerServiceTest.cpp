@@ -5668,6 +5668,137 @@ TEST_F(SchedulerRuntimeBackedTest, GraphFacesPassSkipsNodesWithoutCapability)
         << "face injected for a node whose component has no registry record";
 }
 
+// 执行链冷启动 faces 同源：无任何 UI Get 预热，RunTaskNow 直接执行图任务
+// ——ExecuteSelectedTask 建编译会话前跑同一 faces 预备 pass（与 HTTP 管线
+// 外圈同款调用）：未绑 componentRef 节点（组件有 authoring 会话）经瞬态
+// 会话 GetDocument 现算口面注入执行编译 context。观察通道=Fake 会话计数
+// 器：get_document_count 只有 GetDocument 递增，而执行链在修复前不触任
+// 何组件文档 Get（图任务编译走真实 DasGraphTask 会话，Fake 计数恒零）。
+TEST_F(SchedulerRuntimeBackedTest, ExecutionChainColdStartRunsFacesPrepPass)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+
+    {
+        auto properties = Das::Utils::ParseYyjsonFromString(R"json({
+            "documentId": "faces-coldstart-graph",
+            "version": 1,
+            "nodes": [
+                {
+                    "nodeId": "n_begin",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {}
+                },
+                {
+                    "nodeId": "probe",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "97BA1BE0-A199-47CB-9604-440B8BBC6555",
+                            "pluginGuid": "12345678-9ABC-4DEF-8123-456789ABCDEF"
+                        }
+                    },
+                    "settings": {}
+                }
+            ],
+            "edges": [],
+            "tags": []
+        })json");
+        ASSERT_TRUE(properties.has_value());
+        SeedGraphTaskInstance(*settings_manager_, std::move(*properties));
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    ASSERT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+
+    // Fake 会话走严格 envelope 形态并开 ports section（faces 注入链全形
+    // 态走通——口面快照真实产出，非仅计数）。
+    EnableStrictAuthoringWire(*shared_state_);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->emit_ports_section = true;
+        shared_state_->set_emit_ports_section_id("e1");
+    }
+
+    size_t get_document_before = 0;
+    size_t session_before = 0;
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        get_document_before = shared_state_->get_document_count;
+        session_before = shared_state_->authoring_session_count;
+    }
+
+    // 冷启动执行：此前零 Get/Apply/Compile 调用（无 UI 预热）。
+    ASSERT_EQ(scheduler_->RunTaskNow(0), DAS_S_OK);
+
+    // 等待执行链编译消费组件文档口面（预备 pass 的瞬态会话 GetDocument）。
+    bool faces_consulted = false;
+    {
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            {
+                const ipc_scoped_lock lock(shared_state_->mutex);
+                faces_consulted =
+                    shared_state_->get_document_count > get_document_before;
+            }
+            if (faces_consulted)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    EXPECT_TRUE(faces_consulted)
+        << "执行链编译未消费组件文档口面（faces 预备 pass 未在执行链跑）";
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_GT(shared_state_->authoring_session_count, session_before)
+            << "预备 pass 未为 componentRef 节点建瞬态 authoring 会话";
+    }
+
+    // 收尾：等图任务 Do 完成（probe 组件执行），避免 TearDown 与执行尾段
+    // 竞态。
+    {
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        bool probe_done = false;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            {
+                const ipc_scoped_lock lock(shared_state_->mutex);
+                probe_done = shared_state_->component_do_count >= 1;
+            }
+            if (probe_done)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        EXPECT_TRUE(probe_done) << "graph task probe component never executed";
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+}
+
 // 组件语境标记透传链：authoring get/apply/compile 请求体的可选布尔键
 // componentContext（缺省 false）→ SchedulerService context 装配 →
 // CreateSession 收到的 context_json（MaaPI 工厂消费在后续 plan）。带 true
@@ -5966,7 +6097,8 @@ namespace
     yyjson::value SeedGraphRepositoryEntry(
         Das::Core::SettingsManager::SettingsManager& settings,
         int64_t                                      entry_id,
-        std::string_view                             edges_json)
+        std::string_view                             edges_json,
+        int64_t                                      document_version = 1)
     {
         yyjson::value entry(Das::Utils::MakeYyjsonObject());
         (*entry.as_object())[std::string_view("entryId")] = entry_id;
@@ -5995,7 +6127,8 @@ namespace
                 std::string(
                     R"json({
                     "documentId": "boundary-host-graph",
-                    "version": 1,
+                    "version": )json")
+                + std::to_string(document_version) + R"json(,
                     "nodes": [
                         {
                             "nodeId": "n_begin",
@@ -6027,9 +6160,9 @@ namespace
                         }
                     ],
                     "edges": )json"
-                    + std::string(edges_json) + R"json(,
+                + std::string(edges_json) + R"json(,
                     "tags": []
-                })json"));
+                })json");
             EXPECT_TRUE(properties.has_value());
             (*entry.as_object())[std::string_view("acceptedProperties")] =
                 std::move(*properties);
@@ -6313,8 +6446,8 @@ TEST_F(
 }
 
 // begin/end 节点文档 Apply 删口级联（MaaPI 对齐管线侧）：removeFormSequence
-// Item 删 p1 → 会话 diagnostics 携带被删口 id → 管线对宿主图文档执行边级
-// 联（removeNodePort 级联 erase 语义，双侧删）→ 不触该口的边保留。
+// Item 删 p1 → 会话 diagnostics 携带被删口 id → 管线对宿主图文档执行边
+// 级（removeNodePort 级联 erase 语义，双侧删）→ 不触该口的边保留。
 TEST_F(SchedulerRuntimeBackedTest, BoundaryDocumentApplyRemoveItemCascadesEdges)
 {
     WriteFactoryPluginManifest(
