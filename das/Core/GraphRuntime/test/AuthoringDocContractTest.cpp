@@ -2105,6 +2105,132 @@ namespace
     }
 
     // -----------------------------------------------------------------------
+    // 线性⊂图法则：图文档永不进线性变更路径。graph→formSequence 的
+    // best-effort 翻转（LINEAR_TAG 塞入）已退役；线性 change kinds
+    // （item 家族 + formSequenceItem 定向 setValue）对图文档一律拒绝，
+    // 拒绝零突变。formSequence→graph 升级方向保留（上方既有用例钉死）。
+    // -----------------------------------------------------------------------
+
+    /// Serialize the authoritative store source blob to a byte string
+    /// (zero-mutation assertions compare these byte-for-byte).
+    std::string SourceJsonOf(const Dto::GraphDocumentDto& doc)
+    {
+        return Das::Utils::SerializeYyjsonValue(Contract::SerializeSource(doc))
+            .value_or(std::string{});
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        LinearGuard_GraphToFormSequenceConvertViewRetired)
+    {
+        GraphDocumentDto doc;
+        doc.version = 9;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        const std::string source_before = SourceJsonOf(doc);
+
+        AuthoringChange cv;
+        cv.kind = "convertView";
+        cv.target_view_kind = "formSequence";
+        auto r = ApplyAuthoringChange(doc, cv);
+        EXPECT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp);
+        EXPECT_EQ(
+            r.message,
+            "linear change kinds are not applicable to graph documents; "
+            "a graph is never converted to linear");
+        // 零突变：tags 无 LINEAR_TAG 新增、revision 不动、存储逐字节不变。
+        EXPECT_FALSE(IsLinear(doc));
+        EXPECT_EQ(doc.version, 9);
+        EXPECT_EQ(SourceJsonOf(doc), source_before);
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        LinearGuard_LinearKindsRejectedOnGraphDocument)
+    {
+        GraphDocumentDto doc;
+        doc.version = 4;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.1));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.2));
+        const std::string source_before = SourceJsonOf(doc);
+
+        const auto expect_linear_guard_rejection =
+            [&doc](const AuthoringChange& change)
+        {
+            auto r = ApplyAuthoringChange(doc, change, {"{g1}", "{g2}"});
+            EXPECT_FALSE(r.Ok()) << change.kind;
+            EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp) << change.kind;
+            EXPECT_EQ(
+                r.message,
+                "linear change kinds are not applicable to graph documents; "
+                "a graph is never converted to linear")
+                << change.kind;
+        };
+
+        AuthoringChange add;
+        add.kind = "addFormSequenceItem";
+        add.action_id = "{g1}";
+        expect_linear_guard_rejection(add);
+
+        AuthoringChange remove;
+        remove.kind = "removeFormSequenceItem";
+        remove.item_or_node_id = "n1";
+        expect_linear_guard_rejection(remove);
+
+        AuthoringChange move;
+        move.kind = "moveFormSequenceItem";
+        move.form_sequence_item_id = "n1";
+        move.destination_index = 1;
+        expect_linear_guard_rejection(move);
+
+        AuthoringChange set;
+        set.kind = "setValue";
+        set.target = SetValueTarget{"formSequenceItem", "n1"};
+        set.field_name = "threshold";
+        set.value = 0.5;
+        expect_linear_guard_rejection(set);
+
+        // 拒绝零突变（validate-all-then-mutate）：节点无增删、revision 不
+        // 动、存储与拒绝前逐字节相等。
+        EXPECT_EQ(doc.nodes.size(), 2u);
+        EXPECT_EQ(doc.version, 4);
+        EXPECT_FALSE(IsLinear(doc));
+        EXPECT_EQ(SourceJsonOf(doc), source_before);
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        LinearGuard_LinearSetValueStillSucceedsOnLinearDocument)
+    {
+        FormSequenceDto seq;
+        seq.items.push_back(
+            {.item_id = "a",
+             .target =
+                 {.target_kind = "componentRef",
+                  .component_ref = MakeCompRef("{ga}")},
+             .settings = MakeSettings(1.0)});
+        auto doc = FormSequenceProjector::Project(seq);
+        doc.tags.emplace_back(LINEAR_TAG);
+
+        AuthoringChange set;
+        set.kind = "setValue";
+        set.target = SetValueTarget{"formSequenceItem", "a"};
+        set.field_name = "threshold";
+        set.value = 0.75;
+        auto r = ApplyAuthoringChange(doc, set);
+        ASSERT_TRUE(r.Ok()) << r.message;
+
+        // 守卫只作用于图文档：原生线性文档的线性 setValue 照旧成功。
+        EXPECT_TRUE(IsLinear(doc));
+        auto settings_obj = doc.nodes[0].settings.as_object();
+        ASSERT_TRUE(settings_obj.has_value());
+        auto threshold =
+            (*settings_obj)[std::string_view("threshold")].as_real();
+        ASSERT_TRUE(threshold.has_value());
+        EXPECT_DOUBLE_EQ(*threshold, 0.75);
+    }
+
+    // -----------------------------------------------------------------------
     // setValue — D-84-24: strict {target, fieldName, value}.
     // -----------------------------------------------------------------------
 
