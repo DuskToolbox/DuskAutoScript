@@ -885,7 +885,8 @@ namespace Das::Core::TaskScheduler
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
         int64_t                                         task_id,
         const yyjson::value&                            properties,
-        const yyjson::value&                            task_json)
+        const yyjson::value&                            task_json,
+        bool component_context = false)
     {
         yyjson::value context(Das::Utils::MakeYyjsonObject());
         auto          obj = context.as_object();
@@ -901,6 +902,12 @@ namespace Das::Core::TaskScheduler
         }
         (*obj)[std::string_view("actionCatalog")] =
             BuildActionCatalogFromRegistry(plugin_manager);
+        // 组件语境标记（engaged-only）：true 才落键——缺省路径 context 与
+        // 现状逐字节一致，工厂读键用 contains 缺席=false（fail-closed）。
+        if (component_context)
+        {
+            (*obj)[std::string_view("componentContext")] = true;
+        }
         return context;
     }
 
@@ -908,7 +915,8 @@ namespace Das::Core::TaskScheduler
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
         int64_t                                         entry_id,
         const yyjson::value&                            properties,
-        const yyjson::value&                            entry_json)
+        const yyjson::value&                            entry_json,
+        bool component_context = false)
     {
         yyjson::value context(Das::Utils::MakeYyjsonObject());
         auto          obj = context.as_object();
@@ -924,7 +932,27 @@ namespace Das::Core::TaskScheduler
         }
         (*obj)[std::string_view("actionCatalog")] =
             BuildActionCatalogFromRegistry(plugin_manager);
+        // 组件语境标记（engaged-only）：同 MakeAuthoringContextJson。
+        if (component_context)
+        {
+            (*obj)[std::string_view("componentContext")] = true;
+        }
         return context;
+    }
+
+    // authoring get/apply/compile 请求体的组件语境标记读取：可选布尔键
+    // componentContext，缺省 false；畸形类型（非布尔，如字符串 "true"）按
+    // 缺省处理不炸路由（fail-closed）。六路由（条目/任务 × get/apply/
+    // compile）各在管线入口读取并透传到 context 装配。
+    static bool ReadComponentContextFlag(const yyjson::value& request)
+    {
+        auto obj = request.as_object();
+        if (!obj || !obj->contains(std::string_view("componentContext")))
+        {
+            return false;
+        }
+        auto flag = (*obj)[std::string_view("componentContext")].as_bool();
+        return flag.has_value() && *flag;
     }
 
     // ------------------------------------------------------------------
@@ -3894,7 +3922,8 @@ namespace Das::Core::TaskScheduler
             plugin_manager_,
             entry_id,
             entry.accepted_properties,
-            entry_json);
+            entry_json,
+            ReadComponentContextFlag(request));
         const int64_t faces_revision = AppendComponentFacesContextKeys(
             context,
             entry.accepted_properties,
@@ -4081,7 +4110,8 @@ namespace Das::Core::TaskScheduler
             plugin_manager_,
             entry_id,
             entry.accepted_properties,
-            entry_json);
+            entry_json,
+            ReadComponentContextFlag(change));
         const int64_t faces_revision = AppendComponentFacesContextKeys(
             context,
             entry.accepted_properties,
@@ -4334,7 +4364,8 @@ namespace Das::Core::TaskScheduler
             plugin_manager_,
             entry_id,
             entry.accepted_properties,
-            entry_json);
+            entry_json,
+            ReadComponentContextFlag(request));
         const int64_t faces_revision = AppendComponentFacesContextKeys(
             context,
             entry.accepted_properties,
@@ -5276,7 +5307,8 @@ namespace Das::Core::TaskScheduler
             plugin_manager_,
             task_id,
             properties,
-            task_json);
+            task_json,
+            ReadComponentContextFlag(request));
         const int64_t faces_revision =
             AppendComponentFacesContextKeys(context, properties, task_id);
         auto entry = GetOrCreateAuthoringSession(
@@ -5594,7 +5626,8 @@ namespace Das::Core::TaskScheduler
             plugin_manager_,
             task_id,
             properties,
-            task_json);
+            task_json,
+            ReadComponentContextFlag(change));
         const int64_t faces_revision =
             AppendComponentFacesContextKeys(context, properties, task_id);
         auto entry = cached_entry ? cached_entry
@@ -5853,7 +5886,8 @@ namespace Das::Core::TaskScheduler
             plugin_manager_,
             task_id,
             properties,
-            task_json);
+            task_json,
+            ReadComponentContextFlag(request));
         const int64_t faces_revision =
             AppendComponentFacesContextKeys(context, properties, task_id);
         auto compile_entry = GetOrCreateAuthoringSession(

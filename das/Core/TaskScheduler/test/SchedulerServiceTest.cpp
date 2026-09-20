@@ -5668,6 +5668,88 @@ TEST_F(SchedulerRuntimeBackedTest, GraphFacesPassSkipsNodesWithoutCapability)
         << "face injected for a node whose component has no registry record";
 }
 
+// 组件语境标记透传链：authoring get/apply/compile 请求体的可选布尔键
+// componentContext（缺省 false）→ SchedulerService context 装配 →
+// CreateSession 收到的 context_json（MaaPI 工厂消费在后续 plan）。带 true
+// → context 含该键 true；不带 → context 无该键（工厂 contains 探测不
+// 到）；畸形类型（字符串 "true"）按缺省处理不炸路由。观察通道=Fake 工厂
+// 的 last_context_* 记录（会话创建时快照）；阶段间用 apply 推进任务
+// revision 强制会话重建以观察新 context。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    AuthoringComponentContextFlagFlowsIntoContext)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+
+    // ① 缺省（无键）：context 无该键。
+    {
+        const yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_FALSE(shared_state_->last_context_had_component_context);
+        EXPECT_FALSE(shared_state_->last_context_component_context);
+    }
+
+    // ② 带 true：apply 推进 revision（重建会话）后 Get，context 含该键
+    //    true。
+    {
+        auto apply = scheduler_->ApplyTaskAuthoringChange(
+            0,
+            MakeStrictAuthoringChange(0));
+        auto apply_obj = apply.as_object();
+        ASSERT_TRUE(apply_obj.has_value());
+        EXPECT_TRUE(
+            (*apply_obj)[std::string_view("ok")].as_bool().value_or(false));
+
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        (*request.as_object())[std::string_view("componentContext")] = true;
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_TRUE(shared_state_->last_context_had_component_context);
+        EXPECT_TRUE(shared_state_->last_context_component_context);
+    }
+
+    // ③ 畸形类型（字符串 "true"）：按缺省处理——路由不炸，context 不含
+    //    true 值。
+    {
+        auto apply = scheduler_->ApplyTaskAuthoringChange(
+            0,
+            MakeStrictAuthoringChange(1));
+        auto apply_obj = apply.as_object();
+        ASSERT_TRUE(apply_obj.has_value());
+        EXPECT_TRUE(
+            (*apply_obj)[std::string_view("ok")].as_bool().value_or(false));
+
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        (*request.as_object())[std::string_view("componentContext")] =
+            std::make_pair(std::string_view("true"), yyjson::copy_string);
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_FALSE(shared_state_->last_context_component_context)
+            << "malformed (string) componentContext must fall back to the "
+               "absent default";
+    }
+}
+
 // graph authoring 的 catalog 端口生产端全链：manifest definition 的独立
 // signals[] 声明（DasMaaPi 形状——条目只有 {id}）、端口级多语言 label map
 // 解析（默认 locale=en 取 map 的 en 值；miss/畸形回退 portId，显示数据
