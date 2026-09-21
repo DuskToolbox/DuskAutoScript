@@ -5597,6 +5597,349 @@ TEST_F(SchedulerRuntimeBackedTest, GraphFacesPassInjectsEntryFacesForBoundNode)
     }
 }
 
+// 预备 pass·图条目自述口面（graph→graph 嵌套全链）：内层图条目（真实
+// DasGraphTask 会话，begin/end 带动态口）经条目 Get 注入自己的 faces 后，
+// 图视图投影根 ports section=推导边界（begin→input/end→output）——预备
+// pass 的绑条目抽取路径零改动即可命中（ExtractFacePortsValue 读根
+// ports section），父图调用节点口面含内层动态口，连线 Apply（faces 通道
+// 端点解析）成功。纯 Get 零写回：条目存储逐字节不变。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    NestedGraphEntrySelfDescribesBoundaryThroughProjection)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+    DeployRealPluginArtifacts(
+        "libDasFlowControl.dll",
+        "DasFlowControl.json",
+        /*force_ipc=*/false,
+        "DasFlowControl");
+
+    // 内层图条目（entry 7）：begin p1（string）/end q1（int）动态口，无绑
+    // 条目（混合 revision 戳与条目自身 revision 一致——预备 pass 复用带
+    // faces 的缓存条目会话）。
+    {
+        yyjson::value entry(Das::Utils::MakeYyjsonObject());
+        (*entry.as_object())[std::string_view("entryId")] =
+            static_cast<int64_t>(7);
+        (*entry.as_object())[std::string_view("displayName")] =
+            "Nested graph entry";
+        (*entry.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        (*entry.as_object())[std::string_view("taskTypeGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        {
+            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+            (*authoring.as_object())[std::string_view("revision")] = 5;
+            (*authoring.as_object())[std::string_view("lastChangeKind")] =
+                std::make_pair(
+                    std::string_view("setValue"),
+                    yyjson::copy_string);
+            (*authoring.as_object())[std::string_view("sourceFingerprint")] =
+                std::make_pair(
+                    std::string_view("nested-seed"),
+                    yyjson::copy_string);
+            (*entry.as_object())[std::string_view("authoring")] =
+                std::move(authoring);
+        }
+        auto inner_properties = Das::Utils::ParseYyjsonFromString(R"json({
+            "documentId": "nested-inner",
+            "version": 1,
+            "nodes": [
+                {
+                    "nodeId": "inner_begin",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {
+                        "boundaryPorts": [
+                            {"id": "p1", "type": "string"}
+                        ]
+                    }
+                },
+                {
+                    "nodeId": "inner_end",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {
+                        "boundaryPorts": [
+                            {"id": "q1", "type": "int"}
+                        ]
+                    }
+                }
+            ],
+            "edges": [],
+            "tags": []
+        })json");
+        ASSERT_TRUE(inner_properties.has_value());
+        (*entry.as_object())[std::string_view("acceptedProperties")] =
+            std::move(*inner_properties);
+        (*entry.as_object())[std::string_view("graphDocument")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        (*entry.as_object())[std::string_view("compiledArtifact")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        {
+            yyjson::value availability(Das::Utils::MakeYyjsonObject());
+            (*availability.as_object())[std::string_view("state")] =
+                "available";
+            (*entry.as_object())[std::string_view("availability")] =
+                std::move(availability);
+        }
+        ASSERT_EQ(
+            settings_manager_->UpdateTaskRepositoryEntryJson("0", 7, entry),
+            DAS_S_OK);
+    }
+
+    // 父图任务实例（task 0）：begin 动态口 p0（连线源——begin 口对的出侧
+    // 供图内寻址）+ 绑条目调用节点（invokeRepository 组件，repositoryRef
+    // 持 entry 7）。
+    {
+        auto properties = Das::Utils::ParseYyjsonFromString(R"json({
+            "documentId": "nested-parent",
+            "version": 1,
+            "nodes": [
+                {
+                    "nodeId": "n_begin",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {
+                        "boundaryPorts": [
+                            {"id": "p0", "type": "string"}
+                        ]
+                    }
+                },
+                {
+                    "nodeId": "invoke",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "68F10007-0000-4000-8000-000000000007",
+                            "pluginGuid": "7115BBFA-7E57-494E-82D5-D4134C367E13"
+                        }
+                    },
+                    "settings": {
+                        "repositoryRef": 7
+                    }
+                }
+            ],
+            "edges": [],
+            "tags": []
+        })json");
+        ASSERT_TRUE(properties.has_value());
+        // authoring 域 revision 与文档 version 同步（生产不变量：每次
+        // apply 两域同步推进——连线 Apply 的 baseRevision 墙按 authoring
+        // 域判定）。
+        yyjson::value task0(Das::Utils::MakeYyjsonObject());
+        (*task0.as_object())[std::string_view("id")] = 0;
+        (*task0.as_object())[std::string_view("taskGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        (*task0.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        (*task0.as_object())[std::string_view("nextExecutionTime")] =
+            static_cast<int64_t>(1);
+        {
+            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+            (*authoring.as_object())[std::string_view("revision")] = 1;
+            (*task0.as_object())[std::string_view("authoring")] =
+                std::move(authoring);
+        }
+        (*task0.as_object())[std::string_view("properties")] =
+            std::move(*properties);
+        WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const auto entry_json_before =
+        settings_manager_->GetTaskRepositoryEntryJson("0", 7);
+
+    // ① 内层图条目 Get：预备 pass 注入 begin/end faces → 图视图投影根
+    //    ports section=推导边界（p1→input / q1→output）——文档自述口面。
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    {
+        auto result =
+            scheduler_->GetRepositoryEntryAuthoringDocument(7, request);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")))
+            << "entry Get failed: "
+            << Das::Utils::SerializeYyjsonValue(result).value_or("");
+        const auto& document = (*obj)[std::string_view("document")];
+        auto        doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        ASSERT_TRUE(doc_obj->contains(std::string_view("ports")))
+            << "inner graph entry document carries no root ports section";
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports.has_value());
+        ASSERT_EQ(ports->size(), 2u);
+        auto first = (*ports)[0].as_object();
+        ASSERT_TRUE(first.has_value());
+        EXPECT_EQ(
+            (*first)[std::string_view("id")].as_string().value_or(""),
+            "p1");
+        EXPECT_EQ(
+            (*first)[std::string_view("direction")].as_string().value_or(""),
+            "input");
+        EXPECT_EQ(
+            (*first)[std::string_view("type")].as_string().value_or(""),
+            "string");
+        auto second = (*ports)[1].as_object();
+        ASSERT_TRUE(second.has_value());
+        EXPECT_EQ(
+            (*second)[std::string_view("id")].as_string().value_or(""),
+            "q1");
+        EXPECT_EQ(
+            (*second)[std::string_view("direction")].as_string().value_or(""),
+            "output");
+    }
+
+    // 纯 Get 零写回：条目存储逐字节不变（ports section 是投影读通道，
+    // 不落 acceptedProperties）。
+    {
+        const auto entry_json_after =
+            settings_manager_->GetTaskRepositoryEntryJson("0", 7);
+        EXPECT_EQ(
+            Das::Utils::SerializeYyjsonValue(entry_json_before, true)
+                .value_or(""),
+            Das::Utils::SerializeYyjsonValue(entry_json_after, true)
+                .value_or(""));
+    }
+
+    // ② 父图 Get：预备 pass 绑条目分支复用带 faces 的条目缓存会话 →
+    //    GetDocument 根 ports section 被抽取路径命中 → 调用节点口面含
+    //    内层动态口（p1/q1）。
+    const auto invoke_node_guid =
+        std::string_view("68F10007-0000-4000-8000-000000000007");
+    {
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+        auto node = FindGraphNodeByComponent(
+            (*obj)[std::string_view("document")],
+            invoke_node_guid);
+        ASSERT_TRUE(node.has_value())
+            << "bound call node missing from the parent projection";
+        EXPECT_TRUE(NodeProjectsPort(*node, "p1"))
+            << "inner begin dynamic port p1 missing from the call node face";
+        EXPECT_TRUE(NodeProjectsPort(*node, "q1"))
+            << "inner end dynamic port q1 missing from the call node face";
+    }
+
+    // ③ 连线 Apply（faces 通道端点解析）：begin 动态口 p0（出侧）→ 调用
+    //    节点 p1（entryFaces 口）——受理且边落盘。baseRevision=authoring
+    //    域 revision（seed 与文档 version 同步为 1）。
+    {
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+        auto doc_obj = (*obj)[std::string_view("document")].as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        const auto revision =
+            (*doc_obj)[std::string_view("revision")].as_sint().value_or(1);
+
+        yyjson::value change(Das::Utils::MakeYyjsonObject());
+        (*change.as_object())[std::string_view("baseRevision")] = revision;
+        yyjson::value element(Das::Utils::MakeYyjsonObject());
+        (*element.as_object())[std::string_view("kind")] = std::make_pair(
+            std::string_view("connectGraphPorts"),
+            yyjson::copy_string);
+        yyjson::value payload(Das::Utils::MakeYyjsonObject());
+        (*payload.as_object())[std::string_view("fromNodeId")] =
+            std::make_pair(std::string_view("n_begin"), yyjson::copy_string);
+        (*payload.as_object())[std::string_view("fromPortId")] =
+            std::make_pair(std::string_view("p0"), yyjson::copy_string);
+        (*payload.as_object())[std::string_view("toNodeId")] =
+            std::make_pair(std::string_view("invoke"), yyjson::copy_string);
+        (*payload.as_object())[std::string_view("toPortId")] =
+            std::make_pair(std::string_view("p1"), yyjson::copy_string);
+        (*element.as_object())[std::string_view("payload")] =
+            std::move(payload);
+        auto changes = Das::Utils::MakeYyjsonArray();
+        (*changes.as_array()).emplace_back(std::move(element));
+        (*change.as_object())[std::string_view("changes")] = std::move(changes);
+
+        auto apply = scheduler_->ApplyTaskAuthoringChange(0, change);
+        auto apply_obj = apply.as_object();
+        ASSERT_TRUE(apply_obj.has_value());
+        EXPECT_TRUE(
+            (*apply_obj)[std::string_view("ok")].as_bool().value_or(false))
+            << "connect onto the inner dynamic port via entryFaces was "
+               "rejected: "
+            << Das::Utils::SerializeYyjsonValue(apply).value_or("");
+
+        auto result_after = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto after_obj = result_after.as_object();
+        ASSERT_TRUE(after_obj.has_value());
+        ASSERT_TRUE(after_obj->contains(std::string_view("document")));
+        auto after_doc = (*after_obj)[std::string_view("document")].as_object();
+        ASSERT_TRUE(after_doc.has_value());
+        ASSERT_TRUE(after_doc->contains(std::string_view("graph")));
+        auto graph = (*after_doc)[std::string_view("graph")].as_object();
+        ASSERT_TRUE(graph.has_value());
+        ASSERT_TRUE(graph->contains(std::string_view("connections")));
+        auto connections = (*graph)[std::string_view("connections")].as_array();
+        ASSERT_TRUE(connections.has_value());
+        bool edge_found = false;
+        for (const auto& connection : *connections)
+        {
+            auto conn_obj = connection.as_object();
+            if (!conn_obj
+                || (*conn_obj)[std::string_view("fromNodeId")]
+                           .as_string()
+                           .value_or("")
+                       != std::string_view("n_begin")
+                || (*conn_obj)[std::string_view("fromPortId")]
+                           .as_string()
+                           .value_or("")
+                       != std::string_view("p0")
+                || (*conn_obj)[std::string_view("toNodeId")]
+                           .as_string()
+                           .value_or("")
+                       != std::string_view("invoke")
+                || (*conn_obj)[std::string_view("toPortId")]
+                           .as_string()
+                           .value_or("")
+                       != std::string_view("p1"))
+            {
+                continue;
+            }
+            edge_found = true;
+        }
+        EXPECT_TRUE(edge_found)
+            << "the accepted connect did not persist into the document";
+    }
+}
+
 // 预备 pass·跳过分支：无注册面记录的 componentRef 节点（纯 manifest 或未
 // 知组件）不注入任何 face——Get 正常、无动态口。非图任务（线性文档）零
 // faces 键：Fake 会话收到的 context 与现状一致（无 nodeFaces/entryFaces

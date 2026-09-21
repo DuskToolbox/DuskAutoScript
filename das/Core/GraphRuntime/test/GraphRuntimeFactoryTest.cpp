@@ -886,3 +886,196 @@ TEST(GraphRuntimeFactoryTest, EntryFacesTypesFlowIntoTypesRegistry)
     }
     EXPECT_TRUE(custom_found);
 }
+
+TEST(GraphRuntimeFactoryTest, GraphViewProjectsDerivedBoundaryPortsSection)
+{
+    // 图条目文档自述口面：faces 注入时图视图投影根 ports section=推导
+    // 边界（begin faces→direction=input / end faces→direction=output——
+    // 推导层的边界排除规则挡下口对镜像侧），形状=根 ports section 契约
+    // （{id,type[,label],direction}），且投影文档过调度侧文档校验器
+    // （三层 lockstep 的 Core 半边——被调面文档恒合法）。
+    const std::string context =
+        std::string(R"({"documentId":"ports_projection","version":3,"nodes":[)")
+        + BoundaryNodeText(
+            "n_0",
+            kBoundaryBeginGuid,
+            R"([{"id":"p_1","type":"string"},{"id":"p_2","type":"int"}])")
+        + ","
+        + BoundaryNodeText(
+            "n_1",
+            kBoundaryEndGuid,
+            R"([{"id":"q_1","type":"image"}])")
+        + R"(],"edges":[],"nodeFaces":[)"
+        + R"({"nodeId":"n_0","ports":[{"id":"p_1","type":"string","direction":"input"},{"id":"p_2","type":"int","direction":"input"}]},)"
+        + R"({"nodeId":"n_1","ports":[{"id":"q_1","type":"image","direction":"output"}]}]})";
+
+    const AuthoringSessionHandle                session{context};
+    Das::DasPtr<Das::ExportInterface::IDasJson> document;
+    ASSERT_EQ(
+        GraphAuthoringSessionGetDocument(
+            session.state,
+            nullptr,
+            document.Put()),
+        DAS_S_OK);
+    ASSERT_NE(document.Get(), nullptr);
+    auto root = yyjson::read(JsonText(document.Get())).as_object();
+    ASSERT_TRUE(root.has_value());
+    ASSERT_TRUE(root->contains(std::string_view("document")));
+    auto doc_obj = (*root)[std::string_view("document")].as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+
+    ASSERT_TRUE(doc_obj->contains(std::string_view("ports")));
+    auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+    ASSERT_TRUE(ports.has_value());
+    ASSERT_EQ(ports->size(), 3u);
+    const auto port_of = [&ports](std::size_t index)
+    { return (*ports)[index].as_object(); };
+    ASSERT_TRUE(port_of(0).has_value());
+    EXPECT_EQ(
+        (*port_of(0))[std::string_view("id")].as_string().value_or(""),
+        "p_1");
+    EXPECT_EQ(
+        (*port_of(0))[std::string_view("type")].as_string().value_or(""),
+        "string");
+    EXPECT_EQ(
+        (*port_of(0))[std::string_view("direction")].as_string().value_or(""),
+        "input");
+    ASSERT_TRUE(port_of(1).has_value());
+    EXPECT_EQ(
+        (*port_of(1))[std::string_view("id")].as_string().value_or(""),
+        "p_2");
+    EXPECT_EQ(
+        (*port_of(1))[std::string_view("type")].as_string().value_or(""),
+        "int");
+    EXPECT_EQ(
+        (*port_of(1))[std::string_view("direction")].as_string().value_or(""),
+        "input");
+    ASSERT_TRUE(port_of(2).has_value());
+    EXPECT_EQ(
+        (*port_of(2))[std::string_view("id")].as_string().value_or(""),
+        "q_1");
+    EXPECT_EQ(
+        (*port_of(2))[std::string_view("type")].as_string().value_or(""),
+        "image");
+    EXPECT_EQ(
+        (*port_of(2))[std::string_view("direction")].as_string().value_or(""),
+        "output");
+
+    // 投影文档过调度侧严格校验器（根 ports section 契约形状）。
+    const auto validation = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+        Das::Utils::CloneYyjsonValue((*root)[std::string_view("document")]));
+    EXPECT_TRUE(validation.valid)
+        << validation.error_kind << ": " << validation.message;
+}
+
+TEST(GraphRuntimeFactoryTest, GraphViewOmitsPortsSectionWithoutFaces)
+{
+    // faces 缺席（standalone 打开、无预备 pass 注入）：根 ports section
+    // 缺省——engaged-only，与现状投影逐字节一致（types 注册表照投——
+    // 既有先例，不受影响）。
+    const std::string context =
+        std::string(R"({"documentId":"ports_standalone","version":3,"nodes":[)")
+        + BoundaryNodeText(
+            "n_0",
+            kBoundaryBeginGuid,
+            R"([{"id":"p_1","type":"string"}])")
+        + ","
+        + BoundaryNodeText(
+            "n_1",
+            kBoundaryEndGuid,
+            R"([{"id":"q_1","type":"int"}])")
+        + R"(],"edges":[]})";
+
+    const AuthoringSessionHandle                session{context};
+    Das::DasPtr<Das::ExportInterface::IDasJson> document;
+    ASSERT_EQ(
+        GraphAuthoringSessionGetDocument(
+            session.state,
+            nullptr,
+            document.Put()),
+        DAS_S_OK);
+    ASSERT_NE(document.Get(), nullptr);
+    auto root = yyjson::read(JsonText(document.Get())).as_object();
+    ASSERT_TRUE(root.has_value());
+    ASSERT_TRUE(root->contains(std::string_view("document")));
+    auto doc_obj = (*root)[std::string_view("document")].as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    EXPECT_FALSE(doc_obj->contains(std::string_view("ports")))
+        << "standalone graph document must not carry a root ports section";
+    EXPECT_TRUE(doc_obj->contains(std::string_view("types")));
+}
+
+TEST(GraphRuntimeFactoryTest, GraphViewPortsSectionMatchesDerivedBoundary)
+{
+    // 同源断言：投影的根 ports section 与 DeriveBoundaryPorts 编译输出一
+    // 致（同一函数两用——投影消费与编译消费永不漂移，测试锁同源）。
+    const std::string context =
+        std::string(
+            R"({"documentId":"ports_same_source","version":3,"nodes":[)")
+        + BoundaryNodeText(
+            "n_0",
+            kBoundaryBeginGuid,
+            R"([{"id":"p_1","type":"string"},{"id":"p_2","type":"int"}])")
+        + ","
+        + BoundaryNodeText(
+            "n_1",
+            kBoundaryEndGuid,
+            R"([{"id":"q_1","type":"image"}])")
+        + R"(],"edges":[],"nodeFaces":[)"
+        + R"({"nodeId":"n_0","ports":[{"id":"p_1","type":"string","direction":"input"},{"id":"p_2","type":"int","direction":"input"}]},)"
+        + R"({"nodeId":"n_1","ports":[{"id":"q_1","type":"image","direction":"output"}]}]})";
+
+    const auto plan = PlanOfContext(context);
+
+    const AuthoringSessionHandle                session{context};
+    Das::DasPtr<Das::ExportInterface::IDasJson> document;
+    ASSERT_EQ(
+        GraphAuthoringSessionGetDocument(
+            session.state,
+            nullptr,
+            document.Put()),
+        DAS_S_OK);
+    ASSERT_NE(document.Get(), nullptr);
+    auto root = yyjson::read(JsonText(document.Get())).as_object();
+    ASSERT_TRUE(root.has_value());
+    ASSERT_TRUE(root->contains(std::string_view("document")));
+    auto doc_obj = (*root)[std::string_view("document")].as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    ASSERT_TRUE(doc_obj->contains(std::string_view("ports")));
+    auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+    ASSERT_TRUE(ports.has_value());
+
+    struct ExpectedPort
+    {
+        std::string id;
+        std::string type;
+        std::string direction;
+    };
+    std::vector<ExpectedPort> expected;
+    for (const auto& port : plan.boundary_ports.inputs)
+    {
+        expected.push_back({port.port_id, port.port_type, "input"});
+    }
+    for (const auto& port : plan.boundary_ports.outputs)
+    {
+        expected.push_back({port.port_id, port.port_type, "output"});
+    }
+    ASSERT_EQ(ports->size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index)
+    {
+        auto port_obj = (*ports)[index].as_object();
+        ASSERT_TRUE(port_obj.has_value());
+        EXPECT_EQ(
+            (*port_obj)[std::string_view("id")].as_string().value_or(""),
+            expected[index].id)
+            << "port " << index << " id diverges from the derivation";
+        EXPECT_EQ(
+            (*port_obj)[std::string_view("type")].as_string().value_or(""),
+            expected[index].type)
+            << "port " << index << " type diverges from the derivation";
+        EXPECT_EQ(
+            (*port_obj)[std::string_view("direction")].as_string().value_or(""),
+            expected[index].direction)
+            << "port " << index << " direction diverges from the derivation";
+    }
+}

@@ -1651,6 +1651,106 @@ namespace Contract
                 }
                 root_obj["types"] = std::move(types_value);
             }
+
+            // 推导边界 ports section（graph 视图投影，engaged-only）：复用
+            // 编译侧 DeriveBoundaryPorts 同一函数（单一事实源——投影与编
+            // 译永不漂移；本语境不绑 catalog provider，推导贡献=注入的
+            // begin/end 文档口面）——begin faces→direction=input、end
+            // faces→direction=output（推导层的边界排除规则挡下口对镜像
+            // 侧）。图条目被调面由此统一「文档自述」（与 MaaPI 推导
+            // ports section 同构），预备 pass 的抽取路径零改动即可命中；
+            // faces 缺席（standalone 打开、无预备 pass 注入）时整 section
+            // 缺省——standalone 图文档投影与现状逐字节一致。口 id 跨侧
+            // 冲突（begin/end 动态口 id 是各自节点内计数器，p_1/p_1 可同
+            // 名）：根 ports section 契约 id 同文档唯一，先到先得
+            // （inputs 先行），后到侧跳过 + WARN。
+            if (node_faces != nullptr && !node_faces->empty())
+            {
+                GraphCompiler compiler;
+                compiler.BindNodeFaces(node_faces);
+                const auto    boundary = compiler.DeriveBoundaryPorts(document);
+                yyjson::value ports_value(Das::Utils::MakeYyjsonArray());
+                auto          ports_arr_o = ports_value.as_array();
+                if (ports_arr_o)
+                {
+                    auto&                           ports_arr = *ports_arr_o;
+                    std::unordered_set<std::string> emitted_ids;
+                    const auto                      append_boundary_port =
+                        [&ports_arr, &emitted_ids, entry_face_types](
+                            const Dto::BoundaryPortDto& port,
+                            std::string_view            direction)
+                    {
+                        const bool builtin_type = std::any_of(
+                            NODE_PORT_VALUE_TYPES.begin(),
+                            NODE_PORT_VALUE_TYPES.end(),
+                            [&port](std::string_view builtin)
+                            { return builtin == port.port_type; });
+                        const bool registered_type =
+                            entry_face_types != nullptr
+                            && std::any_of(
+                                entry_face_types->begin(),
+                                entry_face_types->end(),
+                                [&port](
+                                    const GraphCompiler::DocumentFaceType&
+                                        custom)
+                                { return custom.name == port.port_type; });
+                        if (!builtin_type && !registered_type)
+                        {
+                            DAS_CORE_LOG_WARN(
+                                "derived boundary port {} carries type {} "
+                                "which the root type registry cannot resolve; "
+                                "the port is skipped from the projected "
+                                "ports section",
+                                port.port_id,
+                                port.port_type);
+                            return;
+                        }
+                        if (!emitted_ids.insert(port.port_id).second)
+                        {
+                            DAS_CORE_LOG_WARN(
+                                "derived boundary port id {} collides across "
+                                "the input/output sides; the later entry is "
+                                "skipped to keep the ports section contract "
+                                "(ids unique per document)",
+                                port.port_id);
+                            return;
+                        }
+                        yyjson::value entry(Das::Utils::MakeYyjsonObject());
+                        auto          entry_obj = entry.as_object();
+                        (*entry_obj)[std::string_view("id")] = std::make_pair(
+                            std::string_view(port.port_id),
+                            yyjson::copy_string);
+                        if (!port.display_label.empty()
+                            && port.display_label != port.port_id)
+                        {
+                            (*entry_obj)[std::string_view("label")] =
+                                std::make_pair(
+                                    std::string_view(port.display_label),
+                                    yyjson::copy_string);
+                        }
+                        (*entry_obj)[std::string_view("type")] = std::make_pair(
+                            std::string_view(port.port_type),
+                            yyjson::copy_string);
+                        (*entry_obj)[std::string_view("direction")] =
+                            std::make_pair(
+                                std::string_view(direction),
+                                yyjson::copy_string);
+                        ports_arr.emplace_back(std::move(entry));
+                    };
+                    for (const auto& port : boundary.inputs)
+                    {
+                        append_boundary_port(port, std::string_view("input"));
+                    }
+                    for (const auto& port : boundary.outputs)
+                    {
+                        append_boundary_port(port, std::string_view("output"));
+                    }
+                    if (!ports_arr.empty())
+                    {
+                        root_obj["ports"] = std::move(ports_value);
+                    }
+                }
+            }
         }
 
         // The viewData partition is emitted at the document root (same level

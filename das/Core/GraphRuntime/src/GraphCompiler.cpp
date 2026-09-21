@@ -2149,10 +2149,19 @@ Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
             {
                 surface = provider(component_guid);
             }
-            const auto found = node_faces_ == nullptr
-                                   ? node_faces_->end()
-                                   : node_faces_->find(node.node_id);
-            if (found == node_faces_->end())
+            // faces 条目定位（faces 容器缺席=同条目缺席：动态口面为空——
+            // 原三目判据反写，null 分支解引用 node_faces_->end() 属未定
+            // 义行为，正向化为指针判定）。
+            const std::vector<DocumentFacePort>* injected_faces = nullptr;
+            if (node_faces_ != nullptr)
+            {
+                const auto found = node_faces_->find(node.node_id);
+                if (found != node_faces_->end())
+                {
+                    injected_faces = &found->second;
+                }
+            }
+            if (injected_faces == nullptr)
             {
                 DAS_CORE_LOG_WARN(
                     "boundary node {} has no injected document faces; its "
@@ -2164,7 +2173,7 @@ Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
             {
                 surface = ComponentPortSurface{};
             }
-            for (const auto& face : found->second)
+            for (const auto& face : *injected_faces)
             {
                 // 同名声明口：face 胜出（双侧重投影）+ WARN。
                 for (auto* side : {&surface->inputs, &surface->outputs})
