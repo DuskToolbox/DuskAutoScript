@@ -3590,6 +3590,8 @@ namespace
 
     TEST(BoundaryAuthoringSessionTest, AddFormSequenceItemAllocatesEntry)
     {
+        // 侧别前缀：begin 会话铸 b_1,b_2,…、
+        // end 会话铸 e_1,e_2,…——各侧会话零协调物理不撞。
         const BoundarySession s{kBoundaryBeginGuidText, "{}"};
         const std::string     payload = std::string(R"({"actionId":")")
                                         + std::string(kBoundaryBeginGuidText)
@@ -3611,12 +3613,46 @@ namespace
         EXPECT_EQ(*revision, 1);
         const auto ids = BoundaryPortIdsOf(document);
         ASSERT_EQ(ids.size(), 1);
-        EXPECT_EQ(ids[0], "p_1");
+        EXPECT_EQ(ids[0], "b_1");
         // acceptedProperties 回写 boundaryPorts（含默认 type）。
         auto accepted_obj =
             (*result_obj)[std::string_view("acceptedProperties")].as_object();
         ASSERT_TRUE(accepted_obj.has_value());
         EXPECT_TRUE(accepted_obj->contains(std::string_view("boundaryPorts")));
+    }
+
+    TEST(BoundaryAuthoringSessionTest, AddFormSequenceItemAllocatesSidePrefix)
+    {
+        // 侧别前缀逐侧锁定：begin 会话续铸 b_2（占位防撞顺延）、end 会话
+        // 铸 e_1——两侧计数器互不干扰，跨侧物理不撞（b_*/e_* 前缀钦定，
+        // 图条目根 ports section 的同文档唯一契约不再依赖发射端垫子）。
+        {
+            const BoundarySession s{
+                kBoundaryBeginGuidText,
+                R"({"revision":3,"boundaryPorts":[{"id":"b_1","type":"int"}]})"};
+            const std::string payload = std::string(R"({"actionId":")")
+                                        + std::string(kBoundaryBeginGuidText)
+                                        + R"("})";
+            const auto        result = BoundaryApplyOf(
+                s.session.Get(),
+                BoundaryChange(3, "addFormSequenceItem", payload));
+            const auto ids = BoundaryPortIdsOf(ResultDocumentOf(result));
+            ASSERT_EQ(ids.size(), 2u);
+            EXPECT_EQ(ids[0], "b_1");
+            EXPECT_EQ(ids[1], "b_2");
+        }
+        {
+            const BoundarySession s{kBoundaryEndGuidText, "{}"};
+            const std::string     payload = std::string(R"({"actionId":")")
+                                            + std::string(kBoundaryEndGuidText)
+                                            + R"("})";
+            const auto            result = BoundaryApplyOf(
+                s.session.Get(),
+                BoundaryChange(0, "addFormSequenceItem", payload));
+            const auto ids = BoundaryPortIdsOf(ResultDocumentOf(result));
+            ASSERT_EQ(ids.size(), 1u);
+            EXPECT_EQ(ids[0], "e_1");
+        }
     }
 
     TEST(BoundaryAuthoringSessionTest, AddNodePortCreatesExplicitEntry)

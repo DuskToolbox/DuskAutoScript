@@ -518,21 +518,29 @@ namespace
                    : std::string_view("output");
     }
 
-    // 条目 id 分配（照稳定口 id 分配模式）："p_" 前缀计数器 + 现有 id
-    // 扫描防撞，首口 p_1。条目 id 即口 id（寻址键），文档内必须唯一。
+    // 条目 id 分配（侧别前缀）：begin 会话铸 b_1,b_2,…、end 会话铸
+    // e_1,e_2,…——各侧会话零协调物理不撞（begin/end 独立会话独立计数），
+    // 条目 id 即口 id（寻址键），文档内必须唯一。现有 id 扫描防撞覆盖
+    // 用户手改名占位（b_1 被占则顺延 b_2，以此类推）；存量 p_N id 原样
+    // 有效（口名是用户数据非协议保留字，存量不迁移）。
     std::string AllocateBoundaryPortId(
-        const std::vector<BoundaryPortEntry>& ports)
+        GraphBoundaryAuthoringSession::BoundaryRole role,
+        const std::vector<BoundaryPortEntry>&       ports)
     {
+        const std::string_view prefix =
+            role == GraphBoundaryAuthoringSession::BoundaryRole::kBegin
+                ? std::string_view("b_")
+                : std::string_view("e_");
         std::set<std::string> existing;
         for (const auto& port : ports)
         {
             existing.insert(port.id);
         }
-        std::size_t counter = existing.size() + 1;
+        std::size_t counter = 1;
         std::string candidate_id;
         do
         {
-            candidate_id = "p_" + std::to_string(counter);
+            candidate_id = std::string(prefix) + std::to_string(counter);
             ++counter;
         } while (existing.count(candidate_id) != 0);
         return candidate_id;
@@ -587,7 +595,7 @@ namespace
                     + std::string(ComponentGuidTextOfRole(role)));
             }
             BoundaryPortEntry entry;
-            entry.id = AllocateBoundaryPortId(candidate);
+            entry.id = AllocateBoundaryPortId(role, candidate);
             entry.type = "string";
             if (const auto insertion_index =
                     PayloadInt(payload, "insertionIndex"))
