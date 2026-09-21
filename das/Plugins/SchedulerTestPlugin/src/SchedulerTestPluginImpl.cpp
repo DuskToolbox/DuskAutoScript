@@ -824,6 +824,83 @@ DasResult FakeTaskComponent::Do(
         }
     }
 
+    // 图内组件节点收值观测：int/string 类型口条目按「口名+值」逐类型记录
+    // （多值边界输出 E2E 的下游断言面；executionInput 串口已由上方通道独
+    // 立观测，此处跳过防串扰）。
+    if (p_input_port_map != nullptr && g_test_shared_state != nullptr)
+    {
+        DasPtr<Das::ExportInterface::IDasStringVector> keys;
+        if (DAS_S_OK == p_input_port_map->GetKeys(keys.Put()) && keys)
+        {
+            uint64_t key_count = 0;
+            if (DAS_S_OK == keys->Size(&key_count))
+            {
+                for (uint64_t key_index = 0; key_index < key_count; ++key_index)
+                {
+                    IDasReadOnlyString* key_string = nullptr;
+                    if (DAS_S_OK != keys->At(key_index, &key_string)
+                        || key_string == nullptr)
+                    {
+                        continue;
+                    }
+                    const char* key_utf8 = nullptr;
+                    if (DAS_S_OK == key_string->GetUtf8(&key_utf8)
+                        && key_utf8 != nullptr)
+                    {
+                        const std::string_view port_name{key_utf8};
+                        Das::ExportInterface::DasVariantType kind =
+                            Das::ExportInterface::DAS_VARIANT_TYPE_NULL;
+                        if (DAS_S_OK
+                            == p_input_port_map->GetType(key_string, &kind))
+                        {
+                            const ipc_scoped_lock lock(
+                                g_test_shared_state->mutex);
+                            if (kind
+                                == Das::ExportInterface::DAS_VARIANT_TYPE_INT)
+                            {
+                                int64_t value = 0;
+                                if (DAS_S_OK
+                                    == p_input_port_map->GetInt(
+                                        key_string,
+                                        &value))
+                                {
+                                    g_test_shared_state->set_received_input_int(
+                                        port_name,
+                                        value);
+                                }
+                            }
+                            else if (
+                                kind
+                                    == Das::ExportInterface::
+                                        DAS_VARIANT_TYPE_STRING
+                                && port_name != "executionInput")
+                            {
+                                DasPtr<IDasReadOnlyString> value;
+                                if (DAS_S_OK
+                                        == p_input_port_map->GetString(
+                                            key_string,
+                                            value.Put())
+                                    && value)
+                                {
+                                    const char* value_utf8 = nullptr;
+                                    if (DAS_S_OK == value->GetUtf8(&value_utf8)
+                                        && value_utf8 != nullptr)
+                                    {
+                                        g_test_shared_state
+                                            ->set_received_input_string(
+                                                port_name,
+                                                value_utf8);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    key_string->Release();
+                }
+            }
+        }
+    }
+
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
     const DasResult hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))

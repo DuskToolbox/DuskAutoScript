@@ -166,6 +166,18 @@ struct FactoryTaskSharedState
     // observes the repository-invoke child execution path end to end.
     char last_execution_input[MAX_STRING_LEN]{};
 
+    // 图内组件节点收值观测（多值边界输出 E2E 断言面）：FakeTaskComponent
+    // 的 Do 把收到的 int/string 类型口条目按「口名+值」逐类型记录最后收
+    // 到的一条（跨节点共享 state——下游各收一个不同类型口条目时天然不
+    // 冲突；executionInput 串口不参与 string 记录，保持既有观测通道独
+    // 立）。
+    bool    received_input_int_present = false;
+    int64_t received_input_int_value = 0;
+    char    received_input_int_port[MAX_STRING_LEN]{};
+    bool    received_input_string_present = false;
+    char    received_input_string_value[MAX_STRING_LEN]{};
+    char    received_input_string_port[MAX_STRING_LEN]{};
+
     bool apply_ok = true;
     bool compile_ok = true;
 
@@ -206,6 +218,28 @@ struct FactoryTaskSharedState
         auto len = std::min(v.size(), MAX_STRING_LEN - 1);
         std::memcpy(last_execution_input, v.data(), len);
         last_execution_input[len] = '\0';
+    }
+
+    void set_received_input_int(std::string_view port, int64_t value)
+    {
+        received_input_int_present = true;
+        received_input_int_value = value;
+        auto len = std::min(port.size(), MAX_STRING_LEN - 1);
+        std::memcpy(received_input_int_port, port.data(), len);
+        received_input_int_port[len] = '\0';
+    }
+
+    void set_received_input_string(
+        std::string_view port,
+        std::string_view value)
+    {
+        received_input_string_present = true;
+        auto value_len = std::min(value.size(), MAX_STRING_LEN - 1);
+        std::memcpy(received_input_string_value, value.data(), value_len);
+        received_input_string_value[value_len] = '\0';
+        auto port_len = std::min(port.size(), MAX_STRING_LEN - 1);
+        std::memcpy(received_input_string_port, port.data(), port_len);
+        received_input_string_port[port_len] = '\0';
     }
 
     void set_emit_ports_section_id(std::string_view v)
