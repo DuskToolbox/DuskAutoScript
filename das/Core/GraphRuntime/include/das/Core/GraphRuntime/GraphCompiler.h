@@ -7,6 +7,7 @@
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
 #include <array>
 #include <functional>
@@ -55,7 +56,25 @@ enum class CompileDiagnosticKind
     // 端类型按当前口面不再兼容。诊断是 WARN 级（非阻断）——复核产物在
     // Apply 语境作为文档变更写回（edges 删除、revision 推进），纯读编
     // 译路径只携带诊断零修剪。
-    StaleEdgeDisconnect
+    StaleEdgeDisconnect,
+    // ---- 引用闭包注入 pass（编译期现算新链）具名诊断，全部 fatal：诊断
+    // 进 plan.diagnostics 且 execution_order 清空，零兜底。----
+    // creator 不可达（既无显式绑定又无 factory manager host）——编译装
+    // 配缺口。
+    ReferenceCreatorMissing,
+    // entryId→条目解析失败（后端缺注入或条目不存在）。
+    ReferenceEntryUnresolvable,
+    // catalog 声明了 taskRepositoryRef 字段但节点 settings 携带的值非
+    // 正整数（空/0/类型不符）——绑定判定失败的近根因诊断。
+    ReferenceEntryValueEmpty,
+    // CreateAuthoringSession 打不开被引条目的 authoring 会话。
+    ReferenceSessionFailed,
+    // GetDocument 拿不到被引条目文档（失败或不可解析）。
+    ReferenceDocumentMissing,
+    // 被引条目 Compile 失败或产物缺 executionInput 段。
+    ReferenceCompileFailed,
+    // entryId 栈重现——引用环。
+    ReferenceCycleDetected
 };
 
 struct CompileEdgeDiagnostic
@@ -251,6 +270,13 @@ public:
     /// the manifest path is unbound or unresolved.
     void SetPortSurfaceProvider(ComponentPortSurfaceProvider provider);
 
+    /// Bind the creator（TaskComponentHost）借用指针——引用闭包注入 pass
+    /// 经它开被引条目的 authoring 会话。creator 解析次序：
+    /// ① 显式绑定（会话编译路径 state 携带）；② factory_manager_->
+    /// GetTaskComponentHost()（执行编译路径，零新增持有物）。借用仅活在
+    /// 同步 Compile 调用期间——与 BindNodeFaces 同款前提。
+    void BindCreator(Das::PluginInterface::IDasTaskComponentHost* p_creator);
+
     /// Bind the injected document type registry (the types[] array riding
     /// the entryFaces context key — the same registry source the graph-view
     /// projection exposes as its root types section). The registry extends
@@ -431,6 +457,19 @@ private:
     // names (the bound-entry judgment's data source).
     RepositoryFieldMap repository_fields_;
 
+    // Borrowed creator（TaskComponentHost）——注入 pass 的会话工厂解析
+    // 门（nullptr = 走 factory_manager_ 的 host 或 pass 不可达）。
+    Das::PluginInterface::IDasTaskComponentHost* creator_ = nullptr;
+
+    // 注入 pass（单次 Compile 生命周期）的产物：pass 现算的节点口面
+    // （node_id → 文档根 ports 自述）与产物广播绑定文本（node_id →
+    // compile 段 executionInput 原文）。pass 失败时 maps 为空。
+    std::unordered_map<std::string, std::vector<DocumentFacePort>>
+                                                     reference_faces_;
+    std::vector<std::pair<std::string, std::string>> reference_artifacts_;
+    std::vector<yyjson::value>                       reference_diagnostics_;
+    bool reference_pass_failed_ = false;
+
     /// Resolve port entries from a manifest definition yyjson::value.
     static std::vector<PortEntry> PortsFromDefinitionList(
         const yyjson::value& definition,
@@ -474,6 +513,15 @@ private:
     /// (the EntryFacesMap key form).
     std::optional<std::string> ResolveBoundEntryId(
         const Dto::GraphNodeDto& node) const;
+
+    /// 引用闭包注入 pass：Compile 早段对每个绑条目节点
+    /// 经 creator 开被引条目 authoring 会话——GetDocument 现算节点口面
+    /// （文档根 ports 自述，写入 reference_faces_）、Compile 产出产物
+    /// （compile 段 executionInput 原文，写入 reference_artifacts_）。
+    /// 任一环节失败 → 具名诊断 + reference_pass_failed_（Compile 出口清
+    /// 空 execution_order）。entryId 栈环检测（本 plan 单层栈深 1，
+    /// 递归栈随后续扩展）。
+    void RunReferenceClosurePass(const Dto::GraphDocumentDto& document);
 
     /// Whether the node carries an injected faces entry (its own nodeFaces
     /// entry, or a bound repository entry with an entryFaces entry) — the

@@ -339,7 +339,7 @@ struct GraphAuthoringSessionState
     Das::Core::GraphRuntime::GraphCompiler::EntryFacesMap entry_faces;
     std::vector<Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType>
         entry_face_types;
-    // creator（TaskComponentHost）借用指针（D-07 通道半）：会话编译路径经
+    // creator（TaskComponentHost）借用指针：会话编译路径经
     // 它开被引条目的 authoring 会话（GetDocument 现算口面 + Compile 产
     // 物）。借用不拥有——插件包持有的 host_ 保证本尊长命于会话（与
     // CreateGraphRuntimeWithHost 的执行侧对称）；nullptr = 不携带。
@@ -2479,9 +2479,12 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         // validation is skipped (acceptable for authoring preview).
         Das::Core::GraphRuntime::GraphCompiler compiler;
         // 口面知识接线（faces/entryFaces/声明面 provider/types 注册表——
-        // Apply 路径的编译期复核共用同一接线的单一来源）；编译期零活查
-        // 询（不回调任何外部存储/PluginManager）。
+        // Apply 路径的编译期复核共用同一接线的单一来源）。creator 携带
+        // （creator 携带通道）：绑条目节点经它走注入 pass（GetDocument 现算口面
+        // + Compile 产物广播绑定）——编辑期不静默跳过（Pitfall 5）；未
+        // 携带（nullptr）时该 pass 对绑条目节点产出具名诊断。
         BindSessionPortKnowledge(compiler, *p);
+        compiler.BindCreator(p->creator);
         // required 清单由会话 catalog 推导注入（compiler 无 catalog 访问）：
         // action_id 即 GraphTask 域的 componentGuid，config 字段的 required
         // 声明聚合成 component_guid → 字段名集，编译期对空值产出

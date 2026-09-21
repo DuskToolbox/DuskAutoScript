@@ -2,10 +2,14 @@
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
+#include <das/Core/Utils/DasJsonImpl.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSession.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -2997,4 +3001,394 @@ TEST(StaleEdgeReviewTest, CompileEmitsWarningsWithoutMutatingDocument)
     ASSERT_EQ(doc.edges.size(), doc_before.edges.size());
     EXPECT_EQ(doc.edges[0].edge_id, doc_before.edges[0].edge_id);
     EXPECT_EQ(doc.version, doc_before.version);
+}
+
+// ===================================================================
+// 引用闭包注入 pass（编译期现算新链）：绑条目节点 → creator 开被引条目会话
+// → GetDocument 现算口面 + Compile 产物广播绑定（$graph_input→
+// executionInput）。fake creator 走 manager 后端注入（执行编译路径形状：
+// SetFactoryManager + SetBackendResolvers）。
+// ===================================================================
+namespace
+{
+    constexpr std::string_view BOUND_GRAPH_TASK_GUID =
+        "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+    constexpr std::string_view BOUND_ENTRY_TASK_TYPE_GUID =
+        "D5E6F7A8-9999-4000-8000-000000000042";
+    constexpr int64_t BOUND_ENTRY_ID = 42;
+
+    // 固定响应的 authoring 会话替身：GetDocument 返回固定文档（根 ports
+    // 自述），Compile 返回固定产物（compile.executionInput 携 shell 串）。
+    class FakeReferenceAuthoringSession final
+        : public Das::PluginInterface::IDasTaskAuthoringSession
+    {
+    public:
+        FakeReferenceAuthoringSession(
+            std::string document_json,
+            std::string compile_json)
+            : document_json_(std::move(document_json)),
+              compile_json_(std::move(compile_json))
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid
+                == DasIidOf<Das::PluginInterface::IDasTaskAuthoringSession>())
+            {
+                *pp_out = static_cast<
+                    Das::PluginInterface::IDasTaskAuthoringSession*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult GetGuid(DasGuid* p_out_guid) override
+        {
+            if (p_out_guid == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{BOUND_ENTRY_TASK_TYPE_GUID});
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            if (pp_out_name == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            return CreateIDasReadOnlyStringFromUtf8(
+                "FakeReferenceAuthoringSession",
+                pp_out_name);
+        }
+
+        DasResult GetDocument(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_document_json) override
+        {
+            if (pp_out_document_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (document_json_.empty())
+            {
+                *pp_out_document_json = nullptr;
+                return DAS_E_FAIL;
+            }
+            // c_str 显式走 const char* 解析构造（std::string 会落到
+            // yyjson::value&& 重载构造出「字符串值」而非解析文档）。
+            *pp_out_document_json =
+                new Das::Core::Utils::IDasJsonImpl(document_json_.c_str());
+            (*pp_out_document_json)->AddRef();
+            return DAS_S_OK;
+        }
+
+        DasResult ApplyChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_result_json = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult Compile(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (compile_json_.empty())
+            {
+                *pp_out_result_json = nullptr;
+                return DAS_E_FAIL;
+            }
+            *pp_out_result_json =
+                new Das::Core::Utils::IDasJsonImpl(compile_json_.c_str());
+            (*pp_out_result_json)->AddRef();
+            return DAS_S_OK;
+        }
+
+    private:
+        std::string           document_json_;
+        std::string           compile_json_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    // 注入 pass 用例的公共夹具：manager 后端注入 fake 条目解析 + fake
+    // 会话工厂；repository_fields 声明 repositoryRef 字段。
+    struct ReferencePassFixture
+    {
+        StubFactoryManager           mgr;
+        GraphCompiler::EntryFacesMap empty_entry_faces;
+
+        ReferencePassFixture(
+            std::string                           document_json,
+            std::string                           compile_json,
+            DasResult                             session_result = DAS_S_OK,
+            std::optional<RepositoryEntrySummary> summary =
+                []
+            {
+                RepositoryEntrySummary seeded;
+                seeded.task_type_guid = std::string{BOUND_ENTRY_TASK_TYPE_GUID};
+                seeded.accepted_properties = Das::Utils::MakeYyjsonObject();
+                return seeded;
+            }())
+        {
+            mgr.SetBackendResolvers(
+                [summary](int64_t entry_id)
+                {
+                    if (!summary.has_value() || entry_id != BOUND_ENTRY_ID)
+                    {
+                        return std::optional<RepositoryEntrySummary>{};
+                    }
+                    return summary;
+                },
+                [document_json = std::move(document_json),
+                 compile_json = std::move(compile_json),
+                 session_result](
+                    const DasGuid&                  task_guid,
+                    Das::ExportInterface::IDasJson* p_context_json,
+                    Das::PluginInterface::IDasTaskAuthoringSession**
+                        pp_out_session)
+                {
+                    if (DAS::IsFailed(session_result))
+                    {
+                        *pp_out_session = nullptr;
+                        return session_result;
+                    }
+                    std::ignore = task_guid;
+                    std::ignore = p_context_json;
+                    auto* session = new FakeReferenceAuthoringSession(
+                        document_json,
+                        compile_json);
+                    session->AddRef();
+                    *pp_out_session = session;
+                    return DAS_S_OK;
+                });
+        }
+
+        GraphCompiler MakeCompiler()
+        {
+            GraphCompiler compiler;
+            compiler.SetFactoryManager(&mgr);
+            compiler.BindEntryFaces(
+                &empty_entry_faces,
+                {{std::string{BOUND_GRAPH_TASK_GUID}, {"repositoryRef"}}});
+            return compiler;
+        }
+
+        GraphNodeDto MakeBoundNode(
+            const std::string& node_id,
+            std::string_view   field_value_json)
+        {
+            GraphNodeDto node =
+                MakeComponentNode(node_id, std::string{BOUND_GRAPH_TASK_GUID});
+            const auto settings = Das::Utils::ParseYyjsonFromString(
+                std::string(R"({"repositoryRef":)")
+                + std::string(field_value_json) + "}");
+            if (settings.has_value())
+            {
+                node.settings = std::move(*settings);
+            }
+            return node;
+        }
+    };
+
+    bool HasReferenceDiagnostic(
+        const Dto::CompiledGraphPlanDto& plan,
+        CompileDiagnosticKind            kind)
+    {
+        const std::string kind_text = std::to_string(static_cast<int>(kind));
+        for (const auto& diag : plan.diagnostics)
+        {
+            auto obj = diag.as_object();
+            if (!obj.has_value())
+            {
+                continue;
+            }
+            auto kind_value = (*obj)[std::string_view("kind")].as_string();
+            if (kind_value.has_value() && *kind_value == kind_text)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    const PortBindingDto* FindBroadcastBinding(
+        const Dto::CompiledGraphPlanDto& plan,
+        const std::string&               target_node_id)
+    {
+        for (const auto& binding : plan.binding_plan.bindings)
+        {
+            if (binding.source_node_id == "$graph_input"
+                && binding.target_node_id == target_node_id
+                && binding.target_port_id == "executionInput")
+            {
+                return &binding;
+            }
+        }
+        return nullptr;
+    }
+} // namespace
+
+TEST(
+    ReferenceClosureInjectionPassTest,
+    BroadcastsArtifactAndDerivesPortsFromReferencedDocument)
+{
+    // 被引条目文档：根 ports 自述一个 int 输出口 doc_out。
+    const std::string document_json = R"({
+        "document": {
+            "viewKind": "graph",
+            "ports": [
+                {"id": "doc_out", "type": "int", "direction": "output"}
+            ]
+        },
+        "diagnostics": []
+    })";
+    // 被引条目 Compile 产物：compile.executionInput 携 shell 串（现读法
+    // 对齐；单元断言用无引号纯文本，真实形态为 {"fingerprint","plan"}
+    // 序列化——E2E 用例覆盖真实 shell）。
+    const std::string shell_text = "fp_child_shell_text";
+    const std::string compile_json =
+        std::string(R"({"compile":{"executionInput":)") + "\"" + shell_text
+        + R"(","diagnostics":[]}})";
+
+    ReferencePassFixture fixture{document_json, compile_json};
+    auto                 compiler = fixture.MakeCompiler();
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_ref_ok";
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound", "42"));
+    doc.nodes.push_back(MakeComponentNode("n_sink", "{gs}"));
+    doc.edges.push_back(MakeEdge("e_1", "n_bound", "doc_out", "n_sink", "in"));
+
+    const auto plan = compiler.Compile(doc);
+
+    // ① 产物广播绑定：$graph_input → n_bound.executionInput，
+    // default_value = compile 段 executionInput 原文（shell 串）
+    const auto* broadcast = FindBroadcastBinding(plan, "n_bound");
+    ASSERT_NE(broadcast, nullptr);
+    const auto default_text = broadcast->default_value.as_string();
+    ASSERT_TRUE(default_text.has_value());
+    EXPECT_EQ(*default_text, shell_text);
+
+    // ② 节点口面 = 文档根 ports：doc_out 出口可供边校验（无 PortNotFound）
+    EXPECT_FALSE(HasReferenceDiagnostic(
+        plan,
+        CompileDiagnosticKind::ReferenceDocumentMissing));
+    bool port_not_found = false;
+    for (const auto& diag : plan.diagnostics)
+    {
+        auto obj = diag.as_object();
+        if (obj.has_value()
+            && (*obj)[std::string_view("kind")].as_string()
+                   == std::to_string(
+                       static_cast<int>(CompileDiagnosticKind::PortNotFound)))
+        {
+            port_not_found = true;
+        }
+    }
+    EXPECT_FALSE(port_not_found)
+        << "doc-declared port must feed edge validation";
+
+    // 成功路径：execution_order 保留
+    EXPECT_FALSE(plan.execution_order.empty());
+}
+
+TEST(
+    ReferenceClosureInjectionPassTest,
+    MissingDocumentYieldsNamedDiagnosticAndClearsExecutionOrder)
+{
+    // GetDocument 失败（空文档响应）→ 具名诊断 + execution_order 清空
+    ReferencePassFixture fixture{"", R"({"compile":{"executionInput":"x"}})"};
+    auto                 compiler = fixture.MakeCompiler();
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_ref_no_doc";
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound", "42"));
+
+    const auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(HasReferenceDiagnostic(
+        plan,
+        CompileDiagnosticKind::ReferenceDocumentMissing));
+    EXPECT_TRUE(plan.execution_order.empty());
+    EXPECT_EQ(FindBroadcastBinding(plan, "n_bound"), nullptr);
+}
+
+TEST(
+    ReferenceClosureInjectionPassTest,
+    EmptyRepositoryRefValueYieldsNamedDiagnostic)
+{
+    // catalog 声明了 taskRepositoryRef 字段但值非正整数（Pitfall 3 近根因
+    // 诊断）
+    ReferencePassFixture fixture{
+        R"({"document":{"ports":[]}})",
+        R"({"compile":{"executionInput":"x"}})"};
+    auto compiler = fixture.MakeCompiler();
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_ref_empty_value";
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound", "0"));
+
+    const auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(HasReferenceDiagnostic(
+        plan,
+        CompileDiagnosticKind::ReferenceEntryValueEmpty));
+    EXPECT_TRUE(plan.execution_order.empty());
+}
+
+TEST(ReferenceClosureInjectionPassTest, RepeatedEntryIdYieldsCycleDiagnostic)
+{
+    // entryId 重复（同一次 pass 内重现）→ 引用环具名错
+    ReferencePassFixture fixture{
+        R"({"document":{"ports":[]}})",
+        R"({"compile":{"executionInput":"x"}})"};
+    auto compiler = fixture.MakeCompiler();
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_ref_cycle";
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound_a", "42"));
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound_b", "42"));
+
+    const auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(HasReferenceDiagnostic(
+        plan,
+        CompileDiagnosticKind::ReferenceCycleDetected));
+    EXPECT_TRUE(plan.execution_order.empty());
 }

@@ -2478,7 +2478,7 @@ namespace Das::Core::TaskScheduler
         plugin_manager_.SetPluginLifecycleListener(nullptr);
 
         // 同上防御：撤回 creator 后端两条解析能力的注入（捕获 this 的函数
-        // 对象不得越过本对象生命周期）。撤回后消费门走 D-03 具名错路径，
+        // 对象不得越过本对象生命周期）。撤回后消费门走具名错路径，
         // 不静默、不悬垂。
         plugin_manager_.GetTaskComponentFactoryManager().SetBackendResolvers(
             ForeignInterfaceHost::RepositoryEntryResolver{},
@@ -2977,7 +2977,7 @@ namespace Das::Core::TaskScheduler
             initialized_ = true;
         }
 
-        // D-06 一次性搬家费：creator（TaskComponentHost）后端两条解析
+        // 一次性搬家费：creator（TaskComponentHost）后端两条解析
         // 能力注入——数据源本就在 SchedulerService（条目存储+能力注册
         // 表），经函数对象倒置依赖，ForeignInterfaceHost 不 include
         // TaskScheduler 头。① entryId→条目最小字段集（逻辑原
@@ -3046,11 +3046,58 @@ namespace Das::Core::TaskScheduler
                     capability = *authoring;
                 }
 
+                // 条目绑定键预载（Discretion 裁定）：context 携带
+                // repositoryEntryId 而无 properties 时，由本后端解析条目
+                // 并注入其持久化 properties（被引条目文档随 properties 进
+                // 会话种子——GraphCompiler 注入 pass 的 context 形状）。
+                auto context = ReadJsonInterface(p_context_json);
+                {
+                    auto ctx_obj = context.as_object();
+                    if (ctx_obj.has_value()
+                        && ctx_obj->contains(
+                            std::string_view("repositoryEntryId"))
+                        && !ctx_obj->contains(std::string_view("properties")))
+                    {
+                        const auto& id_value =
+                            (*ctx_obj)[std::string_view("repositoryEntryId")];
+                        const auto entry_id = id_value.as_int();
+                        if (entry_id.has_value() && *entry_id > 0)
+                        {
+                            auto& settings =
+                                plugin_manager_.GetSettingsManager();
+                            auto entry_json =
+                                settings.GetTaskRepositoryEntryJson(
+                                    "0",
+                                    *entry_id);
+                            if (entry_json.is_object())
+                            {
+                                try
+                                {
+                                    const auto entry = yyjson::cast<
+                                        Repository::Dto::RepositoryEntryDto>(
+                                        entry_json);
+                                    (*ctx_obj)[std::string_view("properties")] =
+                                        CloneJsonValue(
+                                            entry.accepted_properties);
+                                }
+                                catch (const std::exception&)
+                                {
+                                    DAS_CORE_LOG_WARN(
+                                        "CreateAuthoringSession resolver: "
+                                        "entry {} properties preload "
+                                        "failed (unparsable entry)",
+                                        *entry_id);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
                 const auto session_result = CreateAuthoringSessionWithContext(
                     plugin_manager_,
                     capability,
-                    ReadJsonInterface(p_context_json),
+                    std::move(context),
                     session);
                 if (DAS::IsFailed(session_result) || !session)
                 {

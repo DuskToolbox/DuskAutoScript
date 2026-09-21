@@ -4,8 +4,12 @@
 #include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Core/Utils/DasJsonImpl.h>
+#include <das/DasPtr.hpp>
+#include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 
 #include <queue>
 #include <set>
@@ -16,6 +20,7 @@
 #include <cctype>
 #include <charconv>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -102,6 +107,12 @@ void GraphCompiler::BindFaceTypes(
     const std::vector<DocumentFaceType>* face_types)
 {
     face_types_ = face_types;
+}
+
+void GraphCompiler::BindCreator(
+    Das::PluginInterface::IDasTaskComponentHost* p_creator)
+{
+    creator_ = p_creator;
 }
 
 void GraphCompiler::MergeFacesOntoSurface(
@@ -211,6 +222,445 @@ std::optional<std::string> GraphCompiler::ResolveBoundEntryId(
 }
 
 // ---------------------------------------------------------------------------
+// 引用闭包注入 pass（编译期现算新链）
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    /// IDasJson → yyjson（失败/空返回 nullopt）：经 ToString 序列化再解析，
+    /// 跨 ABI 边界的通用读法（ReadJsonInterface 同款）。
+    std::optional<yyjson::value> JsonToYyjson(
+        Das::ExportInterface::IDasJson* json)
+    {
+        if (json == nullptr)
+        {
+            return std::nullopt;
+        }
+        Das::DasPtr<IDasReadOnlyString> text;
+        if (DAS::IsFailed(json->ToString(0, text.Put())) || !text)
+        {
+            return std::nullopt;
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(text->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return std::nullopt;
+        }
+        auto parsed = Das::Utils::ParseYyjsonFromString(utf8);
+        if (!parsed.has_value())
+        {
+            return std::nullopt;
+        }
+        return std::move(*parsed);
+    }
+
+    /// 会话 GetDocument 响应 → 文档根 ports 自述口面。响应形状取两者之
+    /// 一（严格 authoring 信封或裸文档），ports 条目键 id/portId 双兼容。
+    std::optional<std::vector<GraphCompiler::DocumentFacePort>>
+    ParseDocumentRootPorts(const yyjson::value& response)
+    {
+        auto root_obj = response.as_object();
+        if (!root_obj.has_value())
+        {
+            return std::nullopt;
+        }
+        const yyjson::value* document = &response;
+        yyjson::value        unwrapped;
+        if (root_obj->contains(std::string_view("document")))
+        {
+            unwrapped = Das::Utils::CloneYyjsonValue(
+                (*root_obj)[std::string_view("document")]);
+            document = &unwrapped;
+        }
+        auto doc_obj = document->as_object();
+        if (!doc_obj.has_value()
+            || !doc_obj->contains(std::string_view("ports")))
+        {
+            return std::nullopt;
+        }
+        const auto& ports_value = (*doc_obj)[std::string_view("ports")];
+        auto        ports_arr = ports_value.as_array();
+        if (!ports_arr.has_value())
+        {
+            return std::nullopt;
+        }
+
+        std::vector<GraphCompiler::DocumentFacePort> faces;
+        for (const auto& port : *ports_arr)
+        {
+            auto port_obj = port.as_object();
+            if (!port_obj.has_value())
+            {
+                continue;
+            }
+            GraphCompiler::DocumentFacePort face;
+            auto id = (*port_obj)[std::string_view("id")].as_string();
+            if (!id.has_value()
+                && port_obj->contains(std::string_view("portId")))
+            {
+                id = (*port_obj)[std::string_view("portId")].as_string();
+            }
+            if (!id.has_value() || id->empty())
+            {
+                continue;
+            }
+            face.port_id = std::string(*id);
+            auto type = (*port_obj)[std::string_view("type")].as_string();
+            if (!type.has_value()
+                && port_obj->contains(std::string_view("portType")))
+            {
+                type = (*port_obj)[std::string_view("portType")].as_string();
+            }
+            face.port_type = type.has_value() ? std::string(*type) : "string";
+            auto direction =
+                (*port_obj)[std::string_view("direction")].as_string();
+            face.direction =
+                direction.has_value() ? std::string(*direction) : "output";
+            if (port_obj->contains(std::string_view("label")))
+            {
+                auto label = (*port_obj)[std::string_view("label")].as_string();
+                face.label =
+                    label.has_value() ? std::string(*label) : face.port_id;
+            }
+            else
+            {
+                face.label = face.port_id;
+            }
+            faces.push_back(std::move(face));
+        }
+        return faces;
+    }
+
+    /// 会话 Compile 响应 → compile 段 executionInput 原文（shell 串）。
+    std::optional<std::string> ParseCompileExecutionInput(
+        const yyjson::value& response)
+    {
+        auto obj = response.as_object();
+        if (!obj.has_value() || !obj->contains(std::string_view("compile")))
+        {
+            return std::nullopt;
+        }
+        auto compile_obj = (*obj)[std::string_view("compile")].as_object();
+        if (!compile_obj.has_value()
+            || !compile_obj->contains(std::string_view("executionInput")))
+        {
+            return std::nullopt;
+        }
+        const auto& execution_input =
+            (*compile_obj)[std::string_view("executionInput")];
+        if (const auto text = execution_input.as_string())
+        {
+            return std::string(*text);
+        }
+        // 非 string 形态（对象/序列化文本）按原文序列化消费——与
+        // DasGraphTaskImpl 的 GetString 读法对齐面为准（string 为正形态）。
+        auto serialized = Das::Utils::SerializeYyjsonValue(
+            Das::Utils::CloneYyjsonValue(execution_input));
+        if (!serialized.has_value())
+        {
+            return std::nullopt;
+        }
+        return std::move(*serialized);
+    }
+} // namespace
+
+void GraphCompiler::RunReferenceClosurePass(
+    const Dto::GraphDocumentDto& document)
+{
+    reference_faces_.clear();
+    reference_artifacts_.clear();
+    reference_pass_failed_ = false;
+
+    // creator 解析次序：显式绑定 → factory manager host。
+    Das::PluginInterface::IDasTaskComponentHost* creator = creator_;
+    if (creator == nullptr && factory_manager_ != nullptr)
+    {
+        creator = factory_manager_->GetTaskComponentHost();
+    }
+
+    std::vector<int64_t> entry_stack;
+    for (const auto& node : document.nodes)
+    {
+        if (node.target.target_kind != "componentRef"
+            || !node.target.component_ref.has_value())
+        {
+            continue;
+        }
+        const auto& component_guid = node.target.component_ref->component_guid;
+        const auto  fields = repository_fields_.find(component_guid);
+        if (fields == repository_fields_.end() || fields->second.empty())
+        {
+            continue;
+        }
+
+        // 绑条目判定（ResolveBoundEntryId 同款语义，但保留值形态用于
+        // 「声明了但值非正整数」的近根因诊断）。
+        auto                   settings_obj = node.settings.as_object();
+        std::optional<int64_t> bound_entry_id;
+        bool                   field_present = false;
+        if (settings_obj.has_value())
+        {
+            for (const auto& field_name : fields->second)
+            {
+                if (!settings_obj->contains(std::string_view(field_name)))
+                {
+                    continue;
+                }
+                field_present = true;
+                const auto& value =
+                    (*settings_obj)[std::string_view(field_name)];
+                if (value.is_int())
+                {
+                    const auto entry_id = value.as_int();
+                    if (entry_id.has_value() && *entry_id > 0)
+                    {
+                        bound_entry_id = *entry_id;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!bound_entry_id.has_value())
+        {
+            if (field_present)
+            {
+                reference_pass_failed_ = true;
+                CompileEdgeDiagnostic diagnostic;
+                diagnostic.kind =
+                    CompileDiagnosticKind::ReferenceEntryValueEmpty;
+                diagnostic.node_id = node.node_id;
+                diagnostic.message = DAS_FMT_NS::format(
+                    "node {} declares a taskRepositoryRef field but its "
+                    "value is not a positive entry id",
+                    node.node_id);
+                DAS_CORE_LOG_WARN(
+                    "reference closure pass: {}",
+                    diagnostic.message);
+                reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+            }
+            continue;
+        }
+
+        // entryId 栈环检测（单层栈深 1；递归栈随后续扩展）。
+        if (std::find(entry_stack.begin(), entry_stack.end(), *bound_entry_id)
+            != entry_stack.end())
+        {
+            reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::ReferenceCycleDetected;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "repository entry {} appears again on the reference "
+                "closure stack (cycle)",
+                *bound_entry_id);
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+            continue;
+        }
+        entry_stack.push_back(*bound_entry_id);
+
+        if (creator == nullptr)
+        {
+            reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::ReferenceCreatorMissing;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message =
+                "reference closure pass has no creator available (neither "
+                "bound creator nor factory manager host)";
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+            continue;
+        }
+
+        // entryId→条目最小字段集（manager 路径；无 manager 的会话路径回
+        // 节点组件 guid——GraphTask 节点组件 guid 与任务类型 guid 同值，
+        // 本 plan 的真值域）。
+        std::string   task_type_guid = component_guid;
+        yyjson::value properties;
+        if (factory_manager_ != nullptr)
+        {
+            ForeignInterfaceHost::RepositoryEntrySummary summary;
+            const auto                                   resolve_result =
+                factory_manager_->ResolveRepositoryEntry(
+                    *bound_entry_id,
+                    &summary);
+            if (DAS::IsFailed(resolve_result))
+            {
+                reference_pass_failed_ = true;
+                CompileEdgeDiagnostic diagnostic;
+                diagnostic.kind =
+                    CompileDiagnosticKind::ReferenceEntryUnresolvable;
+                diagnostic.node_id = node.node_id;
+                diagnostic.message = DAS_FMT_NS::format(
+                    "repository entry {} could not be resolved: result={}",
+                    *bound_entry_id,
+                    resolve_result);
+                DAS_CORE_LOG_WARN(
+                    "reference closure pass: {}",
+                    diagnostic.message);
+                reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+                continue;
+            }
+            task_type_guid = summary.task_type_guid;
+            properties = std::move(summary.accepted_properties);
+        }
+
+        DasGuid resolved_task_guid{};
+        try
+        {
+            resolved_task_guid =
+                Das::Core::ForeignInterfaceHost::MakeDasGuid(task_type_guid);
+        }
+        catch (const std::exception&)
+        {
+            reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::ReferenceSessionFailed;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "repository entry {} task type guid '{}' is invalid",
+                *bound_entry_id,
+                task_type_guid);
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+            continue;
+        }
+
+        // context：条目绑定键由条目解析后端自行预载（Discretion 裁定）。
+        yyjson::value context(Das::Utils::MakeYyjsonObject());
+        {
+            auto ctx_obj = context.as_object();
+            (*ctx_obj)[std::string_view("repositoryEntryId")] = *bound_entry_id;
+            if (!properties.is_null())
+            {
+                (*ctx_obj)[std::string_view("properties")] =
+                    Das::Utils::CloneYyjsonValue(properties);
+            }
+        }
+        auto context_serialized = Das::Utils::SerializeYyjsonValue(
+            Das::Utils::CloneYyjsonValue(context));
+        if (!context_serialized.has_value())
+        {
+            reference_pass_failed_ = true;
+            continue;
+        }
+
+        // IDasJson 包装（会话工厂入参形态）。
+        Das::DasPtr<Das::ExportInterface::IDasJson> context_json;
+        try
+        {
+            context_json = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+                Das::Utils::CloneYyjsonValue(context));
+        }
+        catch (const std::exception&)
+        {
+            reference_pass_failed_ = true;
+            continue;
+        }
+
+        // 早段：开被引条目会话。
+        Das::DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        const auto session_result = creator->CreateAuthoringSession(
+            resolved_task_guid,
+            context_json.Get(),
+            session.Put());
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::ReferenceSessionFailed;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "CreateAuthoringSession failed for entry {} "
+                "(task type {}): result={}",
+                *bound_entry_id,
+                task_type_guid,
+                session_result);
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+            continue;
+        }
+
+        // 早段：GetDocument 现算节点口面（文档根 ports 自述——消费文档
+        // 自述，禁第二份推导）。
+        Das::DasPtr<Das::ExportInterface::IDasJson> document_json;
+        const auto                                  document_result =
+            session->GetDocument(nullptr, document_json.Put());
+        auto document_value = JsonToYyjson(document_json.Get());
+        if (DAS::IsFailed(document_result) || !document_value.has_value())
+        {
+            reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::ReferenceDocumentMissing;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "GetDocument failed for referenced entry {}: result={}",
+                *bound_entry_id,
+                document_result);
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+            continue;
+        }
+        auto faces = ParseDocumentRootPorts(*document_value);
+        if (!faces.has_value())
+        {
+            reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::ReferenceDocumentMissing;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "referenced entry {} document carries no root ports "
+                "section",
+                *bound_entry_id);
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+            continue;
+        }
+        reference_faces_.emplace(node.node_id, std::move(*faces));
+
+        // 晚段：同一会话 Compile → 产物直写广播绑定（compile 段
+        // executionInput 原文；产物永不落盘、不写仓库）。
+        Das::DasPtr<Das::ExportInterface::IDasJson> compile_json;
+        const auto                                  compile_result =
+            session->Compile(nullptr, compile_json.Put());
+        auto compile_value = JsonToYyjson(compile_json.Get());
+        if (DAS::IsFailed(compile_result) || !compile_value.has_value())
+        {
+            reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::ReferenceCompileFailed;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "Compile failed for referenced entry {}: result={}",
+                *bound_entry_id,
+                compile_result);
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+            continue;
+        }
+        auto artifact_text = ParseCompileExecutionInput(*compile_value);
+        if (!artifact_text.has_value())
+        {
+            reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::ReferenceCompileFailed;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "compile result of referenced entry {} carries no "
+                "executionInput segment",
+                *bound_entry_id);
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+            continue;
+        }
+        reference_artifacts_.emplace_back(
+            node.node_id,
+            std::move(*artifact_text));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ResolveDeclaredPorts / ResolveNodePorts
 // ---------------------------------------------------------------------------
 
@@ -288,11 +738,21 @@ GraphCompiler::ManifestPorts GraphCompiler::ResolveNodePorts(
                 node_is_boundary);
         }
     }
-    // 绑条目调用节点：并入 entryFaces[该 entryId]（去重规则同上，face
-    // 胜出+WARN）——签名物化存储副本（112-06 通道）的替代数据源，存储
-    // 退役前的并行通道。
+    // 绑条目调用节点口面：注入 pass 已供面的节点由 pass 接管（文档根
+    // ports 现算，新链）；未接管者并入 entryFaces[该 entryId]（去重
+    // 规则同上，face 胜出+WARN）——签名物化存储副本（112-06 通道）的
+    // 替代数据源，存储退役前的并行通道（后续删除）。
+    const auto pass_face = reference_faces_.find(node.node_id);
+    if (pass_face != reference_faces_.end())
+    {
+        if (!pass_face->second.empty())
+        {
+            MergeFacesOntoSurface(ports, node.node_id, pass_face->second);
+        }
+        return ports;
+    }
     const auto bound_entry_id = ResolveBoundEntryId(node);
-    if (bound_entry_id.has_value())
+    if (bound_entry_id.has_value() && entry_faces_ != nullptr)
     {
         const auto found = entry_faces_->find(*bound_entry_id);
         if (found != entry_faces_->end() && !found->second.empty())
@@ -2475,6 +2935,16 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     plan.source_revision = document.version;
     plan.source_fingerprint = document.fingerprint;
 
+    // 引用闭包注入 pass（编译期早段）：绑条目节点经
+    // creator 开被引条目会话——GetDocument 现算口面（喂边校验）+ Compile
+    // 产物（晚段广播绑定）。具名诊断零兜底：任一失败 → execution_order
+    // 出口清空。
+    RunReferenceClosurePass(document);
+    for (auto& diagnostic : reference_diagnostics_)
+    {
+        plan.diagnostics.push_back(Das::Utils::CloneYyjsonValue(diagnostic));
+    }
+
     // Edge port validation（顺带收集规范口 signal 源边坐标——manifest 知
     // 识只在 ValidateEdgePorts 的成员路径可达，拓扑阶段无此访问面）
     std::set<SignalEdgeCoordinate> canonical_signal_edges;
@@ -2562,6 +3032,41 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
 
     // Port binding plan
     plan.binding_plan = GeneratePortBindingPlan(document);
+
+    // 注入 pass 晚段：产物直写广播绑定（$graph_input → executionInput，
+    // default_value=compile 段原文）——运行期物化半边（DoAdapter 现成
+    // 路径）零新机制。产物永不落盘、不写仓库。派生的悬
+    // 空输入广播（无缺省值）让位——pass 产物绑定是该口唯一供值源。
+    for (auto& [node_id, artifact_text] : reference_artifacts_)
+    {
+        auto& bindings = plan.binding_plan.bindings;
+        bindings.erase(
+            std::remove_if(
+                bindings.begin(),
+                bindings.end(),
+                [&node_id](const Dto::PortBindingDto& candidate)
+                {
+                    return candidate.source_node_id
+                               == std::string{GRAPH_INPUT_BROADCAST_SOURCE}
+                           && candidate.target_node_id == node_id
+                           && candidate.target_port_id == "executionInput";
+                }),
+            bindings.end());
+
+        Dto::PortBindingDto reference_broadcast;
+        reference_broadcast.source_node_id =
+            std::string{GRAPH_INPUT_BROADCAST_SOURCE};
+        reference_broadcast.source_port_id = "referenceArtifact";
+        reference_broadcast.target_node_id = node_id;
+        reference_broadcast.target_port_id = "executionInput";
+        reference_broadcast.expected_type = "object";
+        reference_broadcast.default_value = yyjson::value(artifact_text);
+        plan.binding_plan.bindings.push_back(std::move(reference_broadcast));
+    }
+    if (reference_pass_failed_)
+    {
+        plan.execution_order.clear();
+    }
 
     // loopCarried 通道记档与校验：成对口合成 data 型回边入 plan.back_edges
     // （运行期据此把自环排除出 data_preds，节点不会等自己；外层清场经层
