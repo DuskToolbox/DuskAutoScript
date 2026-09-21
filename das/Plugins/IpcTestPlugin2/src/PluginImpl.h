@@ -182,6 +182,13 @@ public:
     DAS_IMPL CreateTaskComponent(
         const DasGuid&                       component_guid,
         PluginInterface::IDasTaskComponent** pp_out_component) override;
+
+    // typed 双法第二翼：测试 feature 不供 authoring 会话（具名拒，
+    // 不静默）。
+    DAS_IMPL CreateAuthoringSession(
+        const DasGuid&                              task_guid,
+        Das::ExportInterface::IDasJson*             p_context_json,
+        PluginInterface::IDasTaskAuthoringSession** pp_out_session) override;
 };
 
 /**

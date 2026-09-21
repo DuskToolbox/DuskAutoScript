@@ -435,6 +435,20 @@ public:
         return DAS_S_OK;
     }
 
+    DasResult CreateAuthoringSession(
+        const DasGuid&                                   task_guid,
+        Das::ExportInterface::IDasJson*                  p_context_json,
+        Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+        override
+    {
+        if (pp_out_session == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_session = nullptr;
+        return DAS_E_NO_IMPLEMENTATION;
+    }
+
 private:
     Das::FlowControlProcessSpawner spawner_to_inject_;
 };
@@ -745,6 +759,20 @@ public:
         *pp_out_component = wrapper;
         counters.push_back(wrapper);
         return DAS_S_OK;
+    }
+
+    DasResult CreateAuthoringSession(
+        const DasGuid&                                   task_guid,
+        Das::ExportInterface::IDasJson*                  p_context_json,
+        Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+        override
+    {
+        if (pp_out_session == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_session = nullptr;
+        return DAS_E_NO_IMPLEMENTATION;
     }
 
     std::vector<CountingTaskComponent*> counters;
@@ -1764,6 +1792,20 @@ namespace
             return DAS_E_NOT_FOUND;
         }
 
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
         CountingProbeComponent* probe = nullptr;
     };
 } // namespace
@@ -2231,6 +2273,20 @@ namespace
             return DAS_E_NOT_FOUND;
         }
 
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
     private:
         std::shared_ptr<InvokeTypedE2EState> state_;
     };
@@ -2579,6 +2635,20 @@ namespace
                 return DAS_S_OK;
             }
             return DAS_E_NOT_FOUND;
+        }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
         }
 
     private:

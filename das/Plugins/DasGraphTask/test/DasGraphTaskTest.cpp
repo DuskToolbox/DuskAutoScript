@@ -95,6 +95,22 @@ public:
         *pp_out_component = nullptr;
         return DAS_E_NOT_FOUND;
     }
+
+    DasResult DAS_STD_CALL CreateAuthoringSession(
+        const DasGuid&                                   task_guid,
+        Das::ExportInterface::IDasJson*                  p_context_json,
+        Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+        override
+    {
+        std::ignore = task_guid;
+        std::ignore = p_context_json;
+        if (pp_out_session == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_session = nullptr;
+        return DAS_E_NO_IMPLEMENTATION;
+    }
 };
 
 // ---- Minimal stop token mock ----
@@ -488,6 +504,22 @@ namespace
             component->AddRef();
             *pp_out_component = component;
             return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            std::ignore = task_guid;
+            std::ignore = p_context_json;
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
         }
 
         int create_count = 0;
@@ -1301,6 +1333,22 @@ namespace
             component->AddRef();
             *pp_out_component = component;
             return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            std::ignore = task_guid;
+            std::ignore = p_context_json;
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
         }
 
     private:
@@ -2606,6 +2654,22 @@ namespace
                 return DAS_S_OK;
             }
             return DAS_E_NOT_FOUND;
+        }
+
+        DasResult DAS_STD_CALL CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            std::ignore = task_guid;
+            std::ignore = p_context_json;
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
         }
     };
 } // namespace
@@ -4035,6 +4099,22 @@ namespace
                 return DAS_S_OK;
             }
             return DAS_E_NOT_FOUND;
+        }
+
+        DasResult DAS_STD_CALL CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            std::ignore = task_guid;
+            std::ignore = p_context_json;
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
         }
 
     private:

@@ -2477,6 +2477,13 @@ namespace Das::Core::TaskScheduler
         // PluginManager 持悬空 listener 指针。
         plugin_manager_.SetPluginLifecycleListener(nullptr);
 
+        // 同上防御：撤回 creator 后端两条解析能力的注入（捕获 this 的函数
+        // 对象不得越过本对象生命周期）。撤回后消费门走 D-03 具名错路径，
+        // 不静默、不悬垂。
+        plugin_manager_.GetTaskComponentFactoryManager().SetBackendResolvers(
+            ForeignInterfaceHost::RepositoryEntryResolver{},
+            ForeignInterfaceHost::AuthoringSessionResolver{});
+
         // 禁止在 BusinessThread 上析构（生产 HTTP 路径全程跑在 BT 上，本
         // 析构只发生在主线程/测试线程）：下面是阻塞排空，BT 上自等即死锁。
         // 先等 tick 生产者物理停产——顺序就是修复核心，先关 persist 消费者
@@ -2969,6 +2976,91 @@ namespace Das::Core::TaskScheduler
                 std::move(temp_repository_plugin_availability);
             initialized_ = true;
         }
+
+        // D-06 一次性搬家费：creator（TaskComponentHost）后端两条解析
+        // 能力注入——数据源本就在 SchedulerService（条目存储+能力注册
+        // 表），经函数对象倒置依赖，ForeignInterfaceHost 不 include
+        // TaskScheduler 头。① entryId→条目最小字段集（逻辑原
+        // BuildRepositoryInvokeCompileServices 的 load_entry）；② 任务
+        // 类型→会话工厂（逻辑原 CreateAuthoringSessionWithContext）。
+        plugin_manager_.GetTaskComponentFactoryManager().SetBackendResolvers(
+            [this](int64_t entry_id)
+            {
+                auto& settings = plugin_manager_.GetSettingsManager();
+                auto  entry_json =
+                    settings.GetTaskRepositoryEntryJson("0", entry_id);
+                if (entry_json.is_null() || !entry_json.is_object())
+                {
+                    return std::optional<
+                        ForeignInterfaceHost::RepositoryEntrySummary>{};
+                }
+
+                Repository::Dto::RepositoryEntryDto entry;
+                try
+                {
+                    entry = yyjson::cast<Repository::Dto::RepositoryEntryDto>(
+                        entry_json);
+                }
+                catch (const std::exception&)
+                {
+                    return std::optional<
+                        ForeignInterfaceHost::RepositoryEntrySummary>{};
+                }
+
+                {
+                    const std::scoped_lock lock(mutex_);
+                    entry.availability =
+                        DeriveRepositoryAvailabilityLocked(entry);
+                }
+
+                ForeignInterfaceHost::RepositoryEntrySummary summary;
+                summary.entry_id = entry.entry_id;
+                summary.task_type_guid = entry.task_type_guid;
+                summary.accepted_properties =
+                    CloneJsonValue(entry.accepted_properties);
+                summary.availability_state = entry.availability.state;
+                summary.availability_reason = entry.availability.reason;
+                return std::optional<
+                    ForeignInterfaceHost::RepositoryEntrySummary>{
+                    std::move(summary)};
+            },
+            [this](
+                const DasGuid&                                   task_guid,
+                Das::ExportInterface::IDasJson*                  p_context_json,
+                Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            {
+                TaskAuthoringCapability capability;
+                {
+                    const std::scoped_lock lock(mutex_);
+                    auto*                  authoring =
+                        capability_registry_.FindAuthoring(task_guid);
+                    if (authoring == nullptr)
+                    {
+                        DAS_CORE_LOG_WARN(
+                            "CreateAuthoringSession resolver: no authoring "
+                            "capability for task_guid={}, result={}",
+                            task_guid,
+                            DAS_E_NOT_FOUND);
+                        return DAS_E_NOT_FOUND;
+                    }
+                    capability = *authoring;
+                }
+
+                DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+                const auto session_result = CreateAuthoringSessionWithContext(
+                    plugin_manager_,
+                    capability,
+                    ReadJsonInterface(p_context_json),
+                    session);
+                if (DAS::IsFailed(session_result) || !session)
+                {
+                    return DAS::IsFailed(session_result) ? session_result
+                                                         : DAS_E_FAIL;
+                }
+                // 引用移交：out 参数带走一条新 ref，DasPtr 析构释放原持有
+                (*pp_out_session = session.Get())->AddRef();
+                return DAS_S_OK;
+            });
 
         DAS_CORE_LOG_INFO(
             "SchedulerService::Initialize: materialized {} task instances",

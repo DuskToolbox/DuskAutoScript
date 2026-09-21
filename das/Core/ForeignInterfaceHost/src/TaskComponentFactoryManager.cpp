@@ -3,7 +3,9 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
+#include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
 #include <atomic>
@@ -86,6 +88,18 @@ namespace
             return manager_.CreateComponent(component_guid, pp_out_component);
         }
 
+        DasResult DAS_STD_CALL CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            return manager_.CreateAuthoringSession(
+                task_guid,
+                p_context_json,
+                pp_out_session);
+        }
+
     private:
         TaskComponentFactoryManager& manager_;
         std::atomic<uint32_t>        ref_count_{0};
@@ -116,6 +130,72 @@ void TaskComponentFactoryManager::SetIpcContext(
 {
     ipc_context_ = ipc_context.as_ptr();
     RegisterHostObject();
+}
+
+void TaskComponentFactoryManager::SetBackendResolvers(
+    RepositoryEntryResolver  entry_resolver,
+    AuthoringSessionResolver session_resolver)
+{
+    const std::unique_lock lock{mutex_};
+    entry_resolver_ = std::move(entry_resolver);
+    session_resolver_ = std::move(session_resolver);
+}
+
+DasResult TaskComponentFactoryManager::ResolveRepositoryEntry(
+    int64_t                 entry_id,
+    RepositoryEntrySummary* pp_out_summary)
+{
+    DAS_UTILS_CHECK_POINTER(pp_out_summary)
+
+    RepositoryEntryResolver resolver;
+    {
+        const std::shared_lock lock{mutex_};
+        resolver = entry_resolver_;
+    }
+    if (!resolver)
+    {
+        DAS_CORE_LOG_WARN(
+            "ResolveRepositoryEntry backend resolver not injected: "
+            "entry_id={}, result={}",
+            entry_id,
+            DAS_E_REPOSITORY_ENTRY_RESOLVER_MISSING);
+        return DAS_E_REPOSITORY_ENTRY_RESOLVER_MISSING;
+    }
+
+    auto summary = resolver(entry_id);
+    if (!summary)
+    {
+        DAS_CORE_LOG_WARN(
+            "ResolveRepositoryEntry found no entry: entry_id={}",
+            entry_id);
+        return DAS_E_NOT_FOUND;
+    }
+    *pp_out_summary = std::move(*summary);
+    return DAS_S_OK;
+}
+
+DasResult TaskComponentFactoryManager::CreateAuthoringSession(
+    const DasGuid&                                   task_guid,
+    Das::ExportInterface::IDasJson*                  p_context_json,
+    Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+{
+    DAS_UTILS_CHECK_POINTER(pp_out_session)
+
+    AuthoringSessionResolver resolver;
+    {
+        const std::shared_lock lock{mutex_};
+        resolver = session_resolver_;
+    }
+    if (!resolver)
+    {
+        DAS_CORE_LOG_WARN(
+            "CreateAuthoringSession backend resolver not injected: "
+            "task_guid={}, result={}",
+            task_guid,
+            DAS_E_AUTHORING_SESSION_RESOLVER_MISSING);
+        return DAS_E_AUTHORING_SESSION_RESOLVER_MISSING;
+    }
+    return resolver(task_guid, p_context_json, pp_out_session);
 }
 
 void TaskComponentFactoryManager::RegisterHostObject()
@@ -519,6 +599,75 @@ TaskComponentFactoryManager::EnumerateDefinitions() const
                 CopyJsonValue(route.definition)});
     }
     return definitions;
+}
+
+namespace
+{
+    void RegisterOneBackendMessage(
+        Das::PluginInterface::IDasBasicErrorLens* lens,
+        const char*                               locale,
+        DasResult                                 error_code,
+        const char*                               message)
+    {
+        const DasReadOnlyString locale_str{locale};
+        const DasReadOnlyString msg_str{message};
+        const auto              result = lens->RegisterErrorMessage(
+            locale_str.Get(),
+            error_code,
+            msg_str.Get());
+        if (DAS::IsFailed(result))
+        {
+            DAS_CORE_LOG_ERROR(
+                "TaskComponent backend ErrorLens: failed to register "
+                "error_code={}, locale='{}', result={}",
+                error_code,
+                locale,
+                result);
+        }
+    }
+} // namespace
+
+DasPtr<Das::PluginInterface::IDasBasicErrorLens>
+CreateRegisteredTaskComponentBackendErrorLens()
+{
+    DasPtr<Das::PluginInterface::IDasBasicErrorLens> lens;
+    const auto hr = CreateIDasBasicErrorLens(lens.Put());
+    if (DAS::IsFailed(hr))
+    {
+        DAS_CORE_LOG_ERROR(
+            "TaskComponent backend ErrorLens: CreateIDasBasicErrorLens "
+            "failed, result={}",
+            hr);
+        return nullptr;
+    }
+
+    // D-03 具名显性错的人话条目：两条后端解析能力缺注入时各自成码，
+    // 不静默降级（en/zh-cn 双语，照 FlowControl 先例）。
+    RegisterOneBackendMessage(
+        lens.Get(),
+        "en",
+        DAS_E_REPOSITORY_ENTRY_RESOLVER_MISSING,
+        "The repository entry resolution backend is not available in this "
+        "process.");
+    RegisterOneBackendMessage(
+        lens.Get(),
+        "zh-cn",
+        DAS_E_REPOSITORY_ENTRY_RESOLVER_MISSING,
+        "本进程未接入仓库条目解析后端。");
+
+    RegisterOneBackendMessage(
+        lens.Get(),
+        "en",
+        DAS_E_AUTHORING_SESSION_RESOLVER_MISSING,
+        "The authoring session factory resolution backend is not available "
+        "in this process.");
+    RegisterOneBackendMessage(
+        lens.Get(),
+        "zh-cn",
+        DAS_E_AUTHORING_SESSION_RESOLVER_MISSING,
+        "本进程未接入 authoring 会话工厂解析后端。");
+
+    return lens;
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

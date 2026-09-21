@@ -972,4 +972,260 @@ namespace
             GetHostDom().GetLocalEntryCount(),
             host_dom_baseline_entry_count_);
     }
+
+    // ============================================================
+    // creator 后端解析注入（CreateAuthoringSession typed 双法 + D-03
+    // 缺注入具名错）
+    // ============================================================
+
+    class MockAuthoringSession final : public IDasTaskAuthoringSession
+    {
+    public:
+        explicit MockAuthoringSession(DasGuid guid) : guid_(guid) {}
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTypeInfo>())
+            {
+                *pp_out = static_cast<IDasTypeInfo*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTaskAuthoringSession>())
+            {
+                *pp_out = static_cast<IDasTaskAuthoringSession*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            if (p_out_guid == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_guid = guid_;
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            if (pp_out_name == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            return CreateIDasReadOnlyStringFromUtf8(
+                "MockAuthoringSession",
+                pp_out_name);
+        }
+
+        DasResult DAS_STD_CALL GetDocument(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_document) override
+        {
+            if (pp_out_document == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_document = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult DAS_STD_CALL ApplyChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result) override
+        {
+            if (pp_out_result == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_result = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult DAS_STD_CALL Compile(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result) override
+        {
+            if (pp_out_result == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_result = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+    private:
+        DasGuid               guid_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        CreateAuthoringSessionWithoutBackendReturnsNamedError)
+    {
+        // D-03：会话工厂解析后端未注入 → 具名显性错（经 host 本尊走全链）
+        auto* host = manager.GetTaskComponentHost();
+        ASSERT_NE(host, nullptr);
+
+        const auto                       task_guid = MakeTestGuid(0x68030061);
+        DasPtr<IDasTaskAuthoringSession> session;
+        const ScopedLogCapture           logs;
+        EXPECT_EQ(
+            host->CreateAuthoringSession(task_guid, nullptr, session.Put()),
+            DAS_E_AUTHORING_SESSION_RESOLVER_MISSING);
+        EXPECT_FALSE(session);
+        EXPECT_TRUE(logs.Contains("CreateAuthoringSession backend resolver"));
+    }
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        ResolveRepositoryEntryWithoutBackendReturnsNamedError)
+    {
+        // D-03：entryId→条目解析后端未注入 → 具名显性错
+        RepositoryEntrySummary summary;
+        const ScopedLogCapture logs;
+        EXPECT_EQ(
+            manager.ResolveRepositoryEntry(7, &summary),
+            DAS_E_REPOSITORY_ENTRY_RESOLVER_MISSING);
+    }
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        CreateAuthoringSessionWithBackendReturnsSession)
+    {
+        // 成功路径：fake 后端注入 → host 本尊 CreateAuthoringSession 返回
+        // 后端产物会话
+        const auto task_guid = MakeTestGuid(0x68030071);
+
+        auto* session_impl = new MockAuthoringSession(task_guid);
+        session_impl->AddRef();
+        int session_resolver_calls = 0;
+        manager.SetBackendResolvers(
+            RepositoryEntryResolver{},
+            [&session_resolver_calls, session_impl](
+                const DasGuid&                  resolved_task_guid,
+                Das::ExportInterface::IDasJson* p_context_json,
+                IDasTaskAuthoringSession**      pp_out_session)
+            {
+                ++session_resolver_calls;
+                EXPECT_EQ(resolved_task_guid, MakeTestGuid(0x68030071));
+                EXPECT_EQ(p_context_json, nullptr);
+                *pp_out_session = session_impl;
+                (*pp_out_session)->AddRef();
+                return DAS_S_OK;
+            });
+
+        auto*                            host = manager.GetTaskComponentHost();
+        DasPtr<IDasTaskAuthoringSession> session;
+        ASSERT_EQ(
+            host->CreateAuthoringSession(task_guid, nullptr, session.Put()),
+            DAS_S_OK);
+        EXPECT_EQ(session_resolver_calls, 1);
+        EXPECT_EQ(session.Get(), session_impl);
+
+        session_impl->Release();
+        manager.SetBackendResolvers({}, {});
+    }
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        ResolveRepositoryEntryWithBackendReturnsSummary)
+    {
+        // 成功路径：fake 后端注入 → 条目最小字段集原样到达
+        RepositoryEntrySummary fake_summary;
+        fake_summary.entry_id = 42;
+        fake_summary.task_type_guid = "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        fake_summary.accepted_properties = Das::Utils::MakeYyjsonObject();
+        fake_summary.availability_state = "available";
+        fake_summary.availability_reason = "";
+
+        int entry_resolver_calls = 0;
+        manager.SetBackendResolvers(
+            [&entry_resolver_calls, &fake_summary](int64_t entry_id)
+            {
+                ++entry_resolver_calls;
+                EXPECT_EQ(entry_id, 42);
+                return std::optional<RepositoryEntrySummary>(fake_summary);
+            },
+            AuthoringSessionResolver{});
+
+        RepositoryEntrySummary resolved;
+        ASSERT_EQ(manager.ResolveRepositoryEntry(42, &resolved), DAS_S_OK);
+        EXPECT_EQ(entry_resolver_calls, 1);
+        EXPECT_EQ(resolved.entry_id, 42);
+        EXPECT_EQ(
+            resolved.task_type_guid,
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3");
+        EXPECT_EQ(resolved.availability_state, "available");
+
+        // 后端报条目不存在 → NOT_FOUND（与缺注入的具名码区分）
+        manager.SetBackendResolvers(
+            [](int64_t) { return std::optional<RepositoryEntrySummary>{}; },
+            AuthoringSessionResolver{});
+        EXPECT_EQ(
+            manager.ResolveRepositoryEntry(43, &resolved),
+            DAS_E_NOT_FOUND);
+    }
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        BackendErrorLensCarriesEnAndZhCnForNamedCodes)
+    {
+        // D-03 ErrorLens 人话条目：两个具名码 en/zh-cn 双语非空
+        auto lens = CreateRegisteredTaskComponentBackendErrorLens();
+        ASSERT_TRUE(lens);
+
+        const auto message_of = [&lens](const char* locale, DasResult code)
+        {
+            const DasReadOnlyString    locale_str{locale};
+            DasPtr<IDasReadOnlyString> out;
+            if (DAS::IsFailed(
+                    lens->GetErrorMessage(locale_str.Get(), code, out.Put())))
+            {
+                return std::string{};
+            }
+            const char* text = nullptr;
+            EXPECT_EQ(out->GetUtf8(&text), DAS_S_OK);
+            return text != nullptr ? std::string{text} : std::string{};
+        };
+
+        EXPECT_FALSE(
+            message_of("en", DAS_E_REPOSITORY_ENTRY_RESOLVER_MISSING).empty());
+        EXPECT_FALSE(
+            message_of("zh-cn", DAS_E_REPOSITORY_ENTRY_RESOLVER_MISSING)
+                .empty());
+        EXPECT_FALSE(
+            message_of("en", DAS_E_AUTHORING_SESSION_RESOLVER_MISSING).empty());
+        EXPECT_FALSE(
+            message_of("zh-cn", DAS_E_AUTHORING_SESSION_RESOLVER_MISSING)
+                .empty());
+    }
 } // namespace

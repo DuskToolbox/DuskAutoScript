@@ -163,6 +163,19 @@ namespace
             return DAS_S_OK;
         }
 
+        DasResult DAS_STD_CALL CreateAuthoringSession(
+            const DasGuid&                              task_guid,
+            Das::ExportInterface::IDasJson*             p_context_json,
+            PluginInterface::IDasTaskAuthoringSession** pp_out_session) override
+        {
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
     private:
         std::shared_ptr<RecordingChildState> recording_state_;
     };

@@ -1024,6 +1024,20 @@ namespace
             *pp_out_component = component;
             return DAS_S_OK;
         }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
     };
 
     // host 替身：为 invokeRepository 的子执行段创建记录型子组件
@@ -1058,6 +1072,20 @@ namespace
             component->AddRef();
             *pp_out_component = component;
             return DAS_S_OK;
+        }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
         }
 
     private:

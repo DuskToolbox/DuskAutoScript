@@ -362,6 +362,22 @@ namespace
             *pp_out_component = nullptr;
             return DAS_E_NOT_FOUND;
         }
+
+        DasResult DAS_STD_CALL CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            std::ignore = task_guid;
+            std::ignore = p_context_json;
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
     };
 
     DasResult ExecuteArtifactText(std::string_view artifact_utf8)

@@ -113,6 +113,19 @@ namespace
             *pp_out_component = nullptr;
             return DAS_E_NOT_FOUND;
         }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                              task_guid,
+            Das::ExportInterface::IDasJson*             p_context_json,
+            PluginInterface::IDasTaskAuthoringSession** pp_out_session) override
+        {
+            if (!pp_out_session)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
     };
 
     // ---- Plan builders ----

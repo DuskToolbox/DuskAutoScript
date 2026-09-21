@@ -3,6 +3,7 @@ import "DasJson.idl";
 import "IDasPortMap.idl";
 import "IDasTypeInfo.idl";
 import "IDasTask.idl";
+import "IDasTaskAuthoring.idl";
 
 namespace Das::PluginInterface
 {
@@ -26,6 +27,12 @@ namespace Das::PluginInterface
         DasResult CreateTaskComponent(
             const DasGuid&            component_guid,
             [out] IDasTaskComponent** pp_out_component);
+        // typed 双法第二翼（方法名即选翼器）：经注册的会话工厂解析
+        // task_guid 对应的 authoring 会话。uuid 不动、方法追加尾部。
+        DasResult CreateAuthoringSession(
+            const DasGuid&                     task_guid,
+            Das::ExportInterface::IDasJson*    p_context_json,
+            [out] IDasTaskAuthoringSession**   pp_out_session);
     }
 
     [uuid(

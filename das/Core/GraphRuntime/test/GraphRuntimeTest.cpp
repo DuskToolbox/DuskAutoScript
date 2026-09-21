@@ -405,6 +405,20 @@ namespace GraphRuntimeTestMock
             *pp_out_component = MockTaskComponent::MakeRaw();
             return DAS_S_OK;
         }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            if (!pp_out_session)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
     };
 
     // ---- Mock IDasErrorLens ----
@@ -625,6 +639,20 @@ namespace GraphRuntimeTestMock
             return DAS_S_OK;
         }
 
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            if (!pp_out_session)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
         void SetImage(IDasImage* image)
         {
             // DasPtr::Attach 是静态接管原语：先补一次拥有引用再整体赋回。
@@ -659,6 +687,20 @@ namespace GraphRuntimeTestMock
             }
             *pp_out_component = MockTaskComponent::MakeRaw();
             return DAS_S_OK;
+        }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            if (!pp_out_session)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
         }
 
     private:
@@ -1252,6 +1294,20 @@ namespace SignalGatedTestMock
             components.push_back(c);
             *pp_out_component = c;
             return DAS_S_OK;
+        }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            if (!pp_out_session)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
         }
     };
 
