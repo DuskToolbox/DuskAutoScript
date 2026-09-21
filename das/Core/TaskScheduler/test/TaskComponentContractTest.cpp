@@ -65,7 +65,6 @@ namespace
         ChildExecutionSnapshotDto;
     using Das::Core::TaskScheduler::RepositoryInvoke::Dto::
         InvokeRepositoryTaskInputDto;
-    using Das::Core::TaskScheduler::RepositoryInvoke::Dto::RepositoryTaskRefDto;
     using Das::PluginInterface::IDasTaskComponent;
 
     struct OfficialFlowComponent
@@ -1065,8 +1064,9 @@ namespace
         std::shared_ptr<RecordingChildState> state_;
     };
 
-    // 直构 invokeRepository 组件（仓库条目解析缝在测试 exe 静态编入的源
-    // 上，经 DLL 工厂拿到的实例无法注入——与 MakeLaunchComponent 同因）。
+    // 直构 invokeRepository 组件（需要注入 RecordingChildComponentHost 的
+    // 用例走直构——经 DLL 工厂拿到的实例绑定宿主工厂，与 MakeLaunchComponent
+    // 同因）。
     DasPtr<Das::DasFlowControlTaskComponent> MakeInvokeRepositoryComponent(
         Das::PluginInterface::IDasTaskComponentHost* host)
     {
@@ -1076,22 +1076,8 @@ namespace
                 DasPtr<Das::PluginInterface::IDasTaskComponentHost>(host))};
     }
 
-    // 解析缝注入守卫：测试结束（含断言早退）恢复生产实现。
-    struct ScopedRepositoryEntryResolverOverride
-    {
-        explicit ScopedRepositoryEntryResolverOverride(
-            Das::RepositoryEntryResolver resolver)
-        {
-            Das::SetRepositoryEntryResolverForTest(std::move(resolver));
-        }
-
-        ~ScopedRepositoryEntryResolverOverride()
-        {
-            Das::SetRepositoryEntryResolverForTest(nullptr);
-        }
-    };
-
-    // settings fallback 解析缝成功返回的子执行快照。
+    // envelope 形态子执行快照（无 {fingerprint, plan} 外壳——maapi/envelope
+    // 形态子组件用例的 compiledSnapshot 口喂线输入）。
     ChildExecutionSnapshotDto MakeResolvedChildSnapshot()
     {
         ChildExecutionSnapshotDto snapshot;
@@ -1102,15 +1088,6 @@ namespace
             "childInput": "from-fallback"
         })json");
         return snapshot;
-    }
-
-    Das::RepositoryEntryResolveOutcome MakeResolveOutcomeOk(
-        ChildExecutionSnapshotDto snapshot)
-    {
-        Das::RepositoryEntryResolveOutcome outcome;
-        outcome.ok = true;
-        outcome.snapshot = std::move(snapshot);
-        return outcome;
     }
 
     // 经 GraphRuntime 的 {"settings": S} 包装形投递 invokeRepository 配置。
@@ -2916,25 +2893,16 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeHonorsAlreadyRequestedStop)
     child_factory->Release();
 }
 
-// ---- invokeRepository settings fallback（调用节点执行路径）----
+// ---- invokeRepository 快照来源（compiledSnapshot 端口唯一，遇缺即错）----
 
-// 端口优先：compiledSnapshot 端口命中时既有路径执行，解析缝零调用
-// （settings fallback 不得抢占端口喂线）。
+// 端口喂线执行：settings 携带 repositoryRef 时快照仍只认 compiledSnapshot
+// 端口——口喂线即执行子组件，settings 引用不抢占、不旁路端口通道。
 TEST_F(
     TaskComponentContractTest,
-    RepositoryInvokePortSnapshotWinsOverSettingsFallback)
+    RepositoryInvokePortSnapshotExecutesWithRepositoryRefSettings)
 {
     auto state = std::make_shared<RecordingChildState>();
     auto host = RecordingChildComponentHost::Make(state);
-
-    int                                         resolver_calls = 0;
-    const ScopedRepositoryEntryResolverOverride resolver_override{
-        [&resolver_calls](
-            const RepositoryTaskRefDto&) -> Das::RepositoryEntryResolveOutcome
-        {
-            ++resolver_calls;
-            return {};
-        }};
 
     auto component = MakeInvokeRepositoryComponent(host.Get());
     ApplyInvokeRepositoryConfig(
@@ -2947,25 +2915,21 @@ TEST_F(
         component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    EXPECT_EQ(resolver_calls, 0);
     EXPECT_EQ(state->do_call_count, 1);
     EXPECT_EQ(
         Das::Utils::GetPortString(result_map.Get(), "status"),
         "completed");
 }
 
-// settings fallback：compiledSnapshot 端口缺失且 repositoryRef 已投 → 自解析
-// 仓库条目为子执行快照，子组件经 host 创建执行，status/childOutputs 聚合。
+// 遇缺即错负例：compiledSnapshot 端口缺失（即使 settings 携带有效
+// repositoryRef）→ 快照缺失专用错误码 + diagnostic（快照由父图编译注入，
+// 运行期零自解析回退），子组件零创建。
 TEST_F(
     TaskComponentContractTest,
-    RepositoryInvokeSettingsFallbackResolvesAndExecutesChild)
+    RepositoryInvokeSettingsRepositoryRefWithoutSnapshotPortErrors)
 {
     auto state = std::make_shared<RecordingChildState>();
     auto host = RecordingChildComponentHost::Make(state);
-
-    const ScopedRepositoryEntryResolverOverride resolver_override{
-        [](const RepositoryTaskRefDto&) -> Das::RepositoryEntryResolveOutcome
-        { return MakeResolveOutcomeOk(MakeResolvedChildSnapshot()); }};
 
     auto component = MakeInvokeRepositoryComponent(host.Get());
     ApplyInvokeRepositoryConfig(
@@ -2978,67 +2942,11 @@ TEST_F(
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
         component->Do(nullptr, input_map.Get(), result_map.Put()),
-        DAS_S_OK);
-
-    EXPECT_EQ(state->do_call_count, 1);
-    auto child_input = ParseJson(state->last_input_json);
-    auto child_input_obj = child_input.as_object();
-    ASSERT_TRUE(child_input_obj.has_value());
-    EXPECT_EQ(
-        (*child_input_obj)[std::string_view("childInput")].as_string().value_or(
-            ""),
-        std::string_view("from-fallback"));
-
-    EXPECT_EQ(
-        Das::Utils::GetPortString(result_map.Get(), "status"),
-        "completed");
-    EXPECT_EQ(
-        Das::Utils::GetPortString(result_map.Get(), "childStatus"),
-        "completed");
-    auto child_outputs_json =
-        Das::Utils::GetPortJson(result_map.Get(), "childOutputs");
-    ASSERT_TRUE(child_outputs_json.has_value());
-    auto child_outputs_obj = child_outputs_json->as_object();
-    ASSERT_TRUE(child_outputs_obj.has_value());
-    EXPECT_EQ(
-        (*child_outputs_obj)[std::string_view("value")].as_int().value(),
-        5);
-}
-
-// 解析失败 = 无法完成调用动作 → 专用执行失败错误码 + diagnostic 携带可读
-// 原因（不静默成功）。
-TEST_F(
-    TaskComponentContractTest,
-    RepositoryInvokeSettingsFallbackReturnsResolveFailedError)
-{
-    auto state = std::make_shared<RecordingChildState>();
-    auto host = RecordingChildComponentHost::Make(state);
-
-    const ScopedRepositoryEntryResolverOverride resolver_override{
-        [](const RepositoryTaskRefDto&) -> Das::RepositoryEntryResolveOutcome
-        {
-            Das::RepositoryEntryResolveOutcome outcome;
-            outcome.ok = false;
-            outcome.error_message = "resolver-refused-for-test";
-            return outcome;
-        }};
-
-    auto component = MakeInvokeRepositoryComponent(host.Get());
-    ApplyInvokeRepositoryConfig(
-        component.Get(),
-        R"json({"repositoryRef": 42})json");
-
-    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
-    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-
-    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
-    ASSERT_EQ(
-        component->Do(nullptr, input_map.Get(), result_map.Put()),
-        DAS_E_FLOW_INVOKE_RESOLVE_FAILED);
+        DAS_E_FLOW_INVOKE_SNAPSHOT_MISSING);
 
     const auto diagnostic =
         Das::Utils::GetPortString(result_map.Get(), "diagnostic");
-    EXPECT_NE(diagnostic.find("resolver-refused-for-test"), std::string::npos);
+    EXPECT_FALSE(diagnostic.empty());
     EXPECT_EQ(state->do_call_count, 0);
 }
 
@@ -3068,45 +2976,6 @@ TEST_F(
             DAS_E_INVALID_ARGUMENT)
             << settings_json;
     }
-}
-
-// 条目引用不带版本对账字段：解析缝收到的 RepositoryTaskRefDto 的
-// expected_revision/source_fingerprint 恒不填（调用节点无版本概念），
-// entryId 原样透传。
-TEST_F(
-    TaskComponentContractTest,
-    RepositoryInvokeFallbackReferenceCarriesNoRevisionExpectation)
-{
-    auto state = std::make_shared<RecordingChildState>();
-    auto host = RecordingChildComponentHost::Make(state);
-
-    std::optional<RepositoryTaskRefDto>         captured_ref;
-    const ScopedRepositoryEntryResolverOverride resolver_override{
-        [&captured_ref](const RepositoryTaskRefDto& repository_ref)
-            -> Das::RepositoryEntryResolveOutcome
-        {
-            captured_ref = repository_ref;
-            return MakeResolveOutcomeOk(MakeResolvedChildSnapshot());
-        }};
-
-    auto component = MakeInvokeRepositoryComponent(host.Get());
-    ApplyInvokeRepositoryConfig(
-        component.Get(),
-        R"json({"repositoryRef": 42})json");
-
-    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
-    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-
-    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
-    ASSERT_EQ(
-        component->Do(nullptr, input_map.Get(), result_map.Put()),
-        DAS_S_OK);
-
-    ASSERT_TRUE(captured_ref.has_value());
-    EXPECT_EQ(captured_ref->entry_id, 42);
-    EXPECT_EQ(captured_ref->kind, std::string_view("taskRepositoryRef"));
-    EXPECT_FALSE(captured_ref->expected_revision.has_value());
-    EXPECT_FALSE(captured_ref->source_fingerprint.has_value());
 }
 
 // ---- 边界输入转发与边界输出投影（调用节点运行时双向值流）----

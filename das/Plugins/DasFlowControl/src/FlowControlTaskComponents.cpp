@@ -6,11 +6,8 @@
 #include "FlowControlI18n.h"
 #include "LaunchOutputCapture.h"
 
-#include <das/Core/GraphRuntime/CompiledPlanFingerprint.h>
 #include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
-#include <das/DasApi.h>
 #include <das/DasString.hpp>
-#include <das/IDasSchedulerService.h>
 #include <das/Utils/BoostPathBridge.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/PathText.h>
@@ -74,22 +71,8 @@ namespace
     constexpr std::string_view REPOSITORY_INVOKE_KIND =
         "das.flow.invokeRepository";
 
-    // 仓库条目解析缝（测试可注入；空 = 生产实现）。互斥保护：注入与 Do
-    // 可能来自不同线程。
-    std::mutex& RepositoryResolverMutex()
-    {
-        static std::mutex mutex;
-        return mutex;
-    }
-
-    RepositoryEntryResolver& RepositoryResolverSlot()
-    {
-        static RepositoryEntryResolver resolver;
-        return resolver;
-    }
-
     // 提权回退启动缝槽（测试可注入；空 = 生产实现）。互斥保护：注入与 Do
-    // 可能来自不同线程（照 RepositoryResolver 槽范式）。
+    // 可能来自不同线程。
     std::mutex& ElevatedLauncherMutex()
     {
         static std::mutex mutex;
@@ -100,22 +83,6 @@ namespace
     {
         static FlowControlElevatedLauncher launcher;
         return launcher;
-    }
-
-    // 主进程调度服务的具名注册名（DasHttp 按 das.focus / das.locale 同
-    // 范式注册）。
-    constexpr std::string_view SCHEDULER_SERVICE_NAME = "das.scheduler";
-
-    // execution 编译请求体（与 RepositoryInvoke 编译链的请求一致）。
-    constexpr std::string_view EXECUTION_COMPILE_REQUEST =
-        R"({"purpose":"execution"})";
-
-    RepositoryEntryResolveOutcome MakeResolveFailure(std::string error_message)
-    {
-        RepositoryEntryResolveOutcome outcome;
-        outcome.ok = false;
-        outcome.error_message = std::move(error_message);
-        return outcome;
     }
 
     // 边界输出投影（子图→父图半，D-21① 单通道）：按子执行快照编译产物
@@ -181,174 +148,6 @@ namespace
                 output_map,
                 *port_id);
         }
-    }
-
-    // 仓库条目解析的生产实现：经主进程 C ABI 查 IDasSchedulerService，调
-    // CompileRepositoryEntryAuthoring 取编译产物 executionInput 与外显的
-    // executionComponentGuid，组装子执行快照。跨进程服务访问必须走 C
-    // ABI——插件 DLL 内联读取 IPC 上下文的 thread_local 跨 DLL 分裂恒空。
-    RepositoryEntryResolveOutcome ResolveRepositoryEntryViaScheduler(
-        const RepositoryInvokeDto::RepositoryTaskRefDto& repository_ref)
-    {
-        DasPtr<IDasBase> service_base;
-        if (DAS::IsFailed(DasQueryMainProcessInterfaceByName(
-                std::string(SCHEDULER_SERVICE_NAME).c_str(),
-                service_base.Put()))
-            || !service_base)
-        {
-            return MakeResolveFailure(
-                "Scheduler service is unavailable (das.scheduler)");
-        }
-
-        DasPtr<IDasSchedulerService> scheduler;
-        if (DAS::IsFailed(service_base.As(scheduler.Put())) || !scheduler)
-        {
-            return MakeResolveFailure(
-                "Scheduler service does not expose IDasSchedulerService");
-        }
-
-        DasPtr<IDasReadOnlyString> request;
-        if (DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
-                std::string(EXECUTION_COMPILE_REQUEST).c_str(),
-                request.Put()))
-            || !request)
-        {
-            return MakeResolveFailure(
-                "Failed to build the execution compile request");
-        }
-
-        DasPtr<IDasReadOnlyString> response;
-        const DasResult            compile_result =
-            scheduler->CompileRepositoryEntryAuthoring(
-                repository_ref.entry_id,
-                request.Get(),
-                response.Put());
-        if (DAS::IsFailed(compile_result) || !response)
-        {
-            return MakeResolveFailure(
-                "Repository entry compile call failed with result "
-                + std::to_string(compile_result));
-        }
-
-        const char* response_utf8 = nullptr;
-        response->GetUtf8(&response_utf8);
-        auto parsed = Das::Utils::ParseYyjsonFromString(
-            response_utf8 != nullptr ? response_utf8 : "");
-        if (!parsed || !parsed->is_object())
-        {
-            return MakeResolveFailure(
-                "Repository entry compile response is not valid JSON");
-        }
-        auto response_object = parsed->as_object();
-        if (!response_object.has_value())
-        {
-            return MakeResolveFailure(
-                "Repository entry compile response is not valid JSON");
-        }
-
-        // 失败信封：{ok:false, errorKind, message}。
-        if (response_object->contains(std::string_view("ok"))
-            && (*response_object)[std::string_view("ok")].is_bool()
-            && !(*response_object)[std::string_view("ok")].as_bool().value_or(
-                true))
-        {
-            std::string error_kind = "unknown";
-            std::string error_message = "Repository entry compile failed";
-            if (const auto kind =
-                    (*response_object)[std::string_view("errorKind")]
-                        .as_string())
-            {
-                error_kind = std::string(*kind);
-            }
-            if (const auto message =
-                    (*response_object)[std::string_view("message")].as_string())
-            {
-                error_message = std::string(*message);
-            }
-            return MakeResolveFailure(error_kind + ": " + error_message);
-        }
-
-        if (!response_object->contains(std::string_view("compile")))
-        {
-            return MakeResolveFailure(
-                "Repository entry compile response has no compile section");
-        }
-        auto compile_object =
-            (*response_object)[std::string_view("compile")].as_object();
-        if (!compile_object.has_value())
-        {
-            return MakeResolveFailure(
-                "Repository entry compile section is not an object");
-        }
-
-        // Provider 编译失败：compile.ok 显式 false。
-        if (compile_object->contains(std::string_view("ok"))
-            && (*compile_object)[std::string_view("ok")].is_bool()
-            && !(*compile_object)[std::string_view("ok")].as_bool().value_or(
-                true))
-        {
-            return MakeResolveFailure(
-                "Repository authoring provider failed to compile execution "
-                "input");
-        }
-
-        if (!compile_object->contains(std::string_view("executionInput")))
-        {
-            return MakeResolveFailure(
-                "Repository entry compile did not return executionInput");
-        }
-        const auto& execution_input =
-            (*compile_object)[std::string_view("executionInput")];
-        if (!execution_input.is_object())
-        {
-            return MakeResolveFailure(
-                "Repository entry executionInput is not an object");
-        }
-
-        if (!compile_object->contains(
-                std::string_view("executionComponentGuid")))
-        {
-            return MakeResolveFailure(
-                "Repository entry compile did not surface "
-                "executionComponentGuid");
-        }
-        const auto component_guid =
-            (*compile_object)[std::string_view("executionComponentGuid")]
-                .as_string();
-        if (!component_guid.has_value() || component_guid->empty())
-        {
-            return MakeResolveFailure(
-                "Repository entry compile did not surface "
-                "executionComponentGuid");
-        }
-
-        RepositoryInvokeDto::ChildExecutionSnapshotDto snapshot;
-        snapshot.version = 1;
-        snapshot.source_entry_id = repository_ref.entry_id;
-        snapshot.component_guid = std::string(*component_guid);
-        snapshot.execution_input =
-            Das::Utils::CloneYyjsonValue(execution_input);
-
-        RepositoryEntryResolveOutcome outcome;
-        outcome.ok = true;
-        outcome.snapshot = std::move(snapshot);
-        return outcome;
-    }
-
-    // 解析缝分派：测试注入优先，空则走生产实现。
-    RepositoryEntryResolveOutcome ResolveRepositoryEntry(
-        const RepositoryInvokeDto::RepositoryTaskRefDto& repository_ref)
-    {
-        RepositoryEntryResolver resolver;
-        {
-            const std::scoped_lock lock(RepositoryResolverMutex());
-            resolver = RepositoryResolverSlot();
-        }
-        if (resolver)
-        {
-            return resolver(repository_ref);
-        }
-        return ResolveRepositoryEntryViaScheduler(repository_ref);
     }
 
     constexpr std::string_view BRANCH_KIND = "das.flow.branch";
@@ -1241,12 +1040,6 @@ FlowControlSpawnResult SpawnProcessWithElevationFallback(
     }
 }
 
-void SetRepositoryEntryResolverForTest(RepositoryEntryResolver resolver)
-{
-    const std::scoped_lock lock(RepositoryResolverMutex());
-    RepositoryResolverSlot() = std::move(resolver);
-}
-
 DasFlowControlTaskComponent::DasFlowControlTaskComponent(
     std::string_view                               kind,
     DasPtr<PluginInterface::IDasTaskComponentHost> host)
@@ -1341,8 +1134,9 @@ DasResult DasFlowControlTaskComponent::ApplySettingsChange(
     }
 
     // invokeRepository 的 repositoryRef：正整数 entryId，其余形状整包拒绝
-    // （不落半截状态——项目未发布，无 legacy 值需要宽容）。
-    std::optional<int64_t> accepted_repository_entry_id;
+    // （不落半截状态——项目未发布，无 legacy 值需要宽容）。值仅随
+    // settings 原文保留（诊断/展示），运行期不触发任何解析——子执行快照
+    // 唯一来源是 compiledSnapshot 端口（父图编译注入）。
     if (kind_ == REPOSITORY_INVOKE_KIND)
     {
         auto accepted_object = accepted.as_object();
@@ -1358,17 +1152,11 @@ DasResult DasFlowControlTaskComponent::ApplySettingsChange(
                 {
                     return DAS_E_INVALID_ARGUMENT;
                 }
-                accepted_repository_entry_id = *entry_id;
             }
         }
     }
 
     settings_ = CloneJson(accepted);
-
-    {
-        const std::scoped_lock repository_entry_lock(repository_entry_mutex_);
-        repository_entry_id_ = accepted_repository_entry_id.value_or(0);
-    }
 
     // acceptedSettings 响应经协议 builder 组装：固定 wire 字段名进方法名，
     // 调用方拼错字段在编译期报错。
@@ -1417,9 +1205,10 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
             pp_out_port_map);
     }
 
-    // 快照来源分派：compiledSnapshot 端口喂线优先（既有路径零变化）；端口
-    // 缺失且 settings 携带有效 repositoryRef 时自解析仓库条目（调用节点
-    // 执行路径）。
+    // 快照来源唯一：compiledSnapshot 端口喂线（父图编译期注入——编排者
+    // 备好、执行者只执行）。端口缺失（含 settings 携带 repositoryRef 但
+    // 口未喂线的情形）遇缺即错，统一走既有快照缺失报错分支，运行期零自
+    // 解析回退、零主进程服务查询。
     auto snapshot_json = GetPortJson(p_input_port_map, "compiledSnapshot");
     RepositoryInvokeDto::ChildExecutionSnapshotDto snapshot;
     if (snapshot_json && snapshot_json->is_object())
@@ -1450,55 +1239,22 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     }
     else
     {
-        int64_t repository_entry_id = 0;
+        // Return a result with diagnostic information
+        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+        const DasResult hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
         {
-            const std::scoped_lock repository_entry_lock(
-                repository_entry_mutex_);
-            repository_entry_id = repository_entry_id_;
+            return hr;
         }
-        if (repository_entry_id <= 0)
-        {
-            // Return a result with diagnostic information
-            DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-            const DasResult hr = CreateIDasPortMap(output_map.Put());
-            if (DAS::IsFailed(hr))
-            {
-                return hr;
-            }
-            SetPortString(output_map.Get(), "status", "failed");
-            SetPortString(
-                output_map.Get(),
-                "diagnostic",
-                "Repository invoke requires a compiled child snapshot.");
-            *pp_out_port_map = output_map.Get();
-            output_map.Get()->AddRef();
-            return Plugins::DasFlowControl::DAS_E_FLOW_INVOKE_SNAPSHOT_MISSING;
-        }
-
-        RepositoryInvokeDto::RepositoryTaskRefDto repository_ref;
-        repository_ref.entry_id = repository_entry_id;
-        // expected_revision/source_fingerprint 恒不填——调用节点无版本
-        // 对账概念，条目解析端的 optional 校验天然跳过。
-        const auto resolve_outcome = ResolveRepositoryEntry(repository_ref);
-        if (!resolve_outcome.ok)
-        {
-            DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-            const DasResult hr = CreateIDasPortMap(output_map.Put());
-            if (DAS::IsFailed(hr))
-            {
-                return hr;
-            }
-            SetPortString(output_map.Get(), "status", "failed");
-            SetPortString(
-                output_map.Get(),
-                "diagnostic",
-                "Repository entry resolve failed: "
-                    + resolve_outcome.error_message);
-            *pp_out_port_map = output_map.Get();
-            output_map.Get()->AddRef();
-            return Plugins::DasFlowControl::DAS_E_FLOW_INVOKE_RESOLVE_FAILED;
-        }
-        snapshot = std::move(resolve_outcome.snapshot);
+        SetPortString(output_map.Get(), "status", "failed");
+        SetPortString(
+            output_map.Get(),
+            "diagnostic",
+            "Repository invoke requires a compiled child snapshot on the "
+            "compiledSnapshot port (injected by parent graph compilation).");
+        *pp_out_port_map = output_map.Get();
+        output_map.Get()->AddRef();
+        return Plugins::DasFlowControl::DAS_E_FLOW_INVOKE_SNAPSHOT_MISSING;
     }
 
     if (snapshot.version != 1)

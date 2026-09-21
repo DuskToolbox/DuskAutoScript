@@ -193,17 +193,6 @@ namespace Plugins::DasFlowControl
         RegisterOneMessage(
             lens.Get(),
             "en",
-            DAS_E_FLOW_INVOKE_RESOLVE_FAILED,
-            "Repository entry resolve failed.");
-        RegisterOneMessage(
-            lens.Get(),
-            "zh-cn",
-            DAS_E_FLOW_INVOKE_RESOLVE_FAILED,
-            "仓库条目解析失败。");
-
-        RegisterOneMessage(
-            lens.Get(),
-            "en",
             DAS_E_FLOW_OPERATOR_INVALID,
             "The configured operator is not supported by the component.");
         RegisterOneMessage(

@@ -58,10 +58,6 @@ namespace Das::Plugins::DasFlowControl
     inline constexpr DasResult DAS_E_FLOW_INVOKE_CHILD_CREATE_FAILED =
         static_cast<DasResult>(-10110);
 
-    /// 仓库条目解析失败（settings fallback 自解析仓库条目，预留）。
-    inline constexpr DasResult DAS_E_FLOW_INVOKE_RESOLVE_FAILED =
-        static_cast<DasResult>(-10111);
-
     /// 比较/算术组件配置的运算符在值域外（operator-invalid）。
     inline constexpr DasResult DAS_E_FLOW_OPERATOR_INVALID =
         static_cast<DasResult>(-10112);
@@ -90,7 +86,6 @@ namespace Das::Plugins::DasFlowControl
         DAS_E_FLOW_INVOKE_HOST_UNAVAILABLE,
         DAS_E_FLOW_INVOKE_CHILD_GUID_INVALID,
         DAS_E_FLOW_INVOKE_CHILD_CREATE_FAILED,
-        DAS_E_FLOW_INVOKE_RESOLVE_FAILED,
         DAS_E_FLOW_OPERATOR_INVALID,
         DAS_E_FLOW_DIVIDE_BY_ZERO,
         DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND,
