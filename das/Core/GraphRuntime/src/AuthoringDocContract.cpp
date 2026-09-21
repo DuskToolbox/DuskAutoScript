@@ -1661,9 +1661,12 @@ namespace Contract
             // ports section 同构），预备 pass 的抽取路径零改动即可命中；
             // faces 缺席（standalone 打开、无预备 pass 注入）时整 section
             // 缺省——standalone 图文档投影与现状逐字节一致。口 id 跨侧
-            // 冲突（begin/end 动态口 id 是各自节点内计数器，p_1/p_1 可同
-            // 名）：根 ports section 契约 id 同文档唯一，先到先得
-            // （inputs 先行），后到侧跳过 + WARN。
+            // 冲突（begin/end 动态口 id 是各自节点内计数器，同名可撞）：
+            // 发射端零兜底——重名条目照实双双发射，撞上根 ports section
+            // 契约（id 同文档唯一）时由消费侧校验整文档拒绝
+            // （duplicatePortId）；产出重名口是组件 authoring 会话的实现
+            // 不规范，由报错暴露而非静默跳过（自动分配侧别前缀后正常
+            // 路径物理不撞）。
             if (node_faces != nullptr && !node_faces->empty())
             {
                 GraphCompiler compiler;
@@ -1673,10 +1676,9 @@ namespace Contract
                 auto          ports_arr_o = ports_value.as_array();
                 if (ports_arr_o)
                 {
-                    auto&                           ports_arr = *ports_arr_o;
-                    std::unordered_set<std::string> emitted_ids;
-                    const auto                      append_boundary_port =
-                        [&ports_arr, &emitted_ids, entry_face_types](
+                    auto&      ports_arr = *ports_arr_o;
+                    const auto append_boundary_port =
+                        [&ports_arr, entry_face_types](
                             const Dto::BoundaryPortDto& port,
                             std::string_view            direction)
                     {
@@ -1703,16 +1705,6 @@ namespace Contract
                                 "ports section",
                                 port.port_id,
                                 port.port_type);
-                            return;
-                        }
-                        if (!emitted_ids.insert(port.port_id).second)
-                        {
-                            DAS_CORE_LOG_WARN(
-                                "derived boundary port id {} collides across "
-                                "the input/output sides; the later entry is "
-                                "skipped to keep the ports section contract "
-                                "(ids unique per document)",
-                                port.port_id);
                             return;
                         }
                         yyjson::value entry(Das::Utils::MakeYyjsonObject());

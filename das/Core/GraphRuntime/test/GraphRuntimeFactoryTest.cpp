@@ -968,6 +968,70 @@ TEST(GraphRuntimeFactoryTest, GraphViewProjectsDerivedBoundaryPortsSection)
         << validation.error_kind << ": " << validation.message;
 }
 
+TEST(GraphRuntimeFactoryTest, GraphViewPortsSectionDuplicateIdRejected)
+{
+    // 跨侧重名零兜底：begin/end faces 携带同名口 id（手改名的存量数据或
+    // 组件会话不规范产出）时，发射端照实双双发射（无先到先得跳过垫子）
+    // ——撞上根 ports section 契约的 id 同文档唯一律时，消费侧校验器整
+    // 文档拒绝（duplicatePortId，与 PortsSectionDuplicateIdRejected 同一
+    // 法律路径）；历史撞名数据由用户按报错手动改名。
+    const std::string context =
+        std::string(R"({"documentId":"ports_dup","version":3,"nodes":[)")
+        + BoundaryNodeText(
+            "n_0",
+            kBoundaryBeginGuid,
+            R"([{"id":"dup","type":"string"}])")
+        + ","
+        + BoundaryNodeText(
+            "n_1",
+            kBoundaryEndGuid,
+            R"([{"id":"dup","type":"int"}])")
+        + R"(],"edges":[],"nodeFaces":[)"
+        + R"({"nodeId":"n_0","ports":[{"id":"dup","type":"string","direction":"input"}]},)"
+        + R"({"nodeId":"n_1","ports":[{"id":"dup","type":"int","direction":"output"}]}]})";
+
+    const AuthoringSessionHandle                session{context};
+    Das::DasPtr<Das::ExportInterface::IDasJson> document;
+    ASSERT_EQ(
+        GraphAuthoringSessionGetDocument(
+            session.state,
+            nullptr,
+            document.Put()),
+        DAS_S_OK);
+    ASSERT_NE(document.Get(), nullptr);
+    auto root = yyjson::read(JsonText(document.Get())).as_object();
+    ASSERT_TRUE(root.has_value());
+    ASSERT_TRUE(root->contains(std::string_view("document")));
+    auto doc_obj = (*root)[std::string_view("document")].as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+
+    // 发射端零垫子：两个同名条目都在（先到先得跳过已废除）。
+    ASSERT_TRUE(doc_obj->contains(std::string_view("ports")));
+    auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+    ASSERT_TRUE(ports.has_value());
+    EXPECT_EQ(ports->size(), 2u)
+        << "duplicate port ids must both be emitted (no skip cushion)";
+    std::size_t dup_count = 0;
+    for (const auto& port : *ports)
+    {
+        auto port_obj = port.as_object();
+        ASSERT_TRUE(port_obj.has_value());
+        if ((*port_obj)[std::string_view("id")].as_string().value_or("")
+            == "dup")
+        {
+            ++dup_count;
+        }
+    }
+    ASSERT_EQ(dup_count, 2u);
+
+    // 重名→消费侧整文档拒绝（根 ports section 契约 id 同文档唯一）。
+    const auto validation = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+        Das::Utils::CloneYyjsonValue((*root)[std::string_view("document")]));
+    EXPECT_FALSE(validation.valid);
+    EXPECT_EQ(validation.error_kind, "duplicatePortId")
+        << validation.error_kind << ": " << validation.message;
+}
+
 TEST(GraphRuntimeFactoryTest, GraphViewOmitsPortsSectionWithoutFaces)
 {
     // faces 缺席（standalone 打开、无预备 pass 注入）：根 ports section
