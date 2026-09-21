@@ -153,7 +153,7 @@ std::string EmptyCompiledPlanText()
             context_string.Put()),
         DAS_S_OK);
     EXPECT_EQ(
-        CreateGraphAuthoringSession(context_string.Get(), &state),
+        CreateGraphAuthoringSession(nullptr, context_string.Get(), &state),
         DAS_S_OK);
     DasPtr<Das::ExportInterface::IDasJson> plan_json;
     EXPECT_EQ(
@@ -265,7 +265,7 @@ TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
             context_string.Put()),
         DAS_S_OK);
     ASSERT_EQ(
-        CreateGraphAuthoringSession(context_string.Get(), &state),
+        CreateGraphAuthoringSession(nullptr, context_string.Get(), &state),
         DAS_S_OK);
     ASSERT_NE(state, nullptr);
     DasPtr<Das::ExportInterface::IDasJson> plan_json;
@@ -553,7 +553,7 @@ namespace
                 context_string.Put()),
             DAS_S_OK);
         EXPECT_EQ(
-            CreateGraphAuthoringSession(context_string.Get(), &state),
+            CreateGraphAuthoringSession(nullptr, context_string.Get(), &state),
             DAS_S_OK);
         DasPtr<Das::ExportInterface::IDasJson> compiled;
         EXPECT_EQ(
@@ -1408,7 +1408,7 @@ TEST(DasGraphTaskTest, PreservedBeginEndGraphExecutesAndReturnsEndValue)
     GraphAuthoringSessionState* state = nullptr;
     const auto catalog_seed = CatalogSeedString(action_catalog);
     ASSERT_EQ(
-        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        CreateGraphAuthoringSession(nullptr, catalog_seed.Get(), &state),
         DAS_S_OK);
     ASSERT_NE(state, nullptr);
 
@@ -1559,7 +1559,7 @@ TEST(DasGraphTaskTest, TypedGraphInputDoesNotEchoThroughUnconnectedEndPorts)
     GraphAuthoringSessionState* state = nullptr;
     const auto catalog_seed = CatalogSeedString(action_catalog);
     ASSERT_EQ(
-        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        CreateGraphAuthoringSession(nullptr, catalog_seed.Get(), &state),
         DAS_S_OK);
     ASSERT_NE(state, nullptr);
 
@@ -1682,7 +1682,7 @@ TEST(DasGraphTaskTest, FormSequenceContextDoesNotPresetBoundaryNodes)
             context_string.Put()),
         DAS_S_OK);
     ASSERT_EQ(
-        CreateGraphAuthoringSession(context_string.Get(), &state),
+        CreateGraphAuthoringSession(nullptr, context_string.Get(), &state),
         DAS_S_OK);
     ASSERT_NE(state, nullptr);
 
@@ -1724,7 +1724,7 @@ TEST(DasGraphTaskTest, NonEmptyGraphContextDoesNotAppendBoundaryNodes)
             context_string.Put()),
         DAS_S_OK);
     ASSERT_EQ(
-        CreateGraphAuthoringSession(context_string.Get(), &state),
+        CreateGraphAuthoringSession(nullptr, context_string.Get(), &state),
         DAS_S_OK);
     ASSERT_NE(state, nullptr);
 
@@ -1766,7 +1766,7 @@ namespace
                 return parse;
             }
         }
-        DasGraphTaskAuthoringSessionFactory factory;
+        DasGraphTaskAuthoringSessionFactory factory{nullptr};
         return factory.CreateSession(task_guid, context.Get(), session.Put());
     }
 
@@ -2204,7 +2204,7 @@ TEST(DasGraphTaskTest, EndValuePassthroughCarriesNegativeReturnCode)
     GraphAuthoringSessionState* state = nullptr;
     const auto catalog_seed = CatalogSeedString(action_catalog);
     ASSERT_EQ(
-        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        CreateGraphAuthoringSession(nullptr, catalog_seed.Get(), &state),
         DAS_S_OK);
 
     std::string probe_node_id;
@@ -2309,7 +2309,7 @@ TEST(DasGraphTaskTest, EndNodeWithoutValuePortYieldsZeroReturnCode)
     GraphAuthoringSessionState* state = nullptr;
     const auto catalog_seed = CatalogSeedString(action_catalog);
     ASSERT_EQ(
-        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        CreateGraphAuthoringSession(nullptr, catalog_seed.Get(), &state),
         DAS_S_OK);
 
     std::string shell_text;
@@ -2692,7 +2692,7 @@ TEST(DasGraphTaskTest, TypedDirectTransferCarriesIntAndRetiresResultPort)
         R"([{"id":"左值","type":"int"}])",
         R"([{"nodeId":"n_0","ports":[{"id":"左值","type":"int","direction":"input","label":"左值"}]}])");
     ASSERT_EQ(
-        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        CreateGraphAuthoringSession(nullptr, catalog_seed.Get(), &state),
         DAS_S_OK);
 
     const std::string dynamic_port_id = "左值";
@@ -2794,7 +2794,7 @@ TEST(DasGraphTaskTest, TypedDirectTransferCarriesImageReferenceAcrossSubgraph)
         R"([{"id":"帧","type":"image"}])",
         R"([{"nodeId":"n_0","ports":[{"id":"帧","type":"image","direction":"input","label":"帧"}]}])");
     ASSERT_EQ(
-        CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+        CreateGraphAuthoringSession(nullptr, catalog_seed.Get(), &state),
         DAS_S_OK);
 
     const std::string dynamic_port_id = "帧";
@@ -4143,7 +4143,7 @@ namespace
         GraphAuthoringSessionState* state = nullptr;
         const auto catalog_seed = CatalogSeedString(action_catalog);
         EXPECT_EQ(
-            CreateGraphAuthoringSession(catalog_seed.Get(), &state),
+            CreateGraphAuthoringSession(nullptr, catalog_seed.Get(), &state),
             DAS_S_OK);
         ASSERT_NE(state, nullptr);
 

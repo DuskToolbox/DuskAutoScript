@@ -501,14 +501,17 @@ namespace Plugins::DasGraphTask
     }
 
     DasGraphTaskAuthoringSession::DasGraphTaskAuthoringSession(
-        std::string context_json)
+        std::string                             context_json,
+        PluginInterface::IDasTaskComponentHost* p_creator)
     {
         auto ctx_str = MakeReadOnlyString(context_json);
         // CreateGraphAuthoringSession seeds the Core-owned GraphDocumentDto
         // store from the context (formSequence / graph / empty) —含
         // actionCatalog/faces 键的自解析（SeedFromContext）。插件是纯管
-        // 道：完整 context 原文透传，零提取/零转发跳。
-        CreateGraphAuthoringSession(ctx_str.Get(), &state_);
+        // 道：完整 context 原文透传，零提取/零转发跳。creator 借用指针
+        // 随会话下传（D-07：与执行侧 CreateGraphRuntimeWithHost 对称，
+        // 本尊生命周期由 PluginPackage 的 host_ 保证）。
+        CreateGraphAuthoringSession(p_creator, ctx_str.Get(), &state_);
     }
 
     DasGraphTaskAuthoringSession::~DasGraphTaskAuthoringSession()

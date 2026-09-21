@@ -202,7 +202,10 @@ namespace Das::Plugins::DasGraphTask
                 // TASK_AUTHORING_FACTORY: wires up the pre-existing
                 // DasGraphTaskAuthoringSessionFactory (GUID EFC3D51E), which
                 // was implemented but never registered (dead code) before this.
-                auto* factory = new DasGraphTaskAuthoringSessionFactory{};
+                // creator 经构造注入（包默认存储 host_——D-07 会话编译路径
+                // 的注入通道来源）。
+                auto* factory = new DasGraphTaskAuthoringSessionFactory{
+                    GetTaskComponentHost()};
                 factory->AddRef();
                 *pp_out_interface = static_cast<
                     Das::PluginInterface::IDasTaskAuthoringSessionFactory*>(

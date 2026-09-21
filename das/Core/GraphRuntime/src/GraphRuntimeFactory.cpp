@@ -339,6 +339,11 @@ struct GraphAuthoringSessionState
     Das::Core::GraphRuntime::GraphCompiler::EntryFacesMap entry_faces;
     std::vector<Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType>
         entry_face_types;
+    // creator（TaskComponentHost）借用指针（D-07 通道半）：会话编译路径经
+    // 它开被引条目的 authoring 会话（GetDocument 现算口面 + Compile 产
+    // 物）。借用不拥有——插件包持有的 host_ 保证本尊长命于会话（与
+    // CreateGraphRuntimeWithHost 的执行侧对称）；nullptr = 不携带。
+    Das::PluginInterface::IDasTaskComponentHost* creator = nullptr;
 };
 
 namespace
@@ -2220,8 +2225,9 @@ namespace
 } // anonymous namespace
 
 DAS_C_API DasResult CreateGraphAuthoringSession(
-    IDasReadOnlyString*          p_context_json,
-    GraphAuthoringSessionState** pp_out)
+    Das::PluginInterface::IDasTaskComponentHost* p_creator,
+    IDasReadOnlyString*                          p_context_json,
+    GraphAuthoringSessionState**                 pp_out)
 {
     if (pp_out == nullptr)
     {
@@ -2231,7 +2237,8 @@ DAS_C_API DasResult CreateGraphAuthoringSession(
 
     try
     {
-        auto*       s = new GraphAuthoringSessionState();
+        auto* s = new GraphAuthoringSessionState();
+        s->creator = p_creator;
         std::string ctx;
         if (ReadUtf8(p_context_json, ctx))
         {
@@ -2245,6 +2252,11 @@ DAS_C_API DasResult CreateGraphAuthoringSession(
     {
         return DAS_E_OUT_OF_MEMORY;
     }
+}
+
+bool GraphAuthoringSessionHasCreatorForTest(const GraphAuthoringSessionState* p)
+{
+    return p != nullptr && p->creator != nullptr;
 }
 
 DAS_C_API void DestroyGraphAuthoringSession(GraphAuthoringSessionState* p)

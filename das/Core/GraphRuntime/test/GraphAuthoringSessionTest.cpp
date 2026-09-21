@@ -8,6 +8,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/PathText.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -73,7 +74,7 @@ namespace
         explicit SessionHandle(const std::string& context)
         {
             auto s = MakeStr(context);
-            CreateGraphAuthoringSession(s.Get(), &p);
+            CreateGraphAuthoringSession(nullptr, s.Get(), &p);
         }
         ~SessionHandle() { DestroyGraphAuthoringSession(p); }
         SessionHandle(const SessionHandle&) = delete;
@@ -177,6 +178,72 @@ namespace
         // Phase 84 strict wire uses viewKind (not kind).
         EXPECT_NE(json.find("\"viewKind\":\"graph\""), std::string::npos);
         EXPECT_EQ(json.find("\"kind\":\"graph\""), std::string::npos);
+    }
+
+    // ---- creator 携带通道（D-07 通道半）----
+
+    // 最小 creator 替身：两法均具名拒（本组用例只断言指针携带，不驱动
+    // 会话行为）。
+    class NullCreatorHost final
+        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+              NullCreatorHost>
+    {
+    public:
+        DasResult CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            std::ignore = component_guid;
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_component = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            std::ignore = task_guid;
+            std::ignore = p_context_json;
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+    };
+
+    TEST(GraphAuthoringSessionTest, CreateSessionCarriesCreatorIntoState)
+    {
+        auto                        creator = NullCreatorHost::Make();
+        auto                        ctx = MakeStr("");
+        GraphAuthoringSessionState* state = nullptr;
+        ASSERT_EQ(
+            CreateGraphAuthoringSession(creator.Get(), ctx.Get(), &state),
+            DAS_S_OK);
+        ASSERT_NE(state, nullptr);
+        // state 持有非空 creator 借用指针（测试缝判定）
+        EXPECT_TRUE(GraphAuthoringSessionHasCreatorForTest(state));
+        DestroyGraphAuthoringSession(state);
+    }
+
+    TEST(GraphAuthoringSessionTest, CreateSessionWithoutCreatorKeepsBehavior)
+    {
+        // 不传（nullptr）时与现状一致：state 不携带 creator，文档投影正常
+        auto                        ctx = MakeStr("");
+        GraphAuthoringSessionState* state = nullptr;
+        ASSERT_EQ(
+            CreateGraphAuthoringSession(nullptr, ctx.Get(), &state),
+            DAS_S_OK);
+        ASSERT_NE(state, nullptr);
+        EXPECT_FALSE(GraphAuthoringSessionHasCreatorForTest(state));
+        DestroyGraphAuthoringSession(state);
     }
 
     TEST(GraphAuthoringSessionTest, FormSequenceSeedProjectsAsFormSequence)

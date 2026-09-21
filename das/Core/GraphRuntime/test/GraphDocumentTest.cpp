@@ -614,7 +614,7 @@ namespace
             CreateIDasReadOnlyStringFromUtf8(
                 context.c_str(),
                 context_string.Put());
-            CreateGraphAuthoringSession(context_string.Get(), &state);
+            CreateGraphAuthoringSession(nullptr, context_string.Get(), &state);
         }
 
         ~LegacySessionHandle() { DestroyGraphAuthoringSession(state); }
@@ -644,8 +644,7 @@ namespace
 
     // 一次拒绝变更（空 change）的结果 acceptedProperties——存储真源的
     // 观测通道。
-    yyjson::value AcceptedPropertiesOf(
-        GraphAuthoringSessionState* state)
+    yyjson::value AcceptedPropertiesOf(GraphAuthoringSessionState* state)
     {
         Das::DasPtr<IDasReadOnlyString> empty_change;
         CreateIDasReadOnlyStringFromUtf8("", empty_change.Put());

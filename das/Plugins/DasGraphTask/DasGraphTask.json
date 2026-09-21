@@ -82,7 +82,13 @@
               "label": { "en": "Result", "zh-cn": "结果" }
             }
           ],
-          "config": {},
+          "config": {
+            "repositoryRef": {
+              "type": "taskRepositoryRef",
+              "label": { "en": "Repository Entry", "zh-cn": "仓库条目" },
+              "taskGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3"
+            }
+          },
           "diagnostics": []
         }
       },

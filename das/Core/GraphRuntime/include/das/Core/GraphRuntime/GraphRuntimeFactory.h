@@ -85,9 +85,21 @@ struct GraphAuthoringSessionState;
 ///     GraphDocumentDto and tagged "formsequence";
 ///   - a graph document ({ "nodes": [...], "edges": [...] }) → parsed directly;
 ///   - anything else / null → an empty (graph-mode) store.
+///
+/// p_creator 为 creator（TaskComponentHost）借用指针（照
+/// CreateGraphRuntimeWithHost(p_host) 先例，与执行侧完全对称，D-07）：
+/// 会话编译路径经它开被引条目的 authoring 会话。nullptr = 不携带（现状
+/// 行为）。借用生命周期照 node_faces_ 惯例——插件包持有的 host_ 保证
+/// 本尊长命于会话，会话只借用不拥有。
 DAS_C_API DasResult CreateGraphAuthoringSession(
-    IDasReadOnlyString*          p_context_json,
-    GraphAuthoringSessionState** pp_out);
+    Das::PluginInterface::IDasTaskComponentHost* p_creator,
+    IDasReadOnlyString*                          p_context_json,
+    GraphAuthoringSessionState**                 pp_out);
+
+/// 测试缝：会话 state 是否携带 creator 借用指针（生产面零消费——creator
+/// 携带通道的单测断言用；照 SetRepositoryEntryDocumentFetcherForTest 先例）。
+bool GraphAuthoringSessionHasCreatorForTest(
+    const GraphAuthoringSessionState* p);
 
 /// Destroy a session and release its store. Safe on null.
 DAS_C_API void DestroyGraphAuthoringSession(GraphAuthoringSessionState* p);

@@ -1,6 +1,7 @@
 #ifndef DAS_PLUGINS_DASGRAPHTASK_DASGRAPHTASKAUTHORINGSESSIONFACTORY_H
 #define DAS_PLUGINS_DASGRAPHTASK_DASGRAPHTASKAUTHORINGSESSIONFACTORY_H
 
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSessionFactory.Implements.hpp>
 
 // Authoring factory GUID: {EFC3D51E-B707-4702-97ED-8ADA923E2BF0}
@@ -31,11 +32,24 @@ namespace Plugins::DasGraphTask
               DasGraphTaskAuthoringSessionFactory>
     {
     public:
+        /// p_creator 为 creator（TaskComponentHost）借用指针——非 begin/end
+        /// 分支创建的会话经它携带编译期注入通道（D-07；照
+        /// DasGraphTaskComponentFactory{GetTaskComponentHost()} 构造注入
+        /// 先例，本尊生命周期由 PluginPackage 的 host_ 保证）。
+        explicit DasGraphTaskAuthoringSessionFactory(
+            PluginInterface::IDasTaskComponentHost* p_creator)
+            : creator_(p_creator)
+        {
+        }
+
         DAS_IMPL CreateSession(
             const DasGuid&                              task_guid,
             ExportInterface::IDasJson*                  p_context_json,
             PluginInterface::IDasTaskAuthoringSession** pp_out_session)
             override;
+
+    private:
+        PluginInterface::IDasTaskComponentHost* creator_ = nullptr;
     };
 } // namespace Plugins::DasGraphTask
 DAS_NS_END

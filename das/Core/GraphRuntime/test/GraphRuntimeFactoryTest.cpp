@@ -161,7 +161,7 @@ namespace
             CreateIDasReadOnlyStringFromUtf8(
                 context.c_str(),
                 context_string.Put());
-            CreateGraphAuthoringSession(context_string.Get(), &state);
+            CreateGraphAuthoringSession(nullptr, context_string.Get(), &state);
         }
 
         ~AuthoringSessionHandle() { DestroyGraphAuthoringSession(state); }

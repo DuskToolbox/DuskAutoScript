@@ -104,9 +104,11 @@ namespace Plugins::DasGraphTask
 
         try
         {
-            auto  initial = InitialSequenceFromContext(p_context_json);
+            auto initial = InitialSequenceFromContext(p_context_json);
+            // creator 借用指针随会话下传（begin/end 边界会话分支不传——
+            // 边界会话无绑条目节点）。
             auto* session =
-                new DasGraphTaskAuthoringSession(std::move(initial));
+                new DasGraphTaskAuthoringSession(std::move(initial), creator_);
             session->AddRef();
             *pp_out_session = session;
             return DAS_S_OK;
