@@ -157,7 +157,9 @@ namespace Das::Core::TaskScheduler
         {
             return DAS_E_INVALID_POINTER;
         }
-        *p_out_state = svc_.Status();
+        // 枚举已挪家进具体类：接口枚举与具体类枚举是两个类型（数值
+        // 一致），经 static_cast 显式桥接。
+        *p_out_state = static_cast<SchedulerState>(svc_.Status());
         return DAS_S_OK;
     }
 
@@ -416,7 +418,17 @@ namespace Das::Core::TaskScheduler
         SchedulerNotifyFunc func,
         void*               user_data)
     {
-        svc_.SetStateNotifyCallback(func, user_data);
+        // 具体类回调已改 std::function 形状：把接口面的 {函数指针,
+        // user_data} 对包装成单一函数对象转发（null 函数指针=清回调）。
+        if (func != nullptr)
+        {
+            svc_.SetStateNotifyCallback([func, user_data](const char* json)
+                                        { func(json, user_data); });
+        }
+        else
+        {
+            svc_.SetStateNotifyCallback(nullptr);
+        }
         return DAS_S_OK;
     }
 

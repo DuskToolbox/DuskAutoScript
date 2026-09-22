@@ -22,12 +22,12 @@
 #include <das/DasPtr.hpp>
 #include <das/DasSharedRef.hpp>
 #include <das/IDasAsyncCallback.h>
-#include <das/IDasSchedulerService.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -51,9 +51,6 @@ DAS_DISABLE_WARNING_END
 
 namespace Das::Core::TaskScheduler
 {
-
-    // SchedulerState is defined in IDasSchedulerService
-    using SchedulerState = IDasSchedulerService::SchedulerState;
 
     /// Describes an available task type discovered from loaded manifests.
     struct TaskTypeRecord
@@ -155,6 +152,15 @@ namespace Das::Core::TaskScheduler
         : public Das::Core::ForeignInterfaceHost::IPluginLifecycleListener
     {
     public:
+        /// 调度器运行态。自调度器接口面挪家（接口退役）：数字值 0/1/2
+        /// 原样——UI wire（state 序列化值）零破坏。
+        enum class SchedulerState : int
+        {
+            Stopped = 0,
+            Running = 1,
+            Stopping = 2,
+        };
+
         explicit SchedulerService(
             Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
             Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context);
@@ -273,10 +279,16 @@ namespace Das::Core::TaskScheduler
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }
 
+        /// Scheduler 状态推送回调形状（具体类友形：std::function，不再受
+        /// 接口面 {裸函数指针,user_data} 对的 marshal 约束）。回调收到
+        /// 序列化的调度器状态 JSON（{"code","msg","data"} 封套，与 GET
+        /// 端点同 payload 约定）。线程契约：在调度器通知路径被调（调用
+        /// 点不持有本类任何锁），消费方负责自身线程安全。
+        using SchedulerStateNotifyHandler = std::function<void(const char*)>;
+
         /// Register a callback to be invoked when scheduler state changes.
         DAS_API void SetStateNotifyCallback(
-            SchedulerNotifyFunc func,
-            void*               user_data);
+            SchedulerStateNotifyHandler handler);
 
         /// Drop every cached authoring session (task + repository). Called when
         /// the plugin runtime is invalidated (e.g. plugin unload/reload) so the
@@ -603,19 +615,29 @@ namespace Das::Core::TaskScheduler
 
         struct StateNotify
         {
-            SchedulerNotifyFunc func = nullptr;
-            void*               user_data = nullptr;
+            SchedulerStateNotifyHandler func;
 
-            void operator()(const char* json) const { func(json, user_data); }
-            explicit operator bool() const { return func != nullptr; }
+            void operator()(const char* json) const
+            {
+                if (func)
+                {
+                    func(json);
+                }
+            }
+            explicit operator bool() const { return static_cast<bool>(func); }
         };
 
-        // {func,user_data} 双字回调的发布快照（std::atomic<std::shared_ptr>
-        // 在本工具链 libc++ 未实现，用专用小锁 + shared_ptr 等价落地）：
-        // 写侧锁内整体发布，读侧锁内拷贝快照后锁外调用，消除运行期重设
-        // 回调时撕裂读（新 func + 旧 user_data 或半写指针）的窗口。
+        // 回调的发布快照（std::atomic<std::shared_ptr> 在本工具链 libc++
+        // 未实现，用专用小锁 + shared_ptr 等价落地）：写侧锁内整体发布，
+        // 读侧锁内拷贝快照后锁外调用，消除运行期重设回调时读到半发布
+        // 状态的窗口（直连后回调为单对象 std::function，整体发布即无撕
+        // 裂面）。
         mutable std::mutex           state_notify_mutex_;
         std::shared_ptr<StateNotify> state_notify_;
     };
+
+    // 命名空间层兼容别名：枚举已挪进具体类（接口面退役），既有未限定
+    // 引用（本模块内成员函数体外、测试）经别名零改动解析。
+    using SchedulerState = SchedulerService::SchedulerState;
 
 } // namespace Das::Core::TaskScheduler

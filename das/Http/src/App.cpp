@@ -163,9 +163,8 @@ namespace Das::Http
         }
 
         // 进程内直连具体调度器（借用指针，生命周期随 core_services 引用）
-        // ——调度控制器直连具体类，不再经调度器接口面取数。
-        // scheduler_svc 接口引用暂由具名注册段与 WS 状态回调使用（随后
-        // 退役）。
+        // ——调度控制器直连具体类，不再经调度器接口面取数；调度器具名
+        // 注册段已随插件侧消费方归零删除。
         components.scheduler_service =
             Das::Core::CoreServices::BorrowSchedulerService(
                 components.core_services.Get());
@@ -270,28 +269,6 @@ namespace Das::Http
                             .c_str());
                     plugin_mgr_service_impl->Release();
                     return plugin_reg_result;
-                }
-            }
-
-            // Register IDasSchedulerService as a named service (das.progress /
-            // das.locale 范式)：IPC 模式插件组件（如 DasMaaPi 的仓库条目
-            // 解析）经 ResolveMainProcessInterfaceByName("das.scheduler")
-            // 取服务并编译仓库条目。注册表另持 COM 引用保活。
-            {
-                const auto scheduler_reg_result =
-                    ipc_owner->RegisterServiceByName(
-                        components.scheduler_svc.Get(),
-                        DasIidOf<IDasSchedulerService>(),
-                        "das.scheduler");
-                if (DAS::IsFailed(scheduler_reg_result))
-                {
-                    DAS_LOG_ERROR(
-                        DAS_FMT_NS::format(
-                            "Failed to register IDasSchedulerService named "
-                            "service. result = {}",
-                            scheduler_reg_result)
-                            .c_str());
-                    return scheduler_reg_result;
                 }
             }
 
@@ -807,11 +784,14 @@ namespace Das::Http
                     }
                 },
                 hub.get());
-            components.scheduler_svc->SetStateNotifyCallback(
-                [](const char* json_state, void* user_data)
+            // 调度器状态推送（直连具体类回调：std::function 形状，不再经
+            // COM {func,user_data} 对）。按值捕获 hub shared_ptr——回调在
+            // 调度器通知线程被调，hub 生命周期由 shared_ptr 保证（旧裸
+            // user_data 在关停竞态下有 UAF 面），Broadcast 经 io_context
+            // dispatch 到 io 线程写出，广播语义逐字节保持。
+            components.scheduler_service->SetStateNotifyCallback(
+                [hub](const char* json_state)
                 {
-                    auto* hub =
-                        static_cast<Das::Http::NotificationHub*>(user_data);
                     if (!hub || !json_state)
                     {
                         return;
@@ -833,8 +813,7 @@ namespace Das::Http
                     {
                         hub->Broadcast(std::move(*serialized));
                     }
-                },
-                hub.get());
+                });
 
             // 日志增量统一通知（focus + debug 共一套机制）：Http 150ms 定时器挂
             // 在 server 的 io_context（非 IPC BusinessThread——Consume 不得占

@@ -8,7 +8,6 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasCoreServices.h>
 #include <das/IDasPluginManagerService.h>
-#include <das/IDasSchedulerService.h>
 #include <das/IDasSettingsService.h>
 #include <filesystem>
 #include <memory>
@@ -34,7 +33,6 @@ namespace Das::Http
         // Service interfaces obtained through IDasCoreServices
         DasPtr<IDasSettingsService>      settings_service;
         DasPtr<IDasPluginManagerService> plugin_mgr_service;
-        DasPtr<IDasSchedulerService>     scheduler_svc;
 
         // 进程内直连的具体调度器（借用指针，生命周期随 core_services
         // 引用——BorrowSchedulerService 出借，控制器直连消费）
