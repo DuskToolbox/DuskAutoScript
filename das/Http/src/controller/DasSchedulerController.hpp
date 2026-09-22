@@ -3,15 +3,11 @@
 
 #include "Config.h"
 #include "beast/Request.hpp"
+#include <das/Core/TaskScheduler/SchedulerService.h>
 #include <das/DasApi.h>
-#include <das/DasPtr.hpp>
-#include <das/DasString.hpp>
-#include <das/IDasSchedulerService.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
-#include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -20,12 +16,18 @@
 namespace Das::Http
 {
 
+    // 进程内直连调度控制器：持具体 Das::Core::TaskScheduler::SchedulerService
+    // 引用，逐方法把 HTTP 请求面（yyjson body / 路径参数）翻译到具体类
+    // yyjson 方法面（控制器内适配层）。HTTP wire 与经接口面时期逐字节
+    // 一致：guard 顺序、错误码/消息、响应封套（CreateErrorResponse /
+    // CreateSuccessResponse）与 errorKind 透传逻辑均保持原状，仅取数
+    // 调用路径改为进程内直连。
     class DasSchedulerController
     {
     public:
         explicit DasSchedulerController(
-            IDasSchedulerService&        scheduler,
-            const std::filesystem::path& plugin_dir)
+            Das::Core::TaskScheduler::SchedulerService& scheduler,
+            const std::filesystem::path&                plugin_dir)
             : scheduler_(scheduler), plugin_dir_(plugin_dir)
         {
         }
@@ -96,36 +98,7 @@ namespace Das::Http
                 }
             }
 
-            DasPtr<IDasReadOnlyString> p_plugin_dir;
-            auto dir_cr = CreateIDasReadOnlyStringFromUtf8(
-                Das::Utils::PathToUtf8(plugin_dir_).c_str(),
-                p_plugin_dir.Put());
-            if (DAS::IsFailed(dir_cr))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    dir_cr,
-                    "Failed to create plugin dir string");
-            }
-
-            DasPtr<Das::ExportInterface::IDasGuidVector> p_guid_vec;
-            auto gv_result = CreateIDasGuidVector(
-                disabled_guids.empty() ? nullptr : disabled_guids.data(),
-                disabled_guids.size(),
-                p_guid_vec.Put());
-            if (DAS::IsFailed(gv_result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    gv_result,
-                    "Failed to create GUID vector");
-            }
-
-            DasPtr<Das::ExportInterface::IDasReadOnlyGuidVector>
-                p_readonly_guids;
-            p_guid_vec->ToConst(p_readonly_guids.Put());
-
-            auto result = scheduler_.Initialize(
-                p_plugin_dir.Get(),
-                p_readonly_guids.Get());
+            auto result = scheduler_.Initialize(plugin_dir_, disabled_guids);
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -145,7 +118,7 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            auto result = scheduler_.Start();
+            auto result = scheduler_.Enable();
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -165,7 +138,7 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            auto result = scheduler_.Stop();
+            auto result = scheduler_.Disable();
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -187,32 +160,8 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            DasPtr<IDasReadOnlyString> p_json;
-            auto                       result = scheduler_.Get(p_json.Put());
-            if (DAS::IsFailed(result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    result,
-                    "Failed to get scheduler state");
-            }
-
-            const char* c_str = nullptr;
-            auto        get_result = p_json->GetUtf8(&c_str);
-            if (DAS::IsFailed(get_result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    get_result,
-                    "Failed to get scheduler state string");
-            }
-
-            auto parsed = Das::Utils::ParseYyjsonFromString(c_str);
-            if (!parsed)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to parse scheduler state JSON");
-            }
-            return Beast::HttpResponse::CreateSuccessResponse(parsed.value());
+            auto state = scheduler_.Get();
+            return Beast::HttpResponse::CreateSuccessResponse(state);
         }
 
         Beast::HttpResponse RepositoryGet(const Beast::HttpRequest& request)
@@ -220,8 +169,8 @@ namespace Das::Http
             return DispatchRepositoryBody(
                 request,
                 "get",
-                [this](IDasReadOnlyString*, IDasReadOnlyString** pp_out)
-                { return scheduler_.GetTaskRepository(pp_out); });
+                [this](const yyjson::value&) -> yyjson::value
+                { return scheduler_.GetTaskRepository(); });
         }
 
         Beast::HttpResponse RepositoryCreate(const Beast::HttpRequest& request)
@@ -229,8 +178,8 @@ namespace Das::Http
             return DispatchRepositoryBody(
                 request,
                 "create",
-                [this](IDasReadOnlyString* p_body, IDasReadOnlyString** pp_out)
-                { return scheduler_.CreateRepositoryEntry(p_body, pp_out); });
+                [this](const yyjson::value& body) -> yyjson::value
+                { return scheduler_.CreateRepositoryEntry(body); });
         }
 
         // Repository management HTTP contract.
@@ -245,8 +194,9 @@ namespace Das::Http
         // errorKind classes: taskNotFound, pluginUnavailable,
         // taskTypeUnavailable, pluginLoadFailed, persistenceFailure.
         // HTTP thread boundary: controller validates profile/path/body and
-        // delegates only to IDasSchedulerService; repository storage/provider
-        // behavior stays behind SchedulerService.
+        // delegates only to the in-process SchedulerService (direct
+        // connection); repository storage/provider behavior stays behind
+        // SchedulerService.
         Beast::HttpResponse RepositoryDelete(const Beast::HttpRequest& request)
         {
             auto profile = request.GetPathParameter("profile");
@@ -282,16 +232,9 @@ namespace Das::Http
             return DispatchRepositoryEntryBody(
                 request,
                 "rename",
-                [this](
-                    int64_t              entry_id,
-                    IDasReadOnlyString*  p_body,
-                    IDasReadOnlyString** pp_out)
-                {
-                    return scheduler_.RenameRepositoryEntry(
-                        entry_id,
-                        p_body,
-                        pp_out);
-                });
+                [this](int64_t entry_id, const yyjson::value& body)
+                    -> yyjson::value
+                { return scheduler_.RenameRepositoryEntry(entry_id, body); });
         }
 
         Beast::HttpResponse RepositoryAuthoringGet(
@@ -300,15 +243,12 @@ namespace Das::Http
             return DispatchRepositoryEntryBody(
                 request,
                 "authoring get",
-                [this](
-                    int64_t              entry_id,
-                    IDasReadOnlyString*  p_body,
-                    IDasReadOnlyString** pp_out)
+                [this](int64_t entry_id, const yyjson::value& body)
+                    -> yyjson::value
                 {
                     return scheduler_.GetRepositoryEntryAuthoringDocument(
                         entry_id,
-                        p_body,
-                        pp_out);
+                        body);
                 });
         }
 
@@ -318,15 +258,12 @@ namespace Das::Http
             return DispatchRepositoryEntryBody(
                 request,
                 "authoring apply",
-                [this](
-                    int64_t              entry_id,
-                    IDasReadOnlyString*  p_body,
-                    IDasReadOnlyString** pp_out)
+                [this](int64_t entry_id, const yyjson::value& body)
+                    -> yyjson::value
                 {
                     return scheduler_.ApplyRepositoryEntryAuthoringChange(
                         entry_id,
-                        p_body,
-                        pp_out);
+                        body);
                 });
         }
 
@@ -336,15 +273,12 @@ namespace Das::Http
             return DispatchRepositoryEntryBody(
                 request,
                 "authoring compile",
-                [this](
-                    int64_t              entry_id,
-                    IDasReadOnlyString*  p_body,
-                    IDasReadOnlyString** pp_out)
+                [this](int64_t entry_id, const yyjson::value& body)
+                    -> yyjson::value
                 {
                     return scheduler_.CompileRepositoryEntryAuthoring(
                         entry_id,
-                        p_body,
-                        pp_out);
+                        body);
                 });
         }
 
@@ -454,27 +388,7 @@ namespace Das::Http
                     "Request body must be a JSON object");
             }
 
-            auto props_opt = Das::Utils::SerializeYyjsonValue(body);
-            if (!props_opt)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to serialize request body");
-            }
-
-            DasPtr<IDasReadOnlyString> p_props;
-            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
-                props_opt.value().c_str(),
-                p_props.Put());
-            if (DAS::IsFailed(cr))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    cr,
-                    "Failed to create properties string");
-            }
-
-            auto result =
-                scheduler_.UpdateTaskProperties(task_id, p_props.Get());
+            auto result = scheduler_.UpdateTaskProperties(task_id, body);
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -516,27 +430,8 @@ namespace Das::Http
                     "Request body must be a JSON object");
             }
 
-            auto props_opt = Das::Utils::SerializeYyjsonValue(body);
-            if (!props_opt)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to serialize request body");
-            }
-
-            DasPtr<IDasReadOnlyString> p_props;
-            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
-                props_opt.value().c_str(),
-                p_props.Put());
-            if (DAS::IsFailed(cr))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    cr,
-                    "Failed to create properties string");
-            }
-
             auto result =
-                scheduler_.UpdateTaskInternalProperties(task_id, p_props.Get());
+                scheduler_.UpdateTaskInternalProperties(task_id, body);
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -589,9 +484,7 @@ namespace Das::Http
                     "Invalid task ID format");
             }
 
-            auto result = scheduler_.SetTaskEnabled(
-                task_id,
-                enabled ? static_cast<DasBool>(1) : 0);
+            auto result = scheduler_.SetTaskEnabled(task_id, enabled);
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -657,24 +550,17 @@ namespace Das::Http
         // errorKind matrix: taskNotFound, capabilityMissing,
         // revisionConflict, authoringValidationFailed, pluginFailure,
         // componentFailure, persistenceFailure.
-        // HTTP thread boundary: controller validates and delegates to
-        // IDasSchedulerService only; plugin authoring logic runs in
-        // SchedulerService, not inside HTTP handlers.
+        // HTTP thread boundary: controller validates and delegates to the
+        // in-process SchedulerService only (direct connection); plugin
+        // authoring logic runs in SchedulerService, not inside HTTP handlers.
         Beast::HttpResponse AuthoringGet(const Beast::HttpRequest& request)
         {
             return DispatchAuthoring(
                 request,
                 "get",
-                [this](
-                    int64_t              task_id,
-                    IDasReadOnlyString*  p_body,
-                    IDasReadOnlyString** pp_out)
-                {
-                    return scheduler_.GetTaskAuthoringDocument(
-                        task_id,
-                        p_body,
-                        pp_out);
-                });
+                [this](int64_t task_id, const yyjson::value& body)
+                    -> yyjson::value
+                { return scheduler_.GetTaskAuthoringDocument(task_id, body); });
         }
 
         Beast::HttpResponse AuthoringApply(const Beast::HttpRequest& request)
@@ -682,16 +568,9 @@ namespace Das::Http
             return DispatchAuthoring(
                 request,
                 "apply",
-                [this](
-                    int64_t              task_id,
-                    IDasReadOnlyString*  p_body,
-                    IDasReadOnlyString** pp_out)
-                {
-                    return scheduler_.ApplyTaskAuthoringChange(
-                        task_id,
-                        p_body,
-                        pp_out);
-                });
+                [this](int64_t task_id, const yyjson::value& body)
+                    -> yyjson::value
+                { return scheduler_.ApplyTaskAuthoringChange(task_id, body); });
         }
 
         Beast::HttpResponse AuthoringCompile(const Beast::HttpRequest& request)
@@ -699,16 +578,9 @@ namespace Das::Http
             return DispatchAuthoring(
                 request,
                 "compile",
-                [this](
-                    int64_t              task_id,
-                    IDasReadOnlyString*  p_body,
-                    IDasReadOnlyString** pp_out)
-                {
-                    return scheduler_.CompileTaskAuthoring(
-                        task_id,
-                        p_body,
-                        pp_out);
-                });
+                [this](int64_t task_id, const yyjson::value& body)
+                    -> yyjson::value
+                { return scheduler_.CompileTaskAuthoring(task_id, body); });
         }
 
     private:
@@ -770,52 +642,8 @@ namespace Das::Http
                     "Request body must be a JSON object");
             }
 
-            auto body_json = Das::Utils::SerializeYyjsonValue(body);
-            if (!body_json)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to serialize authoring request body");
-            }
-
-            DasPtr<IDasReadOnlyString> p_body;
-            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
-                body_json->c_str(),
-                p_body.Put());
-            if (DAS::IsFailed(cr))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    cr,
-                    "Failed to create authoring request string");
-            }
-
-            DasPtr<IDasReadOnlyString> p_result;
-            auto result = fn(task_id, p_body.Get(), p_result.Put());
-            if (DAS::IsFailed(result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    result,
-                    "Failed to dispatch task authoring " + operation);
-            }
-
-            const char* raw = nullptr;
-            auto        get_result = p_result->GetUtf8(&raw);
-            if (DAS::IsFailed(get_result) || raw == nullptr)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    get_result,
-                    "Failed to read task authoring " + operation + " result");
-            }
-
-            auto parsed = Das::Utils::ParseYyjsonFromString(raw);
-            if (!parsed)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to parse task authoring " + operation + " result");
-            }
-
-            auto obj = parsed->as_object();
+            auto result = fn(task_id, body);
+            auto obj = result.as_object();
             if (obj && obj->contains(std::string_view("errorKind")))
             {
                 auto message = std::string{
@@ -824,10 +652,10 @@ namespace Das::Http
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_FAIL,
                     message,
-                    *parsed);
+                    result);
             }
 
-            return Beast::HttpResponse::CreateSuccessResponse(*parsed);
+            return Beast::HttpResponse::CreateSuccessResponse(result);
         }
 
         template <typename Fn>
@@ -876,52 +704,8 @@ namespace Das::Http
                     "Request body must be a JSON object");
             }
 
-            auto body_json = Das::Utils::SerializeYyjsonValue(*parsed_body);
-            if (!body_json)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to serialize repository request body");
-            }
-
-            DasPtr<IDasReadOnlyString> p_body;
-            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
-                body_json->c_str(),
-                p_body.Put());
-            if (DAS::IsFailed(cr))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    cr,
-                    "Failed to create repository request string");
-            }
-
-            DasPtr<IDasReadOnlyString> p_result;
-            auto result = fn(*entry_id, p_body.Get(), p_result.Put());
-            if (DAS::IsFailed(result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    result,
-                    "Failed to dispatch repository " + operation);
-            }
-
-            const char* raw = nullptr;
-            auto        get_result = p_result->GetUtf8(&raw);
-            if (DAS::IsFailed(get_result) || raw == nullptr)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    get_result,
-                    "Failed to read repository " + operation + " result");
-            }
-
-            auto parsed = Das::Utils::ParseYyjsonFromString(raw);
-            if (!parsed)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to parse repository " + operation + " result");
-            }
-
-            auto obj = parsed->as_object();
+            auto result = fn(*entry_id, *parsed_body);
+            auto obj = result.as_object();
             if (obj && obj->contains(std::string_view("errorKind")))
             {
                 auto message = std::string{
@@ -930,10 +714,10 @@ namespace Das::Http
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_FAIL,
                     message,
-                    *parsed);
+                    result);
             }
 
-            return Beast::HttpResponse::CreateSuccessResponse(*parsed);
+            return Beast::HttpResponse::CreateSuccessResponse(result);
         }
 
         template <typename Fn>
@@ -973,52 +757,8 @@ namespace Das::Http
                     "Request body must be a JSON object");
             }
 
-            auto body_json = Das::Utils::SerializeYyjsonValue(*parsed_body);
-            if (!body_json)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to serialize repository request body");
-            }
-
-            DasPtr<IDasReadOnlyString> p_body;
-            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
-                body_json->c_str(),
-                p_body.Put());
-            if (DAS::IsFailed(cr))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    cr,
-                    "Failed to create repository request string");
-            }
-
-            DasPtr<IDasReadOnlyString> p_result;
-            auto result = fn(p_body.Get(), p_result.Put());
-            if (DAS::IsFailed(result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    result,
-                    "Failed to dispatch repository " + operation);
-            }
-
-            const char* raw = nullptr;
-            auto        get_result = p_result->GetUtf8(&raw);
-            if (DAS::IsFailed(get_result) || raw == nullptr)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    get_result,
-                    "Failed to read repository " + operation + " result");
-            }
-
-            auto parsed = Das::Utils::ParseYyjsonFromString(raw);
-            if (!parsed)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to parse repository " + operation + " result");
-            }
-
-            auto obj = parsed->as_object();
+            auto result = fn(*parsed_body);
+            auto obj = result.as_object();
             if (obj && obj->contains(std::string_view("errorKind")))
             {
                 auto message = std::string{
@@ -1027,14 +767,14 @@ namespace Das::Http
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_FAIL,
                     message,
-                    *parsed);
+                    result);
             }
 
-            return Beast::HttpResponse::CreateSuccessResponse(*parsed);
+            return Beast::HttpResponse::CreateSuccessResponse(result);
         }
 
-        IDasSchedulerService& scheduler_;
-        std::filesystem::path plugin_dir_;
+        Das::Core::TaskScheduler::SchedulerService& scheduler_;
+        std::filesystem::path                       plugin_dir_;
     };
 
 } // namespace Das::Http

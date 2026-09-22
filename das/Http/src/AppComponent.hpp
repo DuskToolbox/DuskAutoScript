@@ -15,6 +15,11 @@
 #include <string>
 #include <thread>
 
+namespace Das::Core::TaskScheduler
+{
+    class SchedulerService;
+}
+
 namespace Das::Http
 {
     class AppComponent
@@ -30,6 +35,10 @@ namespace Das::Http
         DasPtr<IDasSettingsService>      settings_service;
         DasPtr<IDasPluginManagerService> plugin_mgr_service;
         DasPtr<IDasSchedulerService>     scheduler_svc;
+
+        // 进程内直连的具体调度器（借用指针，生命周期随 core_services
+        // 引用——BorrowSchedulerService 出借，控制器直连消费）
+        Das::Core::TaskScheduler::SchedulerService* scheduler_service = nullptr;
 
         std::filesystem::path plugin_dir;
 

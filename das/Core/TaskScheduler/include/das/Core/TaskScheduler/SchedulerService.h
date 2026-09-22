@@ -161,47 +161,51 @@ namespace Das::Core::TaskScheduler
 
         ~SchedulerService();
 
+        // DAS_API 导出注记：以下 HTTP 直连方法面（调度控制器逐方法消费）
+        // 需跨 DasCore DLL 边界供 DasHttp 链接（进程内直连——经接口面的
+        // vtable 派发已退役）。这些入口不构成稳定 ABI：仅主进程内部装配
+        // （DasHttp 装配线）消费，随本类演进而变。
         /// Initialize scheduler: load plugins, discover task types,
         /// materialize persisted task instances. Must be called before
         /// Start(). Rejects if currently Running with DAS_E_TASK_WORKING.
-        DasResult Initialize(
+        DAS_API DasResult Initialize(
             const std::filesystem::path& plugin_dir,
             const std::vector<DasGuid>&  disabled_guids);
 
         /// Start the scheduler tick loop. Requires initialized state with
         /// at least one available task instance.
-        DasResult Enable();
+        DAS_API DasResult Enable();
 
         /// Stop the scheduler, cancel timer, wait for current task,
         /// unload plugins, clear runtime state.
-        DasResult Disable();
+        DAS_API DasResult Disable();
 
         SchedulerState Status() const;
 
         /// Returns the merged scheduler state as lower camelCase JSON.
-        yyjson::value Get();
+        DAS_API yyjson::value Get();
 
         /// Add a new task instance by task type GUID. Returns the allocated
         /// instance id via out_task_id.
-        DasResult AddTask(const DasGuid& task_guid, int64_t* out_task_id);
+        DAS_API DasResult
+        AddTask(const DasGuid& task_guid, int64_t* out_task_id);
 
         /// Delete a queued task instance by its id.
-        DasResult DeleteTask(int64_t task_id);
+        DAS_API DasResult DeleteTask(int64_t task_id);
 
         /// Update task instance properties (validated against descriptors).
-        DasResult UpdateTaskProperties(
-            int64_t              task_id,
-            const yyjson::value& properties);
+        DAS_API DasResult
+        UpdateTaskProperties(int64_t task_id, const yyjson::value& properties);
 
         /// Update scheduler-owned internal properties (nextExecutionTime).
-        DasResult UpdateTaskInternalProperties(
+        DAS_API DasResult UpdateTaskInternalProperties(
             int64_t              task_id,
             const yyjson::value& internal_props);
 
         /// Toggle the per-instance enable switch and persist it. Allowed in
         /// any scheduler state so a running scheduler can skip/restore a
         /// task without a full stop. Unknown task_id returns DAS_E_NOT_FOUND.
-        DasResult SetTaskEnabled(int64_t task_id, bool enabled);
+        DAS_API DasResult SetTaskEnabled(int64_t task_id, bool enabled);
 
         /// 立即执行一个已物化的 task 实例：投递单任务执行操作
         /// （ExecuteTaskOnce），点谁跑谁、跑完即止——不进调度链（不经
@@ -210,13 +214,13 @@ namespace Das::Core::TaskScheduler
         /// 返回 DAS_E_TASK_WORKING。投递后立即返回，Do 在 BusinessThread
         /// 串行执行；落地时锁内复检 scheduler 状态与任务可用性，投递
         /// 窗口内被 Enable 抢先/任务被删或禁用则作废。
-        DasResult RunTaskNow(int64_t task_id);
+        DAS_API DasResult RunTaskNow(int64_t task_id);
 
-        yyjson::value GetTaskAuthoringDocument(
+        DAS_API yyjson::value GetTaskAuthoringDocument(
             int64_t              task_id,
             const yyjson::value& request);
 
-        yyjson::value ApplyTaskAuthoringChange(
+        DAS_API yyjson::value ApplyTaskAuthoringChange(
             int64_t              task_id,
             const yyjson::value& change);
 
@@ -239,26 +243,27 @@ namespace Das::Core::TaskScheduler
         /// 自管锁）。
         void RefreshNextExecutionTimes();
 
-        yyjson::value CompileTaskAuthoring(
+        DAS_API yyjson::value CompileTaskAuthoring(
             int64_t              task_id,
             const yyjson::value& request);
 
-        yyjson::value GetRepositoryEntryAuthoringDocument(
+        DAS_API yyjson::value GetRepositoryEntryAuthoringDocument(
             int64_t              entry_id,
             const yyjson::value& request);
 
-        yyjson::value ApplyRepositoryEntryAuthoringChange(
+        DAS_API yyjson::value ApplyRepositoryEntryAuthoringChange(
             int64_t              entry_id,
             const yyjson::value& change);
 
-        yyjson::value CompileRepositoryEntryAuthoring(
+        DAS_API yyjson::value CompileRepositoryEntryAuthoring(
             int64_t              entry_id,
             const yyjson::value& request);
 
-        yyjson::value GetTaskRepository();
-        yyjson::value CreateRepositoryEntry(const yyjson::value& request);
-        DasResult     DeleteRepositoryEntry(int64_t entry_id);
-        yyjson::value RenameRepositoryEntry(
+        DAS_API yyjson::value GetTaskRepository();
+        DAS_API yyjson::value CreateRepositoryEntry(
+            const yyjson::value& request);
+        DAS_API DasResult DeleteRepositoryEntry(int64_t entry_id);
+        DAS_API yyjson::value RenameRepositoryEntry(
             int64_t              entry_id,
             const yyjson::value& request);
 
@@ -269,7 +274,9 @@ namespace Das::Core::TaskScheduler
         bool IsInitialized() const { return initialized_; }
 
         /// Register a callback to be invoked when scheduler state changes.
-        void SetStateNotifyCallback(SchedulerNotifyFunc func, void* user_data);
+        DAS_API void SetStateNotifyCallback(
+            SchedulerNotifyFunc func,
+            void*               user_data);
 
         /// Drop every cached authoring session (task + repository). Called when
         /// the plugin runtime is invalidated (e.g. plugin unload/reload) so the

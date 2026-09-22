@@ -1,3 +1,4 @@
+#include <das/Core/CoreServices/CoreServicesBorrow.h>
 #include <das/Core/CoreServices/CoreServicesImpl.h>
 #include <das/Core/Debug/DebugRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManagerServiceImpl.h>
@@ -163,6 +164,26 @@ DasResult CoreServicesImpl::GetSchedulerService(IDasSchedulerService** pp_out)
 }
 
 DasResult CoreServicesImpl::Shutdown() { return ShutdownCoreRuntime(); }
+
+Das::Core::TaskScheduler::SchedulerService&
+CoreServicesImpl::SchedulerServiceInstance()
+{
+    return scheduler_svc_;
+}
+
+DAS_API Das::Core::TaskScheduler::SchedulerService* BorrowSchedulerService(
+    IDasCoreServices* p_services) noexcept
+{
+    if (p_services == nullptr)
+    {
+        return nullptr;
+    }
+    // CreateIDasCoreServices（本翻译单元）是 CoreServicesImpl 的唯一出厂
+    // 口：接口指针由 CoreServicesImpl* 单继承上转而来，downcast 取回原
+    // 对象安全。
+    auto* impl = static_cast<CoreServicesImpl*>(p_services);
+    return &impl->SchedulerServiceInstance();
+}
 
 DAS_CORE_CORE_SERVICES_NS_END
 

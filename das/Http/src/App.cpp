@@ -33,6 +33,7 @@
 #include "./service/DasPluginManagerServiceImpl.h"
 #include "./service/DasProfileServiceImpl.h"
 #include "./service/DasProgressServiceImpl.h"
+#include <das/Core/CoreServices/CoreServicesBorrow.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/HttpIpcServer.h>
@@ -161,12 +162,17 @@ namespace Das::Http
             return pm_result;
         }
 
-        auto sc_result = components.core_services->GetSchedulerService(
-            components.scheduler_svc.Put());
-        if (DAS::IsFailed(sc_result))
+        // 进程内直连具体调度器（借用指针，生命周期随 core_services 引用）
+        // ——调度控制器直连具体类，不再经调度器接口面取数。
+        // scheduler_svc 接口引用暂由具名注册段与 WS 状态回调使用（随后
+        // 退役）。
+        components.scheduler_service =
+            Das::Core::CoreServices::BorrowSchedulerService(
+                components.core_services.Get());
+        if (components.scheduler_service == nullptr)
         {
-            DAS_LOG_ERROR("Failed to get scheduler service");
-            return sc_result;
+            DAS_LOG_ERROR("Failed to borrow scheduler service");
+            return DAS_E_FAIL;
         }
 
         // 业务路由经此调度器派发 BusinessThread 执行（覆盖 AppComponent
@@ -410,7 +416,7 @@ namespace Das::Http
                 *components.settings_service);
         auto scheduler_controller =
             std::make_shared<Das::Http::DasSchedulerController>(
-                *components.scheduler_svc,
+                *components.scheduler_service,
                 components.plugin_dir);
 
         // Register routes

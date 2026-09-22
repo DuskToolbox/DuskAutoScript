@@ -255,9 +255,14 @@ namespace Das::Core::TaskScheduler
             entry =
                 yyjson::cast<Repository::Dto::RepositoryEntryDto>(entry_json);
         }
-        catch (const yyjson::bad_cast&)
+        catch (const std::exception&)
         {
-            return DAS_E_INVALID_JSON;
+            // cpp_yyjson default_caster 对缺失键抛 std::out_of_range（非
+            // yyjson::bad_cast 派生）。settings 层对未持久化过的 entry id
+            // 返回空对象（非 null），上面的 is_object 门放行后 cast 必抛
+            // ——空壳/损坏条目统一按 NOT_FOUND 拒绝（与 DeleteEntry 缺档
+            // 语义一致），不让异常穿透调度器入口。
+            return DAS_E_NOT_FOUND;
         }
 
         entry.display_name = request.display_name;

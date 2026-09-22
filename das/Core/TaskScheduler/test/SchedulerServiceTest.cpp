@@ -10910,295 +10910,10 @@ TEST_F(
 namespace
 {
 
-    /// Fake IDasSchedulerService that records method calls.
-    class FakeSchedulerService : public IDasSchedulerService
-    {
-    public:
-        std::atomic<uint32_t> ref_count_{0};
-
-        // Records
-        std::atomic<bool> initialize_called{false};
-        std::atomic<bool> start_called{false};
-        std::atomic<bool> stop_called{false};
-        std::atomic<bool> get_called{false};
-        std::atomic<bool> add_task_called{false};
-        std::atomic<bool> delete_task_called{false};
-        std::atomic<bool> update_props_called{false};
-        std::atomic<bool> update_internal_props_called{false};
-        std::atomic<bool> set_enabled_called{false};
-        std::atomic<bool> run_now_called{false};
-        std::atomic<bool> authoring_get_called{false};
-        std::atomic<bool> authoring_apply_called{false};
-        std::atomic<bool> authoring_compile_called{false};
-        std::atomic<bool> repository_get_called{false};
-        std::atomic<bool> repository_create_called{false};
-        std::atomic<bool> repository_delete_called{false};
-        std::atomic<bool> repository_rename_called{false};
-        std::atomic<bool> repository_authoring_get_called{false};
-        std::atomic<bool> repository_authoring_apply_called{false};
-        std::atomic<bool> repository_compile_called{false};
-        int64_t           last_authoring_task_id = -1;
-        int64_t           last_repository_entry_id = -1;
-        std::string       last_repository_request_json;
-
-        DasResult next_result{DAS_S_OK};
-
-        uint32_t AddRef() override { return ++ref_count_; }
-        uint32_t Release() override
-        {
-            auto c = --ref_count_;
-            if (c == 0)
-            {
-                delete this;
-            }
-            return c;
-        }
-        DasResult QueryInterface(const DasGuid&, void**) override
-        {
-            return DAS_E_NO_INTERFACE;
-        }
-
-        DasResult Initialize(
-            IDasReadOnlyString*,
-            Das::ExportInterface::IDasReadOnlyGuidVector*) override
-        {
-            initialize_called = true;
-            return next_result;
-        }
-        DasResult Start() override
-        {
-            start_called = true;
-            return next_result;
-        }
-        DasResult Stop() override
-        {
-            stop_called = true;
-            return next_result;
-        }
-        DasResult GetState(SchedulerState* p) const override
-        {
-            if (p)
-            {
-                *p = SchedulerState::Stopped;
-            }
-            return DAS_S_OK;
-        }
-        DasResult Get(IDasReadOnlyString** pp) override
-        {
-            get_called = true;
-            if (pp)
-            {
-                DasOutPtr<IDasReadOnlyString> result(pp);
-                auto cr = CreateIDasReadOnlyStringFromUtf8(
-                    R"({"state":"stopped"})",
-                    result.Put());
-                if (DAS::IsOk(cr))
-                {
-                    result.Keep();
-                }
-                return cr;
-            }
-            return DAS_E_INVALID_POINTER;
-        }
-        DasResult GetTaskRepository(IDasReadOnlyString** pp) override
-        {
-            repository_get_called = true;
-            if (DAS::IsFailed(next_result))
-            {
-                return next_result;
-            }
-            return WriteAuthoringJson(pp, R"({"entries":[]})");
-        }
-        DasResult CreateRepositoryEntry(
-            IDasReadOnlyString*  p_request_json,
-            IDasReadOnlyString** pp_out_json) override
-        {
-            repository_create_called = true;
-            RecordRequestJson(p_request_json);
-            if (DAS::IsFailed(next_result))
-            {
-                return next_result;
-            }
-            return WriteAuthoringJson(
-                pp_out_json,
-                R"({"entryId":42,"displayName":"repository entry"})");
-        }
-        DasResult DeleteRepositoryEntry(int64_t entry_id) override
-        {
-            repository_delete_called = true;
-            last_repository_entry_id = entry_id;
-            return next_result;
-        }
-        DasResult RenameRepositoryEntry(
-            int64_t              entry_id,
-            IDasReadOnlyString*  p_request_json,
-            IDasReadOnlyString** pp_out_json) override
-        {
-            repository_rename_called = true;
-            last_repository_entry_id = entry_id;
-            RecordRequestJson(p_request_json);
-            if (DAS::IsFailed(next_result))
-            {
-                return next_result;
-            }
-            return WriteAuthoringJson(
-                pp_out_json,
-                R"({"entryId":42,"displayName":"renamed repository entry"})");
-        }
-        DasResult GetRepositoryEntryAuthoringDocument(
-            int64_t              entry_id,
-            IDasReadOnlyString*  p_request_json,
-            IDasReadOnlyString** pp_out_json) override
-        {
-            repository_authoring_get_called = true;
-            last_repository_entry_id = entry_id;
-            RecordRequestJson(p_request_json);
-            if (DAS::IsFailed(next_result))
-            {
-                return next_result;
-            }
-            return WriteAuthoringJson(
-                pp_out_json,
-                R"({"entryId":42,"document":{"kind":"formSequence","revision":0}})");
-        }
-        DasResult ApplyRepositoryEntryAuthoringChange(
-            int64_t              entry_id,
-            IDasReadOnlyString*  p_request_json,
-            IDasReadOnlyString** pp_out_json) override
-        {
-            repository_authoring_apply_called = true;
-            last_repository_entry_id = entry_id;
-            RecordRequestJson(p_request_json);
-            if (DAS::IsFailed(next_result))
-            {
-                return next_result;
-            }
-            return WriteAuthoringJson(
-                pp_out_json,
-                R"({"ok":true,"entryId":42,"revision":1})");
-        }
-        DasResult CompileRepositoryEntryAuthoring(
-            int64_t              entry_id,
-            IDasReadOnlyString*  p_request_json,
-            IDasReadOnlyString** pp_out_json) override
-        {
-            repository_compile_called = true;
-            last_repository_entry_id = entry_id;
-            RecordRequestJson(p_request_json);
-            if (DAS::IsFailed(next_result))
-            {
-                return next_result;
-            }
-            return WriteAuthoringJson(
-                pp_out_json,
-                R"({"entryId":42,"canExecute":true,"summary":{},"diagnostics":[]})");
-        }
-        DasResult AddTask(const DasGuid&, int64_t* p_id) override
-        {
-            add_task_called = true;
-            if (p_id)
-            {
-                *p_id = 42;
-            }
-            return next_result;
-        }
-        DasResult DeleteTask(int64_t) override
-        {
-            delete_task_called = true;
-            return next_result;
-        }
-        DasResult UpdateTaskProperties(int64_t, IDasReadOnlyString*) override
-        {
-            update_props_called = true;
-            return next_result;
-        }
-        DasResult UpdateTaskInternalProperties(int64_t, IDasReadOnlyString*)
-            override
-        {
-            update_internal_props_called = true;
-            return next_result;
-        }
-        DasResult SetTaskEnabled(int64_t, DasBool) override
-        {
-            set_enabled_called = true;
-            return next_result;
-        }
-        DasResult RunTaskNow(int64_t) override
-        {
-            run_now_called = true;
-            return next_result;
-        }
-        DasResult GetTaskAuthoringDocument(
-            int64_t task_id,
-            IDasReadOnlyString*,
-            IDasReadOnlyString** pp_out_json) override
-        {
-            authoring_get_called = true;
-            last_authoring_task_id = task_id;
-            return WriteAuthoringJson(
-                pp_out_json,
-                R"({"taskId":42,"document":{"kind":"formSequence","revision":0}})");
-        }
-        DasResult ApplyTaskAuthoringChange(
-            int64_t task_id,
-            IDasReadOnlyString*,
-            IDasReadOnlyString** pp_out_json) override
-        {
-            authoring_apply_called = true;
-            last_authoring_task_id = task_id;
-            return WriteAuthoringJson(
-                pp_out_json,
-                R"({"ok":true,"taskId":42,"revision":1})");
-        }
-        DasResult CompileTaskAuthoring(
-            int64_t task_id,
-            IDasReadOnlyString*,
-            IDasReadOnlyString** pp_out_json) override
-        {
-            authoring_compile_called = true;
-            last_authoring_task_id = task_id;
-            return WriteAuthoringJson(
-                pp_out_json,
-                R"({"taskId":42,"compile":{"ok":true}})");
-        }
-        DasResult SetStateNotifyCallback(SchedulerNotifyFunc, void*) override
-        {
-            return DAS_S_OK;
-        }
-
-    private:
-        DasResult WriteAuthoringJson(
-            IDasReadOnlyString** pp_out_json,
-            const char*          json)
-        {
-            if (!pp_out_json)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            DasOutPtr<IDasReadOnlyString> result(pp_out_json);
-            auto cr = CreateIDasReadOnlyStringFromUtf8(json, result.Put());
-            if (DAS::IsOk(cr))
-            {
-                result.Keep();
-            }
-            return cr;
-        }
-
-        void RecordRequestJson(IDasReadOnlyString* p_json)
-        {
-            last_repository_request_json.clear();
-            if (!p_json)
-            {
-                return;
-            }
-
-            const char* raw = nullptr;
-            if (DAS::IsOk(p_json->GetUtf8(&raw)) && raw)
-            {
-                last_repository_request_json = raw;
-            }
-        }
-    };
+    // 控制器直连具体 SchedulerService（接口面退役）：fake 接口替身随之退
+    // 役——控制器用例改跑真实调度器（轻量装配见 SchedulerControllerTest
+    // 夹具），断言聚焦控制器翻译面（guard 错误封套/成功封套形状/errorKind
+    // 透传）；服务负载语义由本文件其余真实链用例背书。
 
     /// Build a Beast::HttpRequest with path parameters set.
     Das::Http::Beast::HttpRequest MakeRequest(
@@ -11231,24 +10946,98 @@ class SchedulerControllerTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        fake_svc_ = new FakeSchedulerService();
-        fake_svc_->AddRef();
+        test_dir_ = UniqueTestDir();
+        std::filesystem::create_directories(test_dir_);
+        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
+        std::filesystem::create_directories(settings_dir_);
+        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
+        std::filesystem::create_directories(plugin_dir_);
+
+        settings_manager_ =
+            std::make_unique<Das::Core::SettingsManager::SettingsManager>(
+                settings_dir_);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
+        plugin_manager_ = std::make_unique<
+            Das::Core::ForeignInterfaceHost::TestablePluginManager>(
+            *settings_manager_,
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
+        scheduler_ = std::make_unique<SchedulerService>(
+            *plugin_manager_,
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
         controller_ = std::make_unique<Das::Http::DasSchedulerController>(
-            *fake_svc_,
-            std::filesystem::current_path() / DAS_PATH_LITERAL("plugins"));
+            *scheduler_,
+            plugin_dir_);
+
+        // IO 线程：Start 用例 Enable 排 tick timer / BT 投递需要 IPC 泵
+        // （SchedulerExecutionTest 同款轻量装配——work guard 裸 io.run，
+        // 无远端 peer，不驱动 IPC 接收循环）。
+        io_thread_ = std::thread(
+            [this]()
+            {
+                auto& io = ipc_sp_->GetIoContext();
+                const boost::asio::executor_work_guard<
+                    boost::asio::io_context::executor_type>
+                    work(io.get_executor());
+                io.run();
+            });
     }
 
     void TearDown() override
     {
-        controller_.reset();
-        if (fake_svc_)
+        ipc_sp_->GetIoContext().stop();
+        if (io_thread_.joinable())
         {
-            fake_svc_->Release();
-            fake_svc_ = nullptr;
+            io_thread_.join();
         }
+        controller_.reset();
+        scheduler_.reset();
+        plugin_manager_.reset();
+        settings_manager_.reset();
+        std::filesystem::remove_all(test_dir_);
     }
 
-    FakeSchedulerService*                              fake_svc_ = nullptr;
+    // 注册 FakeTask 特征 + 种入任务实例 0 + Initialize——Start/Stop/任务
+    // 变更/仓库用例需要「已初始化且含可用实例」的真实调度器。
+    FakeTask* SeedInitializedWithTask()
+    {
+        return SetupSchedulerWithFakeTask(
+            *scheduler_,
+            *settings_manager_,
+            plugin_dir_,
+            *plugin_manager_);
+    }
+
+    // 直连经真实调度器建一个仓库条目，返回分配的 entryId。不带
+    // initialProperties——FakeTask 无 descriptor 清单，非空初始属性会被
+    // 真实校验拒绝（与控制器 create 用例同款最小请求形状）。
+    int64_t SeedRepositoryEntry(std::string_view display_name = "entry")
+    {
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto          obj = *request.as_object();
+        obj[std::string_view("pluginGuid")] =
+            std::string_view("00000000-0000-0000-0000-000000000000");
+        obj[std::string_view("taskTypeGuid")] =
+            std::string_view("A1B2C3D4-E5F6-7890-ABCD-EF1234567890");
+        obj[std::string_view("displayName")] = std::string(display_name);
+        auto created = scheduler_->CreateRepositoryEntry(request);
+        auto created_obj = created.as_object();
+        EXPECT_TRUE(created_obj.has_value());
+        return (*created_obj)[std::string_view("entryId")].as_sint().value_or(
+            -1);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path settings_dir_;
+    std::filesystem::path plugin_dir_;
+    std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
+                                                          settings_manager_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
+                                                       plugin_manager_;
+    std::unique_ptr<SchedulerService>                  scheduler_;
+    std::thread                                        io_thread_;
     std::unique_ptr<Das::Http::DasSchedulerController> controller_;
 };
 
@@ -11263,7 +11052,7 @@ TEST_F(SchedulerControllerTest, Initialize_ProfileNonZero_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->initialize_called);
+    EXPECT_FALSE(scheduler_->IsInitialized());
 }
 
 TEST_F(SchedulerControllerTest, Start_ProfileNonZero_Rejected)
@@ -11274,7 +11063,6 @@ TEST_F(SchedulerControllerTest, Start_ProfileNonZero_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->start_called);
 }
 
 TEST_F(SchedulerControllerTest, Stop_ProfileNonZero_Rejected)
@@ -11285,7 +11073,6 @@ TEST_F(SchedulerControllerTest, Stop_ProfileNonZero_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->stop_called);
 }
 
 TEST_F(SchedulerControllerTest, Get_ProfileNonZero_Rejected)
@@ -11296,7 +11083,6 @@ TEST_F(SchedulerControllerTest, Get_ProfileNonZero_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->get_called);
 }
 
 TEST_F(SchedulerControllerTest, AddTask_ProfileNonZero_Rejected)
@@ -11311,7 +11097,6 @@ TEST_F(SchedulerControllerTest, AddTask_ProfileNonZero_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->add_task_called);
 }
 
 TEST_F(SchedulerControllerTest, DeleteTask_ProfileNonZero_Rejected)
@@ -11325,7 +11110,6 @@ TEST_F(SchedulerControllerTest, DeleteTask_ProfileNonZero_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->delete_task_called);
 }
 
 // ── Malformed GUID ──
@@ -11341,7 +11125,6 @@ TEST_F(SchedulerControllerTest, AddTask_MalformedGuid_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->add_task_called);
 }
 
 // ── Malformed taskId ──
@@ -11357,7 +11140,6 @@ TEST_F(SchedulerControllerTest, DeleteTask_MalformedTaskId_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->delete_task_called);
 }
 
 TEST_F(SchedulerControllerTest, UpdateProps_MalformedTaskId_Rejected)
@@ -11371,7 +11153,6 @@ TEST_F(SchedulerControllerTest, UpdateProps_MalformedTaskId_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->update_props_called);
 }
 
 TEST_F(SchedulerControllerTest, UpdateInternalProps_MalformedTaskId_Rejected)
@@ -11385,7 +11166,6 @@ TEST_F(SchedulerControllerTest, UpdateInternalProps_MalformedTaskId_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->update_internal_props_called);
 }
 
 // ── disabledGuids validation ──
@@ -11401,7 +11181,7 @@ TEST_F(SchedulerControllerTest, Initialize_NonArrayDisabledGuids_Rejected)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->initialize_called);
+    EXPECT_FALSE(scheduler_->IsInitialized());
 }
 
 TEST_F(SchedulerControllerTest, Initialize_MalformedGuidMember_Skipped)
@@ -11416,7 +11196,7 @@ TEST_F(SchedulerControllerTest, Initialize_MalformedGuidMember_Skipped)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->initialize_called);
+    EXPECT_TRUE(scheduler_->IsInitialized());
 }
 
 // ── Valid request forwarding ──
@@ -11430,7 +11210,7 @@ TEST_F(SchedulerControllerTest, Initialize_AbsentDisabledGuids_Forwarded)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->initialize_called);
+    EXPECT_TRUE(scheduler_->IsInitialized());
 }
 
 TEST_F(SchedulerControllerTest, Initialize_Valid_Forwarded)
@@ -11444,33 +11224,37 @@ TEST_F(SchedulerControllerTest, Initialize_Valid_Forwarded)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->initialize_called);
+    EXPECT_TRUE(scheduler_->IsInitialized());
 }
 
 TEST_F(SchedulerControllerTest, Start_Valid_Forwarded)
 {
+    SeedInitializedWithTask();
     auto req = MakeRequest("/api/scheduler/0/start", "{}", {{"profile", "0"}});
     auto resp = controller_->Start(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->start_called);
+    // 清场：停机，避免夹具析构时存在在飞 tick
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
 }
 
 TEST_F(SchedulerControllerTest, Stop_Valid_Forwarded)
 {
+    SeedInitializedWithTask();
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
     auto req = MakeRequest("/api/scheduler/0/stop", "{}", {{"profile", "0"}});
     auto resp = controller_->Stop(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->stop_called);
 }
 
 TEST_F(SchedulerControllerTest, Get_Valid_Forwarded)
 {
+    SeedInitializedWithTask();
     auto req = MakeRequest("/api/scheduler/0/get", "{}", {{"profile", "0"}});
     auto resp = controller_->Get(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
@@ -11480,11 +11264,11 @@ TEST_F(SchedulerControllerTest, Get_Valid_Forwarded)
     EXPECT_TRUE(
         (*body.as_object())[std::string_view("data")].as_object()->contains(
             std::string_view("state")));
-    EXPECT_TRUE(fake_svc_->get_called);
 }
 
 TEST_F(SchedulerControllerTest, AddTask_Valid_Forwarded)
 {
+    SeedInitializedWithTask();
     auto req = MakeRequest(
         "/api/scheduler/0/A1B2C3D4-E5F6-7890-ABCD-EF1234567890/put",
         "{}",
@@ -11495,86 +11279,130 @@ TEST_F(SchedulerControllerTest, AddTask_Valid_Forwarded)
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
+    // 种入实例 0 占首个 id，调度器索引 nextTaskId 分配下一个实例 id=1
     EXPECT_EQ(
         (*(*body.as_object())[std::string_view("data")]
               .as_object())[std::string_view("taskId")]
             .as_sint()
             .value(),
-        42);
-    EXPECT_TRUE(fake_svc_->add_task_called);
+        1);
 }
 
 TEST_F(SchedulerControllerTest, DeleteTask_Valid_Forwarded)
 {
+    SeedInitializedWithTask();
     auto req = MakeRequest(
-        "/api/scheduler/0/5/delete",
+        "/api/scheduler/0/0/delete",
         "{}",
-        {{"profile", "0"}, {"taskId", "5"}});
+        {{"profile", "0"}, {"taskId", "0"}});
     auto resp = controller_->DeleteTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->delete_task_called);
 }
 
+// 真实链属性更新：FakeTask 注册无 descriptor 清单，任意属性键都不在
+// 描述符表内——真实校验返回 DAS_E_NOT_FOUND，控制器包装为错误封套
+// （code 原样透传）。
 TEST_F(SchedulerControllerTest, UpdateProps_Valid_Forwarded)
 {
+    SeedInitializedWithTask();
     auto req = MakeRequest(
-        "/api/scheduler/0/3/properties/update",
+        "/api/scheduler/0/0/properties/update",
         R"({"key":"value"})",
-        {{"profile", "0"}, {"taskId", "3"}});
+        {{"profile", "0"}, {"taskId", "0"}});
     auto resp = controller_->UpdateTaskProperties(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
-        DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->update_props_called);
+        DAS_E_NOT_FOUND);
 }
 
 TEST_F(SchedulerControllerTest, UpdateInternalProps_Valid_Forwarded)
 {
+    SeedInitializedWithTask();
     auto req = MakeRequest(
-        "/api/scheduler/0/3/internal/properties/update",
-        R"({"nextExecutionTime":"2026-05-01T08:00:00+08:00"})",
-        {{"profile", "0"}, {"taskId", "3"}});
+        "/api/scheduler/0/0/internal/properties/update",
+        R"({"nextExecutionTime":1777593600})",
+        {{"profile", "0"}, {"taskId", "0"}});
     auto resp = controller_->UpdateTaskInternalProperties(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->update_internal_props_called);
 }
 
+// 任务 authoring 端点（真实调度器）：FakeTask 无 authoring capability，
+// 真实链返回 errorKind=capabilityMissing——控制器把服务结果原文透传为
+// code=DAS_E_FAIL + data 原样（errorKind 封套即翻译契约）。成功封套形状
+// 由仓库族（Get/Rename）与 Get/AddTask 用例背书（同一 Dispatch 模板）。
 TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringGet_Forwarded)
 {
+    SeedInitializedWithTask();
     auto req = MakeRequest(
-        "/api/v1/scheduler/0/tasks/42/authoring/get",
+        "/api/v1/scheduler/0/tasks/0/authoring/get",
         R"({"view":"default"})",
-        {{"profile", "0"}, {"taskId", "42"}});
+        {{"profile", "0"}, {"taskId", "0"}});
     auto resp = controller_->AuthoringGet(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     auto root = body.as_object().value();
-    auto code = root[std::string_view("code")].as_sint();
-    if (!code)
-    {
-        code = root[std::string_view("code")].as_sint();
-    }
-    EXPECT_EQ(code.value_or(DAS_E_FAIL), DAS_S_OK);
-    auto data_value = root[std::string_view("data")];
-    if (data_value.is_null())
-    {
-        data_value = root[std::string_view("data")];
-    }
-    auto data = data_value.as_object();
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_S_OK),
+        DAS_E_FAIL);
+    auto data = root[std::string_view("data")].as_object();
     ASSERT_TRUE(data.has_value());
-    EXPECT_TRUE(data->contains(std::string_view("document")));
-    EXPECT_TRUE(fake_svc_->authoring_get_called);
-    EXPECT_EQ(fake_svc_->last_authoring_task_id, 42);
+    EXPECT_EQ(
+        (*data)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("capabilityMissing"));
 }
 
 TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringApply_Forwarded)
 {
+    SeedInitializedWithTask();
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/tasks/0/authoring/apply",
+        R"({"baseRevision":0,"kind":"setValue","payload":{}})",
+        {{"profile", "0"}, {"taskId", "0"}});
+    auto resp = controller_->AuthoringApply(req);
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
+    auto root = body.as_object().value();
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_S_OK),
+        DAS_E_FAIL);
+    auto data = root[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_EQ(
+        (*data)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("capabilityMissing"));
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringCompile_Forwarded)
+{
+    SeedInitializedWithTask();
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/tasks/0/authoring/compile",
+        R"({"mode":"preview"})",
+        {{"profile", "0"}, {"taskId", "0"}});
+    auto resp = controller_->AuthoringCompile(req);
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
+    auto root = body.as_object().value();
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_S_OK),
+        DAS_E_FAIL);
+    auto data = root[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_EQ(
+        (*data)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("capabilityMissing"));
+}
+
+// errorKind 数据透传（真实链）：对不存在的任务 apply，真实调度器返回
+// errorKind=taskNotFound 封套——控制器翻译为 code=DAS_E_FAIL 且 data
+// 原样透传（message/errorKind 字段直达客户端）。
+TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringErrorKind_Data)
+{
+    SeedInitializedWithTask();
     auto req = MakeRequest(
         "/api/v1/scheduler/0/tasks/42/authoring/apply",
         R"({"baseRevision":0,"kind":"setValue","payload":{}})",
@@ -11582,102 +11410,20 @@ TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringApply_Forwarded)
     auto resp = controller_->AuthoringApply(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     auto root = body.as_object().value();
-    auto code = root[std::string_view("code")].as_sint();
-    if (!code)
-    {
-        code = root[std::string_view("code")].as_sint();
-    }
-    EXPECT_EQ(code.value_or(DAS_E_FAIL), DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->authoring_apply_called);
-    EXPECT_EQ(fake_svc_->last_authoring_task_id, 42);
-}
-
-TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringCompile_Forwarded)
-{
-    auto req = MakeRequest(
-        "/api/v1/scheduler/0/tasks/42/authoring/compile",
-        R"({"mode":"preview"})",
-        {{"profile", "0"}, {"taskId", "42"}});
-    auto resp = controller_->AuthoringCompile(req);
-    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    auto root = body.as_object().value();
-    auto code = root[std::string_view("code")].as_sint();
-    if (!code)
-    {
-        code = root[std::string_view("code")].as_sint();
-    }
-    EXPECT_EQ(code.value_or(DAS_E_FAIL), DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->authoring_compile_called);
-    EXPECT_EQ(fake_svc_->last_authoring_task_id, 42);
-}
-
-TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringErrorKind_Data)
-{
-    class ErrorAuthoringService final : public FakeSchedulerService
-    {
-    public:
-        DasResult ApplyTaskAuthoringChange(
-            int64_t,
-            IDasReadOnlyString*,
-            IDasReadOnlyString** pp_out_json) override
-        {
-            return WriteError(
-                pp_out_json,
-                R"({"ok":false,"errorKind":"revisionConflict","message":"stale","currentRevision":7})");
-        }
-
-    private:
-        DasResult WriteError(IDasReadOnlyString** pp_out_json, const char* json)
-        {
-            if (!pp_out_json)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            DasOutPtr<IDasReadOnlyString> result(pp_out_json);
-            auto cr = CreateIDasReadOnlyStringFromUtf8(json, result.Put());
-            if (DAS::IsOk(cr))
-            {
-                result.Keep();
-            }
-            return cr;
-        }
-    };
-
-    auto* error_svc = new ErrorAuthoringService();
-    error_svc->AddRef();
-    Das::Http::DasSchedulerController controller(
-        *error_svc,
-        std::filesystem::current_path() / DAS_PATH_LITERAL("plugins"));
-
-    auto req = MakeRequest(
-        "/api/v1/scheduler/0/tasks/42/authoring/apply",
-        R"({"baseRevision":0,"kind":"setValue","payload":{}})",
-        {{"profile", "0"}, {"taskId", "42"}});
-    auto resp = controller.AuthoringApply(req);
-    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    auto root = body.as_object().value();
-    auto code = root[std::string_view("code")].as_sint();
-    if (!code)
-    {
-        code = root[std::string_view("code")].as_sint();
-    }
-    EXPECT_EQ(code.value_or(DAS_S_OK), DAS_E_FAIL);
-    auto data_value = root[std::string_view("data")];
-    if (data_value.is_null())
-    {
-        data_value = root[std::string_view("data")];
-    }
-    auto data = data_value.as_object();
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_S_OK),
+        DAS_E_FAIL);
+    auto data = root[std::string_view("data")].as_object();
     ASSERT_TRUE(data.has_value());
     EXPECT_EQ(
         (*data)[std::string_view("errorKind")].as_string().value_or(""),
-        std::string_view("revisionConflict"));
-
-    error_svc->Release();
+        std::string_view("notFound"));
+    EXPECT_TRUE(data->contains(std::string_view("message")));
 }
 
 TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryGet_Forwarded)
 {
+    SeedInitializedWithTask();
     auto req = MakeRequest(
         "/api/v1/scheduler/0/repository/get",
         "{}",
@@ -11691,15 +11437,16 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryGet_Forwarded)
     auto data = root[std::string_view("data")].as_object();
     ASSERT_TRUE(data.has_value());
     EXPECT_TRUE(data->contains(std::string_view("entries")));
-    EXPECT_TRUE(fake_svc_->repository_get_called);
-    EXPECT_FALSE(fake_svc_->repository_create_called);
 }
 
+// 真实链 create：FakeTask 注册表内的任务类型（null pluginGuid + FakeTask
+// guid）建条目成功，控制器透传分配的 entryId。
 TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCreate_Forwarded)
 {
+    SeedInitializedWithTask();
     auto req = MakeRequest(
         "/api/v1/scheduler/0/repository/entries",
-        R"({"pluginGuid":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","taskTypeGuid":"11111111-2222-3333-4444-555555555555"})",
+        R"({"pluginGuid":"00000000-0000-0000-0000-000000000000","taskTypeGuid":"A1B2C3D4-E5F6-7890-ABCD-EF1234567890"})",
         {{"profile", "0"}});
     auto body = ReleaseJson(controller_->RepositoryCreate(req));
     auto root = body.as_object().value();
@@ -11709,11 +11456,7 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCreate_Forwarded)
         DAS_S_OK);
     auto data = root[std::string_view("data")].as_object();
     ASSERT_TRUE(data.has_value());
-    EXPECT_EQ((*data)[std::string_view("entryId")].as_sint().value_or(-1), 42);
-    EXPECT_TRUE(fake_svc_->repository_create_called);
-    EXPECT_NE(
-        fake_svc_->last_repository_request_json.find("pluginGuid"),
-        std::string::npos);
+    EXPECT_TRUE((*data)[std::string_view("entryId")].as_sint().has_value());
 }
 
 TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryProfile_Rejected)
@@ -11737,9 +11480,6 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryProfile_Rejected)
         (*create_body.as_object())[std::string_view("code")].as_sint().value_or(
             DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
-
-    EXPECT_FALSE(fake_svc_->repository_get_called);
-    EXPECT_FALSE(fake_svc_->repository_create_called);
 }
 
 TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_InvalidJson)
@@ -11763,9 +11503,6 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_InvalidJson)
         (*create_body.as_object())[std::string_view("code")].as_sint().value_or(
             DAS_S_OK),
         DAS_E_INVALID_JSON);
-
-    EXPECT_FALSE(fake_svc_->repository_get_called);
-    EXPECT_FALSE(fake_svc_->repository_create_called);
 }
 
 TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_NonObject)
@@ -11789,33 +11526,36 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_NonObject)
         (*create_body.as_object())[std::string_view("code")].as_sint().value_or(
             DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
-
-    EXPECT_FALSE(fake_svc_->repository_get_called);
-    EXPECT_FALSE(fake_svc_->repository_create_called);
 }
 
 TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryDelete_Forwarded)
 {
+    SeedInitializedWithTask();
+    const auto entry_id = SeedRepositoryEntry();
+    ASSERT_GE(entry_id, 0);
     auto req = MakeRequest(
-        "/api/v1/scheduler/0/repository/entries/123/delete",
+        "/api/v1/scheduler/0/repository/entries/" + std::to_string(entry_id)
+            + "/delete",
         "{}",
-        {{"profile", "0"}, {"entryId", "123"}});
+        {{"profile", "0"}, {"entryId", std::to_string(entry_id)}});
     auto body = ReleaseJson(controller_->RepositoryDelete(req));
     auto root = body.as_object().value();
 
     EXPECT_EQ(
         root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
         DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->repository_delete_called);
-    EXPECT_EQ(fake_svc_->last_repository_entry_id, 123);
 }
 
 TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRename_Forwarded)
 {
+    SeedInitializedWithTask();
+    const auto entry_id = SeedRepositoryEntry();
+    ASSERT_GE(entry_id, 0);
     auto req = MakeRequest(
-        "/api/v1/scheduler/0/repository/entries/42/rename",
+        "/api/v1/scheduler/0/repository/entries/" + std::to_string(entry_id)
+            + "/rename",
         R"({"displayName":"Renamed"})",
-        {{"profile", "0"}, {"entryId", "42"}});
+        {{"profile", "0"}, {"entryId", std::to_string(entry_id)}});
     auto body = ReleaseJson(controller_->RepositoryRename(req));
     auto root = body.as_object().value();
 
@@ -11826,12 +11566,7 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRename_Forwarded)
     ASSERT_TRUE(data.has_value());
     EXPECT_EQ(
         (*data)[std::string_view("displayName")].as_string().value_or(""),
-        std::string_view("renamed repository entry"));
-    EXPECT_TRUE(fake_svc_->repository_rename_called);
-    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
-    EXPECT_NE(
-        fake_svc_->last_repository_request_json.find("displayName"),
-        std::string::npos);
+        std::string_view("Renamed"));
 }
 
 TEST_F(
@@ -11857,9 +11592,6 @@ TEST_F(
         (*rename_body.as_object())[std::string_view("code")].as_sint().value_or(
             DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
-
-    EXPECT_FALSE(fake_svc_->repository_delete_called);
-    EXPECT_FALSE(fake_svc_->repository_rename_called);
 }
 
 TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryEntryId_Rejected)
@@ -11883,9 +11615,6 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryEntryId_Rejected)
         (*rename_body.as_object())[std::string_view("code")].as_sint().value_or(
             DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
-
-    EXPECT_FALSE(fake_svc_->repository_delete_called);
-    EXPECT_FALSE(fake_svc_->repository_rename_called);
 }
 
 TEST_F(
@@ -11901,7 +11630,6 @@ TEST_F(
         (*body.as_object())[std::string_view("code")].as_sint().value_or(
             DAS_S_OK),
         DAS_E_INVALID_JSON);
-    EXPECT_FALSE(fake_svc_->repository_rename_called);
 }
 
 TEST_F(
@@ -11917,115 +11645,129 @@ TEST_F(
         (*body.as_object())[std::string_view("code")].as_sint().value_or(
             DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->repository_rename_called);
 }
 
+// 服务错误映射（真实链）：对不存在的条目 delete，真实调度器返回
+// DAS_E_NOT_FOUND——控制器把它包装为错误封套（code 原样透传）。
 TEST_F(
     SchedulerControllerTest,
     SchedulerControllerRepositoryDelete_ServiceError)
 {
-    fake_svc_->next_result = DAS_E_FAIL;
+    SeedInitializedWithTask();
     auto req = MakeRequest(
-        "/api/v1/scheduler/0/repository/entries/42/delete",
+        "/api/v1/scheduler/0/repository/entries/424242/delete",
         "{}",
-        {{"profile", "0"}, {"entryId", "42"}});
+        {{"profile", "0"}, {"entryId", "424242"}});
     auto body = ReleaseJson(controller_->RepositoryDelete(req));
 
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value_or(
             DAS_S_OK),
-        DAS_E_FAIL);
-    EXPECT_TRUE(fake_svc_->repository_delete_called);
-    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+        DAS_E_NOT_FOUND);
 }
 
+// 服务错误映射（真实链）：对不存在的条目 rename，真实调度器返回
+// errorKind 封套——控制器翻译为 code=DAS_E_FAIL + data 原样。
 TEST_F(
     SchedulerControllerTest,
     SchedulerControllerRepositoryRename_ServiceError)
 {
-    fake_svc_->next_result = DAS_E_FAIL;
+    SeedInitializedWithTask();
     auto req = MakeRequest(
-        "/api/v1/scheduler/0/repository/entries/42/rename",
+        "/api/v1/scheduler/0/repository/entries/424242/rename",
         R"({"displayName":"Renamed"})",
-        {{"profile", "0"}, {"entryId", "42"}});
+        {{"profile", "0"}, {"entryId", "424242"}});
     auto body = ReleaseJson(controller_->RepositoryRename(req));
 
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value_or(
             DAS_S_OK),
         DAS_E_FAIL);
-    EXPECT_TRUE(fake_svc_->repository_rename_called);
-    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+    auto data = (*body.as_object())[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_TRUE(data->contains(std::string_view("errorKind")));
 }
 
+// 条目 authoring 端点（真实链）：条目绑定的任务类型属未加载插件
+// （test-registered 特征无插件清单），真实链在能力解析前先被插件可用性
+// 门拒绝——errorKind=pluginUnavailable，控制器透传 errorKind 封套。
 TEST_F(
     SchedulerControllerTest,
     SchedulerControllerRepositoryAuthoringGet_Forwarded)
 {
+    SeedInitializedWithTask();
+    const auto entry_id = SeedRepositoryEntry();
+    ASSERT_GE(entry_id, 0);
     auto req = MakeRequest(
-        "/api/v1/scheduler/0/repository/entries/42/authoring/get",
+        "/api/v1/scheduler/0/repository/entries/" + std::to_string(entry_id)
+            + "/authoring/get",
         R"({"view":"default"})",
-        {{"profile", "0"}, {"entryId", "42"}});
+        {{"profile", "0"}, {"entryId", std::to_string(entry_id)}});
     auto body = ReleaseJson(controller_->RepositoryAuthoringGet(req));
     auto root = body.as_object().value();
 
     EXPECT_EQ(
-        root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
-        DAS_S_OK);
+        root[std::string_view("code")].as_sint().value_or(DAS_S_OK),
+        DAS_E_FAIL);
     auto data = root[std::string_view("data")].as_object();
     ASSERT_TRUE(data.has_value());
-    EXPECT_TRUE(data->contains(std::string_view("document")));
-    EXPECT_TRUE(fake_svc_->repository_authoring_get_called);
-    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+    EXPECT_EQ(
+        (*data)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("pluginUnavailable"));
 }
 
 TEST_F(
     SchedulerControllerTest,
     SchedulerControllerRepositoryAuthoringApply_Forwarded)
 {
+    SeedInitializedWithTask();
+    const auto entry_id = SeedRepositoryEntry();
+    ASSERT_GE(entry_id, 0);
     auto req = MakeRequest(
-        "/api/v1/scheduler/0/repository/entries/42/authoring/apply",
+        "/api/v1/scheduler/0/repository/entries/" + std::to_string(entry_id)
+            + "/authoring/apply",
         R"({"baseRevision":0,"kind":"setValue","payload":{}})",
-        {{"profile", "0"}, {"entryId", "42"}});
+        {{"profile", "0"}, {"entryId", std::to_string(entry_id)}});
     auto body = ReleaseJson(controller_->RepositoryAuthoringApply(req));
     auto root = body.as_object().value();
 
     EXPECT_EQ(
-        root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
-        DAS_S_OK);
-    EXPECT_TRUE(fake_svc_->repository_authoring_apply_called);
-    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
-    EXPECT_NE(
-        fake_svc_->last_repository_request_json.find("baseRevision"),
-        std::string::npos);
+        root[std::string_view("code")].as_sint().value_or(DAS_S_OK),
+        DAS_E_FAIL);
+    auto data = root[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_EQ(
+        (*data)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("pluginUnavailable"));
 }
 
+// 真实链 compile：无 authoring capability 的条目同样走 errorKind 封套
+// （compiledSnapshot wire 族已整体退役——错误形状下无快照键是构造性的）。
 TEST_F(
     SchedulerControllerTest,
     SchedulerControllerRepositoryCompile_PreviewOnly)
 {
+    SeedInitializedWithTask();
+    const auto entry_id = SeedRepositoryEntry();
+    ASSERT_GE(entry_id, 0);
     auto req = MakeRequest(
-        "/api/v1/scheduler/0/repository/entries/42/authoring/compile",
+        "/api/v1/scheduler/0/repository/entries/" + std::to_string(entry_id)
+            + "/authoring/compile",
         R"({"mode":"preview"})",
-        {{"profile", "0"}, {"entryId", "42"}});
+        {{"profile", "0"}, {"entryId", std::to_string(entry_id)}});
     auto body = ReleaseJson(controller_->RepositoryAuthoringCompile(req));
     auto root = body.as_object().value();
 
     EXPECT_EQ(
-        root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
-        DAS_S_OK);
+        root[std::string_view("code")].as_sint().value_or(DAS_S_OK),
+        DAS_E_FAIL);
     auto data = root[std::string_view("data")].as_object();
     ASSERT_TRUE(data.has_value());
-    EXPECT_TRUE(data->contains(std::string_view("entryId")));
-    EXPECT_TRUE(data->contains(std::string_view("canExecute")));
-    EXPECT_TRUE(data->contains(std::string_view("summary")));
-    EXPECT_TRUE(data->contains(std::string_view("diagnostics")));
+    EXPECT_TRUE(data->contains(std::string_view("errorKind")));
     const auto child_snapshot_key = std::string{"childExecution"} + "Snapshot";
     const auto execution_snapshot_key = std::string{"execution"} + "Snapshot";
     EXPECT_FALSE(data->contains(std::string_view(child_snapshot_key)));
     EXPECT_FALSE(data->contains(std::string_view(execution_snapshot_key)));
-    EXPECT_TRUE(fake_svc_->repository_compile_called);
-    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
 }
 
 TEST_F(
@@ -12064,10 +11806,6 @@ TEST_F(
             .as_sint()
             .value_or(DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
-
-    EXPECT_FALSE(fake_svc_->repository_authoring_get_called);
-    EXPECT_FALSE(fake_svc_->repository_authoring_apply_called);
-    EXPECT_FALSE(fake_svc_->repository_compile_called);
 }
 
 TEST_F(
@@ -12106,10 +11844,6 @@ TEST_F(
             .as_sint()
             .value_or(DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
-
-    EXPECT_FALSE(fake_svc_->repository_authoring_get_called);
-    EXPECT_FALSE(fake_svc_->repository_authoring_apply_called);
-    EXPECT_FALSE(fake_svc_->repository_compile_called);
 }
 
 TEST_F(
@@ -12148,10 +11882,6 @@ TEST_F(
             .as_sint()
             .value_or(DAS_S_OK),
         DAS_E_INVALID_JSON);
-
-    EXPECT_FALSE(fake_svc_->repository_authoring_get_called);
-    EXPECT_FALSE(fake_svc_->repository_authoring_apply_called);
-    EXPECT_FALSE(fake_svc_->repository_compile_called);
 }
 
 TEST_F(
@@ -12190,56 +11920,50 @@ TEST_F(
             .as_sint()
             .value_or(DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
-
-    EXPECT_FALSE(fake_svc_->repository_authoring_get_called);
-    EXPECT_FALSE(fake_svc_->repository_authoring_apply_called);
-    EXPECT_FALSE(fake_svc_->repository_compile_called);
 }
 
+// 服务错误映射（真实链）：对不存在的条目 compile，真实调度器返回
+// errorKind 封套——code=DAS_E_FAIL + data 原样。
 TEST_F(
     SchedulerControllerTest,
     SchedulerControllerRepositoryCompile_ServiceError)
 {
-    fake_svc_->next_result = DAS_E_FAIL;
+    SeedInitializedWithTask();
     auto req = MakeRequest(
-        "/api/v1/scheduler/0/repository/entries/42/authoring/compile",
+        "/api/v1/scheduler/0/repository/entries/424242/authoring/compile",
         R"({"mode":"preview"})",
-        {{"profile", "0"}, {"entryId", "42"}});
+        {{"profile", "0"}, {"entryId", "424242"}});
     auto body = ReleaseJson(controller_->RepositoryAuthoringCompile(req));
 
     EXPECT_EQ(
         (*body.as_object())[std::string_view("code")].as_sint().value_or(
             DAS_S_OK),
         DAS_E_FAIL);
-    EXPECT_TRUE(fake_svc_->repository_compile_called);
-    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+    auto data = (*body.as_object())[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_TRUE(data->contains(std::string_view("errorKind")));
 }
 
 // ── Non-initialize paths do not load scheduler plugins ──
 
 TEST_F(SchedulerControllerTest, NonInitializePaths_DelegateOnly)
 {
-    // Start, Stop, Get, DeleteTask, UpdateTaskProperties,
-    // UpdateTaskInternalProperties only delegate to the service.
-    // They never call Initialize.
+    // Start, Stop, Get only delegate to the service.
+    // They never call Initialize（真实调度器：调度器保持未初始化态）。
 
     auto start_req =
         MakeRequest("/api/scheduler/0/start", "{}", {{"profile", "0"}});
     controller_->Start(start_req);
-    EXPECT_TRUE(fake_svc_->start_called);
-    EXPECT_FALSE(fake_svc_->initialize_called);
 
     auto stop_req =
         MakeRequest("/api/scheduler/0/stop", "{}", {{"profile", "0"}});
     controller_->Stop(stop_req);
-    EXPECT_TRUE(fake_svc_->stop_called);
-    EXPECT_FALSE(fake_svc_->initialize_called);
 
     auto get_req =
         MakeRequest("/api/scheduler/0/get", "{}", {{"profile", "0"}});
     controller_->Get(get_req);
-    EXPECT_TRUE(fake_svc_->get_called);
-    EXPECT_FALSE(fake_svc_->initialize_called);
+
+    EXPECT_FALSE(scheduler_->IsInitialized());
 }
 
 TEST(ProfileControllerTest, GetPluginSettings_SFalseReportsEmptyObjectRecovery)

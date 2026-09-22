@@ -50,6 +50,12 @@ public:
     /// 借用内部拥有的 IPC context（裸指针，生命周期随本对象）
     DAS::Core::IPC::MainProcess::IIpcContext* GetIpcContext() const;
 
+    /// 借用内部拥有的具体调度器服务（引用，生命周期随本对象）。主进程
+    /// HTTP 直连装配用：DasHttp 控制器进程内直连具体类，不经调度器接口
+    /// 面（该接口已定退役）。跨 DLL 消费经 BorrowSchedulerService 导出
+    /// 入口（CoreServicesBorrow.h），不直接暴露本类。
+    Das::Core::TaskScheduler::SchedulerService& SchedulerServiceInstance();
+
 private:
     DasResult ShutdownCoreRuntime() noexcept;
 
