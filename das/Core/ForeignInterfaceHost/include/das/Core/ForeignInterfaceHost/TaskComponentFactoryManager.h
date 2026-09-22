@@ -87,9 +87,10 @@ public:
         Das::PluginInterface::IDasTaskComponent** pp_out_component);
 
     /// 本尊 host 的借用访问（host_ 语义不变）：供 PluginManager 在加载
-    /// 插件包时经 IDasPluginPackage::SetTaskComponentHost 注入给包。
+    /// 插件包时经 IDasPluginPackage::SetTaskComponentCreator 注入给包。
     [[nodiscard]]
-    Das::PluginInterface::IDasTaskComponentHost* GetTaskComponentHost() const;
+    Das::PluginInterface::IDasTaskComponentCreator* GetTaskComponentCreator()
+        const;
 
     /// 注入主进程 IPC 上下文：host 本尊随即显式注册进 DOM（显式 pin，
     /// 作为停机链确定性注销的记账锚点）。未注入时注册/注销链全部跳过。
@@ -145,9 +146,9 @@ private:
         yyjson::value definition{};
     };
 
-    DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
-    std::unordered_map<DasGuid, FactoryEntry>           factories_;
-    std::unordered_map<DasGuid, ComponentRoute>         routes_;
+    DasPtr<Das::PluginInterface::IDasTaskComponentCreator> host_;
+    std::unordered_map<DasGuid, FactoryEntry>              factories_;
+    std::unordered_map<DasGuid, ComponentRoute>            routes_;
 
     // 注入的主进程 IPC 上下文（共享引用保证注销时 DOM 仍存活；
     // 注入前为空）

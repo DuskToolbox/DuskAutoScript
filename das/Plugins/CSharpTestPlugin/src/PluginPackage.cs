@@ -8,7 +8,7 @@ public sealed class PluginPackage : IDasPluginPackage
 {
     private readonly Component component = new();
     private readonly ComponentFactory componentFactory;
-    private IDasTaskComponentHost? taskComponentHost;
+    private IDasTaskComponentCreator? taskComponentHost;
 
     public PluginPackage()
     {
@@ -51,7 +51,7 @@ public sealed class PluginPackage : IDasPluginPackage
         return (DasResult.DAS_S_OK, componentFactory);
     }
 
-    public override DasResult SetTaskComponentHost(IDasTaskComponentHost host)
+    public override DasResult SetTaskComponentCreator(IDasTaskComponentCreator host)
     {
         taskComponentHost = host;
         return DasResult.DAS_S_OK;

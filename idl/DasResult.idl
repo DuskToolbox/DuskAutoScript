@@ -50,11 +50,11 @@ errorcode DasResult {
     DAS_E_CSHARP_COM_CLR_INIT_FAILED = -1073750047,
     DAS_E_CSHARP_ENTRYPOINT_MISSING = -1073750048,
     DAS_E_CSHARP_PLUGIN_INIT_FAILED = -1073750049,
-    // 何时返回：creator（TaskComponentHost）的 entryId→条目解析后端
+    // 何时返回：creator（TaskComponentCreator）的 entryId→条目解析后端
     // 未注入时，ResolveRepositoryEntry 返回本码（初始化期 SchedulerService
     // 负责注入；缺注入=主进程装配缺口，遇缺即错零兜底）。
     DAS_E_REPOSITORY_ENTRY_RESOLVER_MISSING = -1073750050,
-    // 何时返回：creator（TaskComponentHost）的任务类型→会话工厂解析后端
+    // 何时返回：creator（TaskComponentCreator）的任务类型→会话工厂解析后端
     // 未注入时，CreateAuthoringSession 返回本码（同上，具名显性错）。
     DAS_E_AUTHORING_SESSION_RESOLVER_MISSING = -1073750051,
     DAS_E_CSHARP_MANIFEST_INVALID = -1073800000,

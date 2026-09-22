@@ -8,7 +8,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/PathText.h>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentCreator.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -185,7 +185,7 @@ namespace
     // 最小 creator 替身：两法均具名拒（本组用例只断言指针携带，不驱动
     // 会话行为）。
     class NullCreatorHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
               NullCreatorHost>
     {
     public:

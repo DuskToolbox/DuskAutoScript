@@ -2977,7 +2977,7 @@ namespace Das::Core::TaskScheduler
             initialized_ = true;
         }
 
-        // 一次性搬家费：creator（TaskComponentHost）后端两条解析
+        // 一次性搬家费：creator（TaskComponentCreator）后端两条解析
         // 能力注入——数据源本就在 SchedulerService（条目存储+能力注册
         // 表），经函数对象倒置依赖，ForeignInterfaceHost 不 include
         // TaskScheduler 头。① entryId→条目最小字段集（逻辑原

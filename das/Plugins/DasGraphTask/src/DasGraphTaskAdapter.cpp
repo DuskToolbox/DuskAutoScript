@@ -427,8 +427,8 @@ namespace Plugins::DasGraphTask
     } // namespace
 
     DasGraphTaskAdapter::DasGraphTaskAdapter(
-        PluginInterface::IDasTaskComponentHost* p_host)
-        : host_(DasPtr<PluginInterface::IDasTaskComponentHost>(p_host))
+        PluginInterface::IDasTaskComponentCreator* p_host)
+        : host_(DasPtr<PluginInterface::IDasTaskComponentCreator>(p_host))
     {
     }
 

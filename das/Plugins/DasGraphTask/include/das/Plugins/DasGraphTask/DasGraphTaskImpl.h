@@ -39,12 +39,12 @@ namespace Das::Plugins::DasGraphTask
         : public Das::PluginInterface::DasTaskComponentImplBase<
               DasGraphTaskImpl>
     {
-        std::string                                         last_error_;
-        DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
+        std::string                                            last_error_;
+        DasPtr<Das::PluginInterface::IDasTaskComponentCreator> host_;
 
     public:
         explicit DasGraphTaskImpl(
-            Das::PluginInterface::IDasTaskComponentHost* p_host);
+            Das::PluginInterface::IDasTaskComponentCreator* p_host);
 
         // --- IDasTaskComponent interface ---
         DAS_IMPL GetGuid(DasGuid* p_out_guid) override;

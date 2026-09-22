@@ -32,12 +32,12 @@ namespace Plugins::DasGraphTask
               DasGraphTaskAuthoringSessionFactory>
     {
     public:
-        /// p_creator 为 creator（TaskComponentHost）借用指针——非 begin/end
+        /// p_creator 为 creator（TaskComponentCreator）借用指针——非 begin/end
         /// 分支创建的会话经它携带编译期注入通道（D-07；照
-        /// DasGraphTaskComponentFactory{GetTaskComponentHost()} 构造注入
+        /// DasGraphTaskComponentFactory{GetTaskComponentCreator()} 构造注入
         /// 先例，本尊生命周期由 PluginPackage 的 host_ 保证）。
         explicit DasGraphTaskAuthoringSessionFactory(
-            PluginInterface::IDasTaskComponentHost* p_creator)
+            PluginInterface::IDasTaskComponentCreator* p_creator)
             : creator_(p_creator)
         {
         }
@@ -49,7 +49,7 @@ namespace Plugins::DasGraphTask
             override;
 
     private:
-        PluginInterface::IDasTaskComponentHost* creator_ = nullptr;
+        PluginInterface::IDasTaskComponentCreator* creator_ = nullptr;
     };
 } // namespace Plugins::DasGraphTask
 DAS_NS_END

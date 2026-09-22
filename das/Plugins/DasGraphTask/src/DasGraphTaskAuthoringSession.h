@@ -56,11 +56,11 @@ namespace Plugins::DasGraphTask
     public:
         /// Create a session seeded from a context JSON string. The context may
         /// be a formSequence doc, a graph doc, or empty. p_creator 为 creator
-        /// （TaskComponentHost）借用指针——随会话下传给 Core 供编译路径开
+        /// （TaskComponentCreator）借用指针——随会话下传给 Core 供编译路径开
         /// 被引条目会话（D-07；nullptr = 不携带）。
         explicit DasGraphTaskAuthoringSession(
-            std::string                             context_json,
-            PluginInterface::IDasTaskComponentHost* p_creator = nullptr);
+            std::string                                context_json,
+            PluginInterface::IDasTaskComponentCreator* p_creator = nullptr);
         ~DasGraphTaskAuthoringSession() override;
 
         DasGraphTaskAuthoringSession(const DasGraphTaskAuthoringSession&) =

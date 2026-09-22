@@ -21,7 +21,7 @@ DAS_NS_BEGIN
 namespace
 {
     // 跨 host 测试约定的 component guid：与 IpcTestPlugin1 侧的同名常量
-    // 逐字节一致（TestTaskComponentHostFeature 只认这个 guid）。
+    // 逐字节一致（TestTaskComponentCreatorFeature 只认这个 guid）。
     constexpr DasGuid IPC_HELD_TASK_COMPONENT_GUID{
         0x26B2F2BC,
         0xFC73,
@@ -272,9 +272,9 @@ DasResult EchoTaskComponent::Do(
     return DAS_E_NO_IMPLEMENTATION;
 }
 
-// === TestTaskComponentHostFeature ===
+// === TestTaskComponentCreatorFeature ===
 
-DasResult TestTaskComponentHostFeature::CreateTaskComponent(
+DasResult TestTaskComponentCreatorFeature::CreateTaskComponent(
     const DasGuid&                       component_guid,
     PluginInterface::IDasTaskComponent** pp_out_component)
 {
@@ -295,7 +295,7 @@ DasResult TestTaskComponentHostFeature::CreateTaskComponent(
     return DAS_S_OK;
 }
 
-DasResult TestTaskComponentHostFeature::CreateAuthoringSession(
+DasResult TestTaskComponentCreatorFeature::CreateAuthoringSession(
     const DasGuid&                              task_guid,
     Das::ExportInterface::IDasJson*             p_context_json,
     PluginInterface::IDasTaskAuthoringSession** pp_out_session)
@@ -329,7 +329,7 @@ DasResult IpcTestPlugin2::EnumFeature(
 
     if (index == 1)
     {
-        // feature 对象实现 IDasTaskComponentHost——现有 feature 枚举里
+        // feature 对象实现 IDasTaskComponentCreator——现有 feature 枚举里
         // 最贴近"提供 task component 创建能力"的取值。
         *p_out_feature =
             PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
@@ -358,10 +358,11 @@ DasResult IpcTestPlugin2::CreateFeatureInterface(
 
     if (index == 1)
     {
-        auto* host_feature = new TestTaskComponentHostFeature();
+        auto* host_feature = new TestTaskComponentCreatorFeature();
         host_feature->AddRef();
         *pp_out_interface =
-            static_cast<PluginInterface::IDasTaskComponentHost*>(host_feature);
+            static_cast<PluginInterface::IDasTaskComponentCreator*>(
+                host_feature);
         return DAS_S_OK;
     }
 

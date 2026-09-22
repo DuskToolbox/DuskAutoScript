@@ -10,16 +10,16 @@ namespace Das::Plugins::DasGraphTask
 {
 
     // 工厂经构造参数持有 host（包在 CreateFeatureInterface 时以
-    // GetTaskComponentHost() 注入——包自有存储由加载器先于枚举写入）。
+    // GetTaskComponentCreator() 注入——包自有存储由加载器先于枚举写入）。
     class DasGraphTaskComponentFactory final
         : public Das::PluginInterface::DasTaskComponentFactoryImplBase<
               DasGraphTaskComponentFactory>
     {
-        DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
+        DasPtr<Das::PluginInterface::IDasTaskComponentCreator> host_;
 
     public:
         explicit DasGraphTaskComponentFactory(
-            Das::PluginInterface::IDasTaskComponentHost* p_host);
+            Das::PluginInterface::IDasTaskComponentCreator* p_host);
 
         DAS_IMPL CreateComponent(
             const DasGuid&                            component_guid,
@@ -31,7 +31,7 @@ namespace Das::Plugins::DasGraphTask
         : public Das::PluginInterface::DasPluginPackageImplBase<
               DasGraphTaskPluginPackage>
     {
-        DasPtr<Das::PluginInterface::IDasTaskComponentHost>
+        DasPtr<Das::PluginInterface::IDasTaskComponentCreator>
             task_component_host_;
 
     public:
@@ -46,16 +46,16 @@ namespace Das::Plugins::DasGraphTask
             IDasBase** pp_out_interface) override;
 
         // 存储加载器注入的 task component host（顺序契约：注入先于枚举）。
-        DAS_IMPL SetTaskComponentHost(
-            Das::PluginInterface::IDasTaskComponentHost* p_host) override
+        DAS_IMPL SetTaskComponentCreator(
+            Das::PluginInterface::IDasTaskComponentCreator* p_host) override
         {
             task_component_host_ =
-                DasPtr<Das::PluginInterface::IDasTaskComponentHost>(p_host);
+                DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(p_host);
             return DAS_S_OK;
         }
 
-        Das::PluginInterface::IDasTaskComponentHost* GetTaskComponentHost()
-            const
+        Das::PluginInterface::IDasTaskComponentCreator*
+        GetTaskComponentCreator() const
         {
             return task_component_host_.Get();
         }

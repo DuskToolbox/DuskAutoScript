@@ -270,12 +270,12 @@ public:
     /// the manifest path is unbound or unresolved.
     void SetPortSurfaceProvider(ComponentPortSurfaceProvider provider);
 
-    /// Bind the creator（TaskComponentHost）借用指针——引用闭包注入 pass
+    /// Bind the creator（TaskComponentCreator）借用指针——引用闭包注入 pass
     /// 经它开被引条目的 authoring 会话。creator 解析次序：
     /// ① 显式绑定（会话编译路径 state 携带）；② factory_manager_->
-    /// GetTaskComponentHost()（执行编译路径，零新增持有物）。借用仅活在
+    /// GetTaskComponentCreator()（执行编译路径，零新增持有物）。借用仅活在
     /// 同步 Compile 调用期间——与 BindNodeFaces 同款前提。
-    void BindCreator(Das::PluginInterface::IDasTaskComponentHost* p_creator);
+    void BindCreator(Das::PluginInterface::IDasTaskComponentCreator* p_creator);
 
     /// Bind the injected document type registry (the types[] array riding
     /// the entryFaces context key — the same registry source the graph-view
@@ -457,9 +457,9 @@ private:
     // names (the bound-entry judgment's data source).
     RepositoryFieldMap repository_fields_;
 
-    // Borrowed creator（TaskComponentHost）——注入 pass 的会话工厂解析
+    // Borrowed creator（TaskComponentCreator）——注入 pass 的会话工厂解析
     // 门（nullptr = 走 factory_manager_ 的 host 或 pass 不可达）。
-    Das::PluginInterface::IDasTaskComponentHost* creator_ = nullptr;
+    Das::PluginInterface::IDasTaskComponentCreator* creator_ = nullptr;
 
     // 注入 pass（单次 Compile 生命周期）的产物：pass 现算的节点口面
     // （node_id → 文档根 ports 自述）与产物广播绑定文本（node_id →

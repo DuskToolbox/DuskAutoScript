@@ -55,8 +55,8 @@ namespace Das::Plugins::DasGraphTask
     // === DasGraphTaskComponentFactory ===
 
     DasGraphTaskComponentFactory::DasGraphTaskComponentFactory(
-        Das::PluginInterface::IDasTaskComponentHost* p_host)
-        : host_(DasPtr<Das::PluginInterface::IDasTaskComponentHost>(p_host))
+        Das::PluginInterface::IDasTaskComponentCreator* p_host)
+        : host_(DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(p_host))
     {
     }
 
@@ -191,7 +191,7 @@ namespace Das::Plugins::DasGraphTask
                 // TASK -> IDasTask: the Scheduler top-level executor and the
                 // entry by which das.graph appears in availableTaskTypes.
                 // host 经构造注入（包默认存储）。
-                auto* task = new DasGraphTaskAdapter{GetTaskComponentHost()};
+                auto* task = new DasGraphTaskAdapter{GetTaskComponentCreator()};
                 task->AddRef();
                 *pp_out_interface =
                     static_cast<Das::PluginInterface::IDasTask*>(task);
@@ -205,7 +205,7 @@ namespace Das::Plugins::DasGraphTask
                 // creator 经构造注入（包默认存储 host_——D-07 会话编译路径
                 // 的注入通道来源）。
                 auto* factory = new DasGraphTaskAuthoringSessionFactory{
-                    GetTaskComponentHost()};
+                    GetTaskComponentCreator()};
                 factory->AddRef();
                 *pp_out_interface = static_cast<
                     Das::PluginInterface::IDasTaskAuthoringSessionFactory*>(
@@ -217,7 +217,7 @@ namespace Das::Plugins::DasGraphTask
                 // TASK_COMPONENT_FACTORY: existing graph-node component path;
                 // host 经构造注入（包默认存储）。
                 auto* factory =
-                    new DasGraphTaskComponentFactory{GetTaskComponentHost()};
+                    new DasGraphTaskComponentFactory{GetTaskComponentCreator()};
                 factory->AddRef();
                 *pp_out_interface = static_cast<
                     Das::PluginInterface::IDasTaskComponentFactory*>(factory);

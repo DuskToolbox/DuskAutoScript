@@ -142,24 +142,24 @@ namespace Das::IPC::Test
             return DAS_E_OUT_OF_RANGE;
         }
 
-        DasResult SetTaskComponentHost(
-            Das::PluginInterface::IDasTaskComponentHost* p_host) override
+        DasResult SetTaskComponentCreator(
+            Das::PluginInterface::IDasTaskComponentCreator* p_host) override
         {
             task_component_host_ =
-                Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+                Das::DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
                     p_host);
             return DAS_S_OK;
         }
 
-        Das::PluginInterface::IDasTaskComponentHost* GetTaskComponentHost()
-            const
+        Das::PluginInterface::IDasTaskComponentCreator*
+        GetTaskComponentCreator() const
         {
             return task_component_host_.Get();
         }
 
     private:
         std::atomic<uint32_t> ref_count_{1};
-        Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>
+        Das::DasPtr<Das::PluginInterface::IDasTaskComponentCreator>
             task_component_host_;
     };
 

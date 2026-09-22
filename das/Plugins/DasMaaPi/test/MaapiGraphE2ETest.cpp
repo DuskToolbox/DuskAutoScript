@@ -10,7 +10,7 @@
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentCreator.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <string>
@@ -73,12 +73,12 @@ namespace
         ~ScopedBoundaryHook() { SetMaaApiBoundaryForTest(nullptr); }
     };
 
-    // ---- MockTaskComponentHost ----
+    // ---- MockTaskComponentCreator ----
     // RepositoryInvoke 节点用真实 FlowControl 组件实现（host 注入本 mock，
     // 供其创建子组件）；maapi run 组件为被测对象本体。
 
     class MaapiMockHost final
-        : public PluginInterface::DasTaskComponentHostImplBase<MaapiMockHost>
+        : public PluginInterface::DasTaskComponentCreatorImplBase<MaapiMockHost>
     {
     public:
         DasResult CreateTaskComponent(
@@ -104,7 +104,7 @@ namespace
             {
                 auto* component = new DasFlowControlTaskComponent(
                     REPOSITORY_INVOKE_KIND,
-                    DasPtr<PluginInterface::IDasTaskComponentHost>(this));
+                    DasPtr<PluginInterface::IDasTaskComponentCreator>(this));
                 component->AddRef();
                 *pp_out_component = component;
                 return DAS_S_OK;

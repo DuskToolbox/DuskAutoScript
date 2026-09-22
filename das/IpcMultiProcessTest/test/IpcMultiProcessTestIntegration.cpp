@@ -916,7 +916,7 @@ namespace
         }
         const DAS::DasPtr<IDasBase> host_from_b =
             DAS::DasPtr<IDasBase>::Attach(host_from_b_raw);
-        DAS::DasPtr<DAS::PluginInterface::IDasTaskComponentHost>
+        DAS::DasPtr<DAS::PluginInterface::IDasTaskComponentCreator>
             task_component_host_from_b;
         result = host_from_b.As(task_component_host_from_b.Put());
         if (DAS::IsFailed(result))
@@ -925,8 +925,8 @@ namespace
         }
 
         // [in] 通道：递入 pluginA，hostA 物化 target=hostB 的跨 host 代理。
-        result =
-            package_a->SetTaskComponentHost(task_component_host_from_b.Get());
+        result = package_a->SetTaskComponentCreator(
+            task_component_host_from_b.Get());
         if (DAS::IsFailed(result))
         {
             return result;
@@ -3166,7 +3166,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         const DAS::DasPtr<IDasBase> host_from_b =
             DAS::DasPtr<IDasBase>::Attach(host_from_b_raw);
         ASSERT_NE(host_from_b.Get(), nullptr);
-        DAS::DasPtr<DAS::PluginInterface::IDasTaskComponentHost>
+        DAS::DasPtr<DAS::PluginInterface::IDasTaskComponentCreator>
             task_component_host_from_b;
         ASSERT_EQ(host_from_b.As(task_component_host_from_b.Put()), DAS_S_OK);
 
@@ -3175,7 +3175,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         // 送达 owner，不再死信；日志捕获窗口有意从物化点之后开窗，
         // 终态由 created_count==1 断言覆盖。
         ASSERT_EQ(
-            package_a->SetTaskComponentHost(task_component_host_from_b.Get()),
+            package_a->SetTaskComponentCreator(
+                task_component_host_from_b.Get()),
             DAS_S_OK);
 
         // 注入之后取组件工厂（工厂构造递 host，组件经持有的 host 发起

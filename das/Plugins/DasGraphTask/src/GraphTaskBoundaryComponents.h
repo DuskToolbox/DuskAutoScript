@@ -60,13 +60,13 @@ namespace Das::Plugins::DasGraphTask
         : public Das::PluginInterface::DasTaskComponentImplBase<
               GraphTaskBoundaryComponent>
     {
-        std::string                                         kind_;
-        DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
+        std::string                                            kind_;
+        DasPtr<Das::PluginInterface::IDasTaskComponentCreator> host_;
 
     public:
         GraphTaskBoundaryComponent(
-            std::string_view                                    kind,
-            DasPtr<Das::PluginInterface::IDasTaskComponentHost> host);
+            std::string_view                                       kind,
+            DasPtr<Das::PluginInterface::IDasTaskComponentCreator> host);
 
         DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
         DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;

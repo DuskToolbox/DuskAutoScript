@@ -321,11 +321,11 @@ namespace
     {
     public:
         HostAwareTaskComponentFactory(
-            IDasTaskComponentHost* constructor_host,
-            DasGuid                factory_guid,
-            DasGuid                parent_component_guid,
-            DasGuid                child_component_guid)
-            : host(DasPtr<IDasTaskComponentHost>(constructor_host)),
+            IDasTaskComponentCreator* constructor_host,
+            DasGuid                   factory_guid,
+            DasGuid                   parent_component_guid,
+            DasGuid                   child_component_guid)
+            : host(DasPtr<IDasTaskComponentCreator>(constructor_host)),
               factory_guid_(factory_guid),
               parent_component_guid_(parent_component_guid),
               child_component_guid_(child_component_guid)
@@ -424,11 +424,11 @@ namespace
             return DAS_S_OK;
         }
 
-        DasPtr<IDasTaskComponentHost> host;
-        DasResult                     host_create_result = DAS_E_FAIL;
-        int                           create_call_count = 0;
-        bool                          enable_reentrant_create = false;
-        bool                          child_created_through_host = false;
+        DasPtr<IDasTaskComponentCreator> host;
+        DasResult                        host_create_result = DAS_E_FAIL;
+        int                              create_call_count = 0;
+        bool                             enable_reentrant_create = false;
+        bool                             child_created_through_host = false;
 
     private:
         DasGuid               factory_guid_;
@@ -451,7 +451,7 @@ namespace
     class HostAwareFactoryPackage final
         : public DasPluginPackageImplBase<HostAwareFactoryPackage>
     {
-        DasPtr<IDasTaskComponentHost> task_component_host_;
+        DasPtr<IDasTaskComponentCreator> task_component_host_;
 
     public:
         HostAwareFactoryPackage(
@@ -493,7 +493,7 @@ namespace
             }
 
             auto* factory = new HostAwareTaskComponentFactory(
-                GetTaskComponentHost(),
+                GetTaskComponentCreator(),
                 factory_guid_,
                 parent_component_guid_,
                 child_component_guid_);
@@ -503,13 +503,13 @@ namespace
         }
 
         DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
+        SetTaskComponentCreator(IDasTaskComponentCreator* p_host) override
         {
-            task_component_host_ = DasPtr<IDasTaskComponentHost>(p_host);
+            task_component_host_ = DasPtr<IDasTaskComponentCreator>(p_host);
             return DAS_S_OK;
         }
 
-        IDasTaskComponentHost* GetTaskComponentHost() const
+        IDasTaskComponentCreator* GetTaskComponentCreator() const
         {
             return task_component_host_.Get();
         }
@@ -565,7 +565,8 @@ namespace
             TaskComponentFactoryManager& manager_with_host,
             DAS::Core::IPC::ObjectId&    out_object_id)
         {
-            IDasBase* host_as_base = manager_with_host.GetTaskComponentHost();
+            IDasBase* host_as_base =
+                manager_with_host.GetTaskComponentCreator();
             return GetHostDom().LookupObjectIdFromPtr(
                 host_as_base,
                 out_object_id);
@@ -826,7 +827,7 @@ namespace
             parent_component_guid,
             child_component_guid);
         ASSERT_EQ(
-            package.SetTaskComponentHost(manager.GetTaskComponentHost()),
+            package.SetTaskComponentCreator(manager.GetTaskComponentCreator()),
             DAS_S_OK);
 
         DasPtr<IDasBase> factory_base;
@@ -849,7 +850,7 @@ namespace
             DAS_S_OK);
 
         ASSERT_NE(raw_factory->host.Get(), nullptr);
-        EXPECT_EQ(raw_factory->host.Get(), manager.GetTaskComponentHost());
+        EXPECT_EQ(raw_factory->host.Get(), manager.GetTaskComponentCreator());
 
         raw_factory->enable_reentrant_create = true;
         DasPtr<IDasTaskComponent> component;
@@ -890,7 +891,7 @@ namespace
             DAS_S_OK);
         EXPECT_EQ(
             resolved_host.Get(),
-            static_cast<IDasBase*>(injected_manager.GetTaskComponentHost()));
+            static_cast<IDasBase*>(injected_manager.GetTaskComponentCreator()));
 
         injected_manager.Shutdown();
     }
@@ -961,7 +962,7 @@ namespace
     {
         // 夹具自带的 manager 未注入 context：注册跳过、注销跳过、析构兜底
         // 跳过——防御分支不崩溃
-        EXPECT_NE(manager.GetTaskComponentHost(), nullptr);
+        EXPECT_NE(manager.GetTaskComponentCreator(), nullptr);
 
         DAS::Core::IPC::ObjectId host_object_id{};
         EXPECT_EQ(LookupHostObjectId(manager, host_object_id), DAS_E_NOT_FOUND)
@@ -1092,7 +1093,7 @@ namespace
         CreateAuthoringSessionWithoutBackendReturnsNamedError)
     {
         // D-03：会话工厂解析后端未注入 → 具名显性错（经 host 本尊走全链）
-        auto* host = manager.GetTaskComponentHost();
+        auto* host = manager.GetTaskComponentCreator();
         ASSERT_NE(host, nullptr);
 
         const auto                       task_guid = MakeTestGuid(0x68030061);
@@ -1143,7 +1144,7 @@ namespace
                 return DAS_S_OK;
             });
 
-        auto*                            host = manager.GetTaskComponentHost();
+        auto* host = manager.GetTaskComponentCreator();
         DasPtr<IDasTaskAuthoringSession> session;
         ASSERT_EQ(
             host->CreateAuthoringSession(task_guid, nullptr, session.Put()),

@@ -41,11 +41,11 @@ namespace Plugins::DasGraphTask
     class DasGraphTaskAdapter final
         : public PluginInterface::DasTaskImplBase<DasGraphTaskAdapter>
     {
-        DasPtr<PluginInterface::IDasTaskComponentHost> host_;
+        DasPtr<PluginInterface::IDasTaskComponentCreator> host_;
 
     public:
         explicit DasGraphTaskAdapter(
-            PluginInterface::IDasTaskComponentHost* p_host);
+            PluginInterface::IDasTaskComponentCreator* p_host);
 
         DAS_IMPL Do(
             PluginInterface::IDasStopToken* stop_token,

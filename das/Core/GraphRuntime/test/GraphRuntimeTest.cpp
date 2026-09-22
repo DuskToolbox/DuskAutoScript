@@ -19,7 +19,7 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasErrorLens.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentCreator.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -194,7 +194,8 @@ namespace GraphRuntimeTestMock
     using IDasImage = Das::ExportInterface::IDasImage;
     using IDasStopToken = Das::PluginInterface::IDasStopToken;
     using IDasTaskComponent = Das::PluginInterface::IDasTaskComponent;
-    using IDasTaskComponentHost = Das::PluginInterface::IDasTaskComponentHost;
+    using IDasTaskComponentCreator =
+        Das::PluginInterface::IDasTaskComponentCreator;
 
     // 计数型 fake IDasImage（DoAdapterTest 同款形态）：引用身份断言的对
     // 象锚点——跨 PortMap/帧/导出全程同一指针即证明引用直传。
@@ -381,10 +382,10 @@ namespace GraphRuntimeTestMock
         }
     };
 
-    // ---- Mock IDasTaskComponentHost ----
-    class MockTaskComponentHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
-              MockTaskComponentHost>
+    // ---- Mock IDasTaskComponentCreator ----
+    class MockTaskComponentCreator final
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
+              MockTaskComponentCreator>
     {
     public:
         std::vector<std::string> created_guids;
@@ -614,7 +615,7 @@ namespace GraphRuntimeTestMock
 
     // 只分派 image 源替身的 host（guid 与组件 GetGuid 的镜像一致）。
     class ImageSourceHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
               ImageSourceHost>
     {
     public:
@@ -667,7 +668,7 @@ namespace GraphRuntimeTestMock
     // 首次 CreateTaskComponent 抛异常、后续正常的 host：驱动同一 runtime
     // 实例走「异常逃逸后恢复执行」路径（graph_inputs 悬挂指针防护断言用）。
     class ThrowingOnceHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
               ThrowingOnceHost>
     {
     public:
@@ -719,14 +720,14 @@ TEST(GraphRuntimeTest, ConfigureCreatesComponents)
     auto plan =
         MakePlanWithSettings(NODE_A, COMP_A, R"({"threshold": 42})", "");
 
-    auto host = MockTaskComponentHost::Make();
+    auto host = MockTaskComponentCreator::Make();
 
     GraphRuntime rt;
     auto         hr = rt.Configure(plan, host.Get());
 
     EXPECT_EQ(hr, DAS_S_OK);
 
-    auto* mock_host = static_cast<MockTaskComponentHost*>(host.Get());
+    auto* mock_host = static_cast<MockTaskComponentCreator*>(host.Get());
     ASSERT_EQ(mock_host->created_guids.size(), 1u);
 }
 
@@ -743,7 +744,7 @@ TEST(GraphRuntimeTest, ConfigureAppliesSettings)
         R"({"threshold": 42})",
         R"({"mode": "fast"})");
 
-    auto host = MockTaskComponentHost::Make();
+    auto host = MockTaskComponentCreator::Make();
 
     GraphRuntime rt;
     EXPECT_EQ(DAS_S_OK, rt.Configure(plan, host.Get()));
@@ -765,7 +766,7 @@ TEST(GraphRuntimeTest, PrepareValidatesConfiguredComponents)
 
     // Prepare after Configure should succeed
     auto plan = MakeLinearPlan(2);
-    auto host = MockTaskComponentHost::Make();
+    auto host = MockTaskComponentCreator::Make();
 
     EXPECT_EQ(DAS_S_OK, rt.Configure(plan, host.Get()));
     EXPECT_EQ(DAS_S_OK, rt.Prepare());
@@ -797,7 +798,7 @@ TEST(GraphRuntimeTest, RunWithHostSingleExecution)
         MakeSnapshotWithPorts(NODE_A, {MakePortDef("out")}, COMP_A));
     plan.execution_order = {NODE_A};
 
-    auto host = MockTaskComponentHost::Make();
+    auto host = MockTaskComponentCreator::Make();
 
     GraphRuntime                     rt;
     const Das::DasPtr<IDasStopToken> token =
@@ -815,7 +816,7 @@ TEST(GraphRuntimeTest, RunWithHostLinearChain)
     using namespace GraphRuntimeTestMock;
     auto plan = MakeLinearPlan(3);
 
-    auto host = MockTaskComponentHost::Make();
+    auto host = MockTaskComponentCreator::Make();
 
     GraphRuntime                     rt;
     const Das::DasPtr<IDasStopToken> token =
@@ -834,7 +835,7 @@ TEST(GraphRuntimeTest, RunWithHostFingerprintMismatch)
     auto plan = MakeLinearPlan(2);
     plan.source_fingerprint = "compiled_at_v1";
 
-    auto host = MockTaskComponentHost::Make();
+    auto host = MockTaskComponentCreator::Make();
 
     GraphRuntime                     rt;
     const Das::DasPtr<IDasStopToken> token =
@@ -876,7 +877,7 @@ TEST(GraphRuntimeTest, RunWithHostEmptyGraph)
     using namespace GraphRuntimeTestMock;
     auto plan = MakeEmptyPlan();
 
-    auto host = MockTaskComponentHost::Make();
+    auto host = MockTaskComponentCreator::Make();
 
     GraphRuntime                     rt;
     const Das::DasPtr<IDasStopToken> token =
@@ -914,7 +915,7 @@ TEST(GraphRuntimeTest, RunWithHostRejectedPlanFailsClosed)
     ASSERT_TRUE(diagnostic.has_value());
     plan.diagnostics.push_back(std::move(*diagnostic));
 
-    auto host = MockTaskComponentHost::Make();
+    auto host = MockTaskComponentCreator::Make();
 
     GraphRuntime                     rt;
     const Das::DasPtr<IDasStopToken> token =
@@ -942,13 +943,13 @@ TEST(GraphRuntimeTest, V17DataSepSettingsNotInPortMap)
     auto plan =
         MakePlanWithSettings(NODE_A, COMP_A, R"({"threshold": 42})", "");
 
-    auto host = MockTaskComponentHost::Make();
+    auto host = MockTaskComponentCreator::Make();
 
     GraphRuntime rt;
     EXPECT_EQ(DAS_S_OK, rt.Configure(plan, host.Get()));
 
     // The mock component should have received settings
-    auto* mock_host = static_cast<MockTaskComponentHost*>(host.Get());
+    auto* mock_host = static_cast<MockTaskComponentCreator*>(host.Get());
     ASSERT_EQ(mock_host->created_guids.size(), 1u);
 }
 
@@ -969,7 +970,8 @@ namespace SignalGatedTestMock
     using IDasPortMap = Das::ExportInterface::IDasPortMap;
     using IDasStopToken = Das::PluginInterface::IDasStopToken;
     using IDasTaskComponent = Das::PluginInterface::IDasTaskComponent;
-    using IDasTaskComponentHost = Das::PluginInterface::IDasTaskComponentHost;
+    using IDasTaskComponentCreator =
+        Das::PluginInterface::IDasTaskComponentCreator;
 
     // Shared component GUID for every behaviour node — the host ignores it and
     // the role comes from settings, so a single GUID is enough.
@@ -1272,7 +1274,7 @@ namespace SignalGatedTestMock
     };
 
     class BehaviorHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
               BehaviorHost>
     {
     public:
@@ -2078,8 +2080,8 @@ TEST(GraphRuntimeTest, NodeIdShortFormProducesOutputPortMap)
 namespace
 {
     std::string ExecutePlanShellText(
-        Das::PluginInterface::IDasTaskComponentHost* host,
-        const CompiledGraphPlanDto&                  plan)
+        Das::PluginInterface::IDasTaskComponentCreator* host,
+        const CompiledGraphPlanDto&                     plan)
     {
         const auto shell = BuildCompiledPlanShell(yyjson::object(plan));
         const auto shell_text = Das::Utils::SerializeYyjsonValue(shell);
@@ -2143,7 +2145,7 @@ TEST(GraphRuntimeTest, ExecuteExportsBoundaryOutputValues)
     boundary_output.node_ids = {NODE_A};
     plan.boundary_ports.outputs.push_back(std::move(boundary_output));
 
-    auto       host = MockTaskComponentHost::Make();
+    auto       host = MockTaskComponentCreator::Make();
     const auto result_text = ExecutePlanShellText(host.Get(), plan);
     ASSERT_FALSE(result_text.empty());
 
@@ -2169,7 +2171,7 @@ TEST(GraphRuntimeTest, ExecuteWithoutBoundaryOutputsYieldsEmptyGraphOutputs)
     plan.node_snapshots.push_back(MakeSnapshot(NODE_A, COMP_A));
     plan.execution_order = {NODE_A};
 
-    auto       host = MockTaskComponentHost::Make();
+    auto       host = MockTaskComponentCreator::Make();
     const auto result_text = ExecutePlanShellText(host.Get(), plan);
     ASSERT_FALSE(result_text.empty());
 
@@ -2191,10 +2193,10 @@ TEST(GraphRuntimeTest, ExecuteWithoutBoundaryOutputsYieldsEmptyGraphOutputs)
 namespace
 {
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> ExecutePlanShellTyped(
-        Das::PluginInterface::IDasTaskComponentHost* host,
-        const CompiledGraphPlanDto&                  plan,
-        Das::ExportInterface::IDasReadOnlyPortMap*   graph_inputs,
-        DasResult*                                   out_hr = nullptr)
+        Das::PluginInterface::IDasTaskComponentCreator* host,
+        const CompiledGraphPlanDto&                     plan,
+        Das::ExportInterface::IDasReadOnlyPortMap*      graph_inputs,
+        DasResult*                                      out_hr = nullptr)
     {
         const auto shell = BuildCompiledPlanShell(yyjson::object(plan));
         const auto shell_text = Das::Utils::SerializeYyjsonValue(shell);
@@ -2267,7 +2269,7 @@ TEST(GraphRuntimeTest, ExecuteWithTypedIOOverridesSentinelDefault)
 
     DasResult                hr = DAS_E_FAIL;
     DAS::DasPtr<IDasPortMap> outputs;
-    auto                     host = MockTaskComponentHost::Make();
+    auto                     host = MockTaskComponentCreator::Make();
     outputs = ExecutePlanShellTyped(host.Get(), plan, graph_inputs.Get(), &hr);
     ASSERT_EQ(hr, DAS_S_OK);
     ASSERT_NE(outputs.Get(), nullptr);
@@ -2435,7 +2437,7 @@ TEST(GraphRuntimeTest, BroadcastOverlaySkipsReservedExecutionInputKey)
 
     DasResult                hr = DAS_E_FAIL;
     DAS::DasPtr<IDasPortMap> outputs;
-    auto                     host = MockTaskComponentHost::Make();
+    auto                     host = MockTaskComponentCreator::Make();
     outputs = ExecutePlanShellTyped(host.Get(), plan, graph_inputs.Get(), &hr);
     ASSERT_EQ(hr, DAS_S_OK);
     ASSERT_NE(outputs.Get(), nullptr);

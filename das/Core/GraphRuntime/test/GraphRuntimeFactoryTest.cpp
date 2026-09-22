@@ -307,8 +307,8 @@ namespace
 {
     // 最小 host 替身：Execute 的引擎管线要求非空 host；空计划不会调用
     // CreateTaskComponent（有节点时返回 NOT_FOUND）。
-    class NullServingTaskComponentHost final
-        : public Das::PluginInterface::IDasTaskComponentHost
+    class NullServingTaskComponentCreator final
+        : public Das::PluginInterface::IDasTaskComponentCreator
     {
         std::atomic<uint32_t> ref_count_{0};
 
@@ -338,11 +338,11 @@ namespace
                 AddRef();
                 return DAS_S_OK;
             }
-            if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+            if (iid
+                == DasIidOf<Das::PluginInterface::IDasTaskComponentCreator>())
             {
-                *pp_out =
-                    static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
-                        this);
+                *pp_out = static_cast<
+                    Das::PluginInterface::IDasTaskComponentCreator*>(this);
                 AddRef();
                 return DAS_S_OK;
             }
@@ -382,8 +382,8 @@ namespace
 
     DasResult ExecuteArtifactText(std::string_view artifact_utf8)
     {
-        auto host = Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-            new NullServingTaskComponentHost());
+        auto host = Das::DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+            new NullServingTaskComponentCreator());
         Das::DasPtr<IDasGraphRuntime> runtime;
         const DasResult               create_result =
             CreateGraphRuntimeWithHost(host.Get(), runtime.Put());
@@ -421,8 +421,8 @@ TEST(GraphRuntimeFactoryTest, ExecuteIncompletePlanJsonReturnsInvalidJson)
 // plan would mask the caller's assembly gap as success.
 TEST(GraphRuntimeFactoryTest, ExecuteNullArtifactReturnsInvalidArgument)
 {
-    auto host = Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-        new NullServingTaskComponentHost());
+    auto host = Das::DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+        new NullServingTaskComponentCreator());
     Das::DasPtr<IDasGraphRuntime> runtime;
     ASSERT_EQ(DAS_S_OK, CreateGraphRuntimeWithHost(host.Get(), runtime.Put()));
     Das::DasPtr<Das::ExportInterface::IDasJson> result_json;

@@ -157,8 +157,8 @@ class DasFlowControlTaskComponent final
 {
 public:
     DasFlowControlTaskComponent(
-        std::string_view                               kind,
-        DasPtr<PluginInterface::IDasTaskComponentHost> host);
+        std::string_view                                  kind,
+        DasPtr<PluginInterface::IDasTaskComponentCreator> host);
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -316,9 +316,9 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
-    std::string                                    kind_;
-    yyjson::value                                  settings_;
-    DasPtr<PluginInterface::IDasTaskComponentHost> host_;
+    std::string                                       kind_;
+    yyjson::value                                     settings_;
+    DasPtr<PluginInterface::IDasTaskComponentCreator> host_;
 
     // 注入缝：空 = 用生产实现（首次 DoLaunch 惰性安装）。
     FlowControlProcessSpawner   process_spawner_;
@@ -331,7 +331,7 @@ class DasFlowControlTaskComponentFactory final
 {
 public:
     explicit DasFlowControlTaskComponentFactory(
-        PluginInterface::IDasTaskComponentHost* p_host);
+        PluginInterface::IDasTaskComponentCreator* p_host);
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -341,7 +341,7 @@ public:
         PluginInterface::IDasTaskComponent** pp_out_component) override;
 
 private:
-    DasPtr<PluginInterface::IDasTaskComponentHost> host_;
+    DasPtr<PluginInterface::IDasTaskComponentCreator> host_;
 };
 
 DAS_NS_END

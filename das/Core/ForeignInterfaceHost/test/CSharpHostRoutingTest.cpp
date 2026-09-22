@@ -151,24 +151,24 @@ namespace
             return DAS_E_NOT_FOUND;
         }
 
-        DasResult DAS_STD_CALL SetTaskComponentHost(
-            Das::PluginInterface::IDasTaskComponentHost* p_host) override
+        DasResult DAS_STD_CALL SetTaskComponentCreator(
+            Das::PluginInterface::IDasTaskComponentCreator* p_host) override
         {
             task_component_host_ =
-                Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+                Das::DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
                     p_host);
             return DAS_S_OK;
         }
 
-        Das::PluginInterface::IDasTaskComponentHost* GetTaskComponentHost()
-            const
+        Das::PluginInterface::IDasTaskComponentCreator*
+        GetTaskComponentCreator() const
         {
             return task_component_host_.Get();
         }
 
     private:
         std::atomic<uint32_t> ref_count_{0};
-        Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>
+        Das::DasPtr<Das::PluginInterface::IDasTaskComponentCreator>
             task_component_host_;
     };
 

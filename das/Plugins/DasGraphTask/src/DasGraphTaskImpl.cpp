@@ -147,7 +147,7 @@ namespace Das::Plugins::DasGraphTask
     } // namespace
 
     DasGraphTaskImpl::DasGraphTaskImpl(
-        Das::PluginInterface::IDasTaskComponentHost* p_host)
+        Das::PluginInterface::IDasTaskComponentCreator* p_host)
         : host_(p_host)
     {
     }

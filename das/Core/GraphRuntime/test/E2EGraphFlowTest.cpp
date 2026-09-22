@@ -21,7 +21,7 @@
 #include <das/_autogen/idl/header/IDasStringVector.generated.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentCreator.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include "FlowControlErrorCodes.h"
@@ -397,7 +397,7 @@ constexpr std::string_view LAUNCH_COMPONENT_GUID_TEXT =
 constexpr std::string_view LAUNCH_KIND_TEXT = "das.flow.launch";
 
 class LaunchComponentHost final
-    : public Das::PluginInterface::DasTaskComponentHostImplBase<
+    : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
           LaunchComponentHost>
 {
 public:
@@ -426,7 +426,7 @@ public:
 
         auto* component = new Das::DasFlowControlTaskComponent(
             LAUNCH_KIND_TEXT,
-            DAS::DasPtr<Das::PluginInterface::IDasTaskComponentHost>{});
+            DAS::DasPtr<Das::PluginInterface::IDasTaskComponentCreator>{});
         if (spawner_to_inject_)
         {
             component->SetProcessSpawnerForTest(spawner_to_inject_);
@@ -667,7 +667,7 @@ private:
 // 按 component_guid 创建真实 FlowControl 组件并套计数装饰器（guid ↔ kind
 // 与 manifest 登记一一对应）。
 class FlowControlCountingHost final
-    : public Das::PluginInterface::DasTaskComponentHostImplBase<
+    : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
           FlowControlCountingHost>
 {
 public:
@@ -752,7 +752,7 @@ public:
         auto inner = Das::DasPtr<Das::PluginInterface::IDasTaskComponent>(
             new Das::DasFlowControlTaskComponent(
                 kind,
-                Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>{}));
+                Das::DasPtr<Das::PluginInterface::IDasTaskComponentCreator>{}));
         // 裸构造即持有一份引用（new 出的对象计数为 0 → 挪入 DasPtr 后归
         // 1），装饰器与宿主各自持链即可。
         auto* wrapper = new CountingTaskComponent(std::move(inner));
@@ -1306,7 +1306,7 @@ TEST_F(E2EGraphFlowTest, ScalarConstantComponentsEmitTypedValue)
         auto component = Das::DasPtr<Das::DasFlowControlTaskComponent>{
             new Das::DasFlowControlTaskComponent(
                 kind,
-                Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>{})};
+                Das::DasPtr<Das::PluginInterface::IDasTaskComponentCreator>{})};
         if (settings_text.has_value())
         {
             ApplyComponentSettingsText(component.Get(), *settings_text);
@@ -1758,7 +1758,7 @@ namespace
     };
 
     class CancelledProbeHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
               CancelledProbeHost>
     {
     public:
@@ -2219,7 +2219,7 @@ namespace
     };
 
     class InvokeTypedHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
               InvokeTypedHost>
     {
     public:
@@ -2266,7 +2266,8 @@ namespace
             {
                 auto* component = new Das::DasFlowControlTaskComponent(
                     std::string{REPOSITORY_INVOKE_KIND_TEXT},
-                    DasPtr<Das::PluginInterface::IDasTaskComponentHost>(this));
+                    DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+                        this));
                 component->AddRef();
                 *pp_out_component = component;
                 return DAS_S_OK;
@@ -2589,7 +2590,7 @@ namespace
     };
 
     class InvokeMultiValueHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
               InvokeMultiValueHost>
     {
     public:
@@ -2630,7 +2631,8 @@ namespace
             {
                 auto* component = new Das::DasFlowControlTaskComponent(
                     std::string{REPOSITORY_INVOKE_KIND_TEXT},
-                    DasPtr<Das::PluginInterface::IDasTaskComponentHost>(this));
+                    DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+                        this));
                 component->AddRef();
                 *pp_out_component = component;
                 return DAS_S_OK;
@@ -2972,7 +2974,7 @@ namespace
     // fake creator：CreateTaskComponent 造记录组件（GraphTask/begin/end
     // 三 guid 通吃），CreateAuthoringSession 造固定响应会话。
     class ReferenceChainCreatorHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
               ReferenceChainCreatorHost>
     {
     public:

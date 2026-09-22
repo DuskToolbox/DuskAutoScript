@@ -283,8 +283,8 @@ DasResult GraphRuntime::ApplyNodeSettings(
 // ===========================================================================
 
 DasResult GraphRuntime::Configure(
-    const Dto::CompiledGraphPlanDto&             plan,
-    Das::PluginInterface::IDasTaskComponentHost* p_host)
+    const Dto::CompiledGraphPlanDto&                plan,
+    Das::PluginInterface::IDasTaskComponentCreator* p_host)
 {
     last_error_.clear();
     ResetNodeComponents();
@@ -1001,11 +1001,11 @@ DasResult GraphRuntime::RunSignalGated(
 // ===========================================================================
 
 DasResult GraphRuntime::RunWithHost(
-    const Dto::CompiledGraphPlanDto&             plan,
-    const std::string&                           current_fingerprint,
-    Das::PluginInterface::IDasStopToken*         p_stop_token,
-    Das::PluginInterface::IDasTaskComponentHost* p_host,
-    Das::ExportInterface::IDasPortMap**          pp_out_typed_outputs)
+    const Dto::CompiledGraphPlanDto&                plan,
+    const std::string&                              current_fingerprint,
+    Das::PluginInterface::IDasStopToken*            p_stop_token,
+    Das::PluginInterface::IDasTaskComponentCreator* p_host,
+    Das::ExportInterface::IDasPortMap**             pp_out_typed_outputs)
 {
     last_error_.clear();
     last_executed_node_id_.clear();

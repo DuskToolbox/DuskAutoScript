@@ -39,10 +39,10 @@
 using namespace Das::Plugins::DasGraphTask;
 using DAS::DasPtr;
 
-// ---- Minimal mock for IDasTaskComponentHost ----
+// ---- Minimal mock for IDasTaskComponentCreator ----
 
-class MockTaskComponentHost final
-    : public Das::PluginInterface::IDasTaskComponentHost
+class MockTaskComponentCreator final
+    : public Das::PluginInterface::IDasTaskComponentCreator
 {
     std::atomic<uint32_t> ref_count_{0};
 
@@ -72,10 +72,11 @@ public:
             AddRef();
             return DAS_S_OK;
         }
-        if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+        if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentCreator>())
         {
             *pp_out =
-                static_cast<Das::PluginInterface::IDasTaskComponentHost*>(this);
+                static_cast<Das::PluginInterface::IDasTaskComponentCreator*>(
+                    this);
             AddRef();
             return DAS_S_OK;
         }
@@ -221,8 +222,8 @@ TEST(DasGraphTaskTest, GetGuidReturnsNonEmpty)
 
 TEST(DasGraphTaskTest, DoWithMockHostReturnsSuccessOnEmptyPlan)
 {
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-        new MockTaskComponentHost());
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+        new MockTaskComponentCreator());
     auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
 
@@ -237,8 +238,8 @@ TEST(DasGraphTaskTest, DoWithMockHostReturnsSuccessOnEmptyPlan)
 
 TEST(DasGraphTaskTest, DoStopTokenCancel)
 {
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-        new MockTaskComponentHost());
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+        new MockTaskComponentCreator());
     auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
 
@@ -308,8 +309,8 @@ TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
         DAS_S_OK);
 
     // Feed the compiled plan into Do and confirm it runs (empty plan → OK).
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-        new MockTaskComponentHost());
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+        new MockTaskComponentCreator());
     auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
 
@@ -441,7 +442,7 @@ namespace
 
     // 服务单一组件 guid 的 host 替身（记录创建次数）。
     class NodeServingHost final
-        : public Das::PluginInterface::IDasTaskComponentHost
+        : public Das::PluginInterface::IDasTaskComponentCreator
     {
     public:
         explicit NodeServingHost(DasGuid served_guid)
@@ -474,11 +475,11 @@ namespace
                 AddRef();
                 return DAS_S_OK;
             }
-            if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+            if (iid
+                == DasIidOf<Das::PluginInterface::IDasTaskComponentCreator>())
             {
-                *pp_out =
-                    static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
-                        this);
+                *pp_out = static_cast<
+                    Das::PluginInterface::IDasTaskComponentCreator*>(this);
                 AddRef();
                 return DAS_S_OK;
             }
@@ -587,7 +588,7 @@ TEST(DasGraphTaskTest, ExecutionInputPortDrivesNodeExecution)
     const auto plan_text = CompileOneNodePlanText();
     ASSERT_FALSE(plan_text.empty());
 
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
         new NodeServingHost(NodeComponentGuid()));
     auto* serving_host = static_cast<NodeServingHost*>(host.Get());
     auto  task = DasGraphTaskImpl::Make(host.Get());
@@ -615,9 +616,9 @@ TEST(DasGraphTaskTest, PackageInjectsHostIntoFactoryCreatedComponent)
 {
     auto package = DasGraphTaskPluginPackage::Make();
     ASSERT_NE(package.Get(), nullptr);
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-        new MockTaskComponentHost());
-    ASSERT_EQ(package->SetTaskComponentHost(host.Get()), DAS_S_OK);
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+        new MockTaskComponentCreator());
+    ASSERT_EQ(package->SetTaskComponentCreator(host.Get()), DAS_S_OK);
 
     DasPtr<IDasBase> feature;
     ASSERT_EQ(package->CreateFeatureInterface(2, feature.Put()), DAS_S_OK);
@@ -648,13 +649,13 @@ TEST(DasGraphTaskTest, PackageInjectedHostReachesAdapterExecution)
     const auto plan_text = CompileOneNodePlanText();
     ASSERT_FALSE(plan_text.empty());
 
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
         new NodeServingHost(NodeComponentGuid()));
     auto* serving_host = static_cast<NodeServingHost*>(host.Get());
 
     auto package = DasGraphTaskPluginPackage::Make();
     ASSERT_NE(package.Get(), nullptr);
-    ASSERT_EQ(package->SetTaskComponentHost(host.Get()), DAS_S_OK);
+    ASSERT_EQ(package->SetTaskComponentCreator(host.Get()), DAS_S_OK);
 
     DasPtr<IDasBase> feature;
     ASSERT_EQ(package->CreateFeatureInterface(0, feature.Put()), DAS_S_OK);
@@ -1260,7 +1261,7 @@ namespace
     // begin/end GUID 经真工厂实例化（manifest 双组件分派是生产身份源）；
     // 探针 GUID 走本地替身。
     class BoundaryDispatchHost final
-        : public Das::PluginInterface::IDasTaskComponentHost
+        : public Das::PluginInterface::IDasTaskComponentCreator
     {
     public:
         uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
@@ -1288,11 +1289,11 @@ namespace
                 AddRef();
                 return DAS_S_OK;
             }
-            if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+            if (iid
+                == DasIidOf<Das::PluginInterface::IDasTaskComponentCreator>())
             {
-                *pp_out =
-                    static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
-                        this);
+                *pp_out = static_cast<
+                    Das::PluginInterface::IDasTaskComponentCreator*>(this);
                 AddRef();
                 return DAS_S_OK;
             }
@@ -1508,7 +1509,7 @@ TEST(DasGraphTaskTest, PreservedBeginEndGraphExecutesAndReturnsEndValue)
     DestroyGraphAuthoringSession(state);
 
     // 执行：begin/end 经真工厂、探针本地替身；Do 返回码 == 探针产出 42。
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
         new BoundaryDispatchHost());
     auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
@@ -1623,7 +1624,7 @@ TEST(DasGraphTaskTest, TypedGraphInputDoesNotEchoThroughUnconnectedEndPorts)
 
     // 执行：graph_inputs 携带 p_1=42 与 值=5（调用方图输入 + 返回码注入
     // 探针）——end 悬空口不得回声其中任何一个。
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
         new BoundaryDispatchHost());
     auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
@@ -2025,8 +2026,8 @@ TEST(DasGraphTaskTest, ManifestDeclaresBoundaryAuthoringCapabilities)
 // map 的四类型同名键逐项转写进输出 map（类型与值逐项相等）。
 TEST(DasGraphTaskTest, BoundaryComponentTransposesTypedPorts)
 {
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-        new MockTaskComponentHost());
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+        new MockTaskComponentCreator());
     DasGraphTaskComponentFactory factory{host.Get()};
 
     DasPtr<Das::PluginInterface::IDasTaskComponent> begin_component;
@@ -2103,8 +2104,8 @@ TEST(DasGraphTaskTest, BoundaryComponentTransposesTypedPorts)
 // 输出 map 为空。
 TEST(DasGraphTaskTest, BoundaryComponentEmptyInputProducesEmptyOutput)
 {
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-        new MockTaskComponentHost());
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+        new MockTaskComponentCreator());
     DasGraphTaskComponentFactory factory{host.Get()};
 
     DasPtr<Das::PluginInterface::IDasTaskComponent> end_component;
@@ -2134,8 +2135,8 @@ TEST(DasGraphTaskTest, BoundaryComponentEmptyInputProducesEmptyOutput)
 // 全部同名落到输出 map。
 TEST(DasGraphTaskTest, BoundaryComponentTransposesEveryInputKey)
 {
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-        new MockTaskComponentHost());
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+        new MockTaskComponentCreator());
     DasGraphTaskComponentFactory factory{host.Get()};
 
     DasPtr<Das::PluginInterface::IDasTaskComponent> begin_component;
@@ -2276,7 +2277,7 @@ TEST(DasGraphTaskTest, EndValuePassthroughCarriesNegativeReturnCode)
     }
     DestroyGraphAuthoringSession(state);
 
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
         new BoundaryDispatchHost());
     auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
@@ -2333,7 +2334,7 @@ TEST(DasGraphTaskTest, EndNodeWithoutValuePortYieldsZeroReturnCode)
     }
     DestroyGraphAuthoringSession(state);
 
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
         new BoundaryDispatchHost());
     auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
@@ -2587,7 +2588,7 @@ namespace
 
     // begin/end 经真工厂实例化 + image 直通替身分派。
     class TypedDirectTransferHost final
-        : public Das::PluginInterface::IDasTaskComponentHost
+        : public Das::PluginInterface::IDasTaskComponentCreator
     {
     public:
         std::atomic<uint32_t> ref_count_{1};
@@ -2617,11 +2618,11 @@ namespace
                 AddRef();
                 return DAS_S_OK;
             }
-            if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+            if (iid
+                == DasIidOf<Das::PluginInterface::IDasTaskComponentCreator>())
             {
-                *pp_out =
-                    static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
-                        this);
+                *pp_out = static_cast<
+                    Das::PluginInterface::IDasTaskComponentCreator*>(this);
                 AddRef();
                 return DAS_S_OK;
             }
@@ -2737,7 +2738,7 @@ TEST(DasGraphTaskTest, TypedDirectTransferCarriesIntAndRetiresResultPort)
     }
     DestroyGraphAuthoringSession(state);
 
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
         new BoundaryDispatchHost());
     auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
@@ -2874,7 +2875,7 @@ TEST(DasGraphTaskTest, TypedDirectTransferCarriesImageReferenceAcrossSubgraph)
     DAS::DasPtr<Das::ExportInterface::IDasImage> image =
         CountingFakeImage::Make();
 
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
         new TypedDirectTransferHost());
     auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
@@ -3398,8 +3399,9 @@ namespace
     // 真工厂按组件 GUID 分派；未知 GUID 走兜底 NOT_FOUND。
     TEST(DasGraphTaskTest, FactoryDispatchesFocusLogComponentByGuid)
     {
-        const auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-            new MockTaskComponentHost());
+        const auto host =
+            DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+                new MockTaskComponentCreator());
         DasGraphTaskComponentFactory factory{host.Get()};
 
         DasPtr<Das::PluginInterface::IDasTaskComponent> component;
@@ -3877,8 +3879,8 @@ TEST(DasGraphTaskTest, GetNextExecutionTimeReanchorsAfterDo)
 {
     const std::time_t t0 = ScheduleUnixOfUtc(2026, 6, 1, 9, 0, 0);
     std::time_t       current = t0;
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-        new MockTaskComponentHost());
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+        new MockTaskComponentCreator());
     DasGraphTaskAdapter adapter{host.Get()};
     adapter.SetClockForTest([&current] { return current; });
 
@@ -4028,7 +4030,7 @@ namespace
     // begin/end 经真工厂（manifest 分派是生产身份源）；日期串探针走本地
     // 替身（BoundaryDispatchHost 同款结构）。
     class ScheduleProbeDispatchHost final
-        : public Das::PluginInterface::IDasTaskComponentHost
+        : public Das::PluginInterface::IDasTaskComponentCreator
     {
     public:
         explicit ScheduleProbeDispatchHost(std::string probe_next_time_text)
@@ -4061,11 +4063,11 @@ namespace
                 AddRef();
                 return DAS_S_OK;
             }
-            if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+            if (iid
+                == DasIidOf<Das::PluginInterface::IDasTaskComponentCreator>())
             {
-                *pp_out =
-                    static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
-                        this);
+                *pp_out = static_cast<
+                    Das::PluginInterface::IDasTaskComponentCreator*>(this);
                 AddRef();
                 return DAS_S_OK;
             }
@@ -4231,7 +4233,7 @@ TEST(DasGraphTaskTest, GetNextExecutionTimeDynamicChannelFromEndPort)
     CompileNextTimeProbePlanText(plan_text);
     ASSERT_FALSE(plan_text.empty());
 
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
         new ScheduleProbeDispatchHost("2031-02-03T04:05:06"));
     DasGraphTaskAdapter adapter{host.Get()};
     adapter.SetClockForTest(
@@ -4249,8 +4251,8 @@ TEST(DasGraphTaskTest, GetNextExecutionTimeDynamicChannelFromEndPort)
 // 三件套 settings 计算次日（此时钟驱动），不因动态缺席报错。
 TEST(DasGraphTaskTest, GetNextExecutionTimeFallsBackToStaticWhenPortAbsent)
 {
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
-        new MockTaskComponentHost());
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
+        new MockTaskComponentCreator());
     DasGraphTaskAdapter adapter{host.Get()};
     adapter.SetClockForTest(
         [] { return ScheduleUnixOfUtc(2026, 9, 19, 12, 0, 0); });
@@ -4284,7 +4286,7 @@ TEST(DasGraphTaskTest, GetNextExecutionTimeIllegalPortStringFallsBackStatic)
         "not a date"};
     for (const std::string& illegal_text : illegal_texts)
     {
-        auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
             new ScheduleProbeDispatchHost(illegal_text));
         DasGraphTaskAdapter adapter{host.Get()};
         adapter.SetClockForTest(
@@ -4311,7 +4313,7 @@ TEST(DasGraphTaskTest, GetNextExecutionTimeCaptureClearedPerExecution)
     CompileNextTimeProbePlanText(plan_text);
     ASSERT_FALSE(plan_text.empty());
 
-    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(
         new ScheduleProbeDispatchHost("2031-02-03T04:05:06"));
     DasGraphTaskAdapter adapter{host.Get()};
     adapter.SetClockForTest(

@@ -110,7 +110,7 @@ void GraphCompiler::BindFaceTypes(
 }
 
 void GraphCompiler::BindCreator(
-    Das::PluginInterface::IDasTaskComponentHost* p_creator)
+    Das::PluginInterface::IDasTaskComponentCreator* p_creator)
 {
     creator_ = p_creator;
 }
@@ -372,10 +372,10 @@ void GraphCompiler::RunReferenceClosurePass(
     reference_pass_failed_ = false;
 
     // creator 解析次序：显式绑定 → factory manager host。
-    Das::PluginInterface::IDasTaskComponentHost* creator = creator_;
+    Das::PluginInterface::IDasTaskComponentCreator* creator = creator_;
     if (creator == nullptr && factory_manager_ != nullptr)
     {
-        creator = factory_manager_->GetTaskComponentHost();
+        creator = factory_manager_->GetTaskComponentCreator();
     }
 
     std::vector<int64_t> entry_stack;

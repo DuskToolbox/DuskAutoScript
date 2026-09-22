@@ -10,7 +10,7 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasComponentFactory.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentCreator.Implements.hpp>
 
 // {7F4AFAA1-C3AA-4933-9F1F-D4CD4D8BED6A}
 DAS_DEFINE_CLASS_IN_NAMESPACE(
@@ -62,7 +62,7 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 // {0BF06F77-FDAD-433D-887D-9DC0A783F8B0}
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das,
-    TestTaskComponentHostFeature,
+    TestTaskComponentCreatorFeature,
     0x0bf06f77,
     0xfdad,
     0x433d,
@@ -168,15 +168,15 @@ private:
 };
 
 /**
- * @brief IDasTaskComponentHost feature 对象 — B 侧可递送物
+ * @brief IDasTaskComponentCreator feature 对象 — B 侧可递送物
  *
  * 经 CreateFeatureInterface([out]) 递出到调用方；CreateTaskComponent 对
  * 约定的测试 component guid 创建 EchoTaskComponent。guid 常量与
  * IpcTestPlugin1 侧约定保持一致（见 PluginImpl.cpp 匿名命名空间）。
  */
-class TestTaskComponentHostFeature final
-    : public PluginInterface::DasTaskComponentHostImplBase<
-          TestTaskComponentHostFeature>
+class TestTaskComponentCreatorFeature final
+    : public PluginInterface::DasTaskComponentCreatorImplBase<
+          TestTaskComponentCreatorFeature>
 {
 public:
     DAS_IMPL CreateTaskComponent(
@@ -196,12 +196,13 @@ public:
  *
  * 该插件提供：
  * - index=0: IDasComponentFactory 工厂（DasComponentFactoryImpl）
- * - index=1: IDasTaskComponentHost feature 对象（TestTaskComponentHostFeature）
+ * - index=1: IDasTaskComponentCreator feature
+ * 对象（TestTaskComponentCreatorFeature）
  */
 class IpcTestPlugin2 final
     : public PluginInterface::DasPluginPackageImplBase<IpcTestPlugin2>
 {
-    DasPtr<PluginInterface::IDasTaskComponentHost> task_component_host_;
+    DasPtr<PluginInterface::IDasTaskComponentCreator> task_component_host_;
 
 public:
     DAS_IMPL EnumFeature(
@@ -212,15 +213,15 @@ public:
         override;
 
     // 存储加载器注入的 task component host（顺序契约：注入先于枚举）。
-    DAS_IMPL SetTaskComponentHost(
-        PluginInterface::IDasTaskComponentHost* p_host) override
+    DAS_IMPL SetTaskComponentCreator(
+        PluginInterface::IDasTaskComponentCreator* p_host) override
     {
         task_component_host_ =
-            DasPtr<PluginInterface::IDasTaskComponentHost>(p_host);
+            DasPtr<PluginInterface::IDasTaskComponentCreator>(p_host);
         return DAS_S_OK;
     }
 
-    PluginInterface::IDasTaskComponentHost* GetTaskComponentHost() const
+    PluginInterface::IDasTaskComponentCreator* GetTaskComponentCreator() const
     {
         return task_component_host_.Get();
     }

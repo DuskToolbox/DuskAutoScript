@@ -21,7 +21,7 @@ class PortFrame;
 // ---------------------------------------------------------------------------
 // NodeComponentEntry — per-node execution context created by Configure()
 //
-// Holds the IDasTaskComponent instance created from IDasTaskComponentHost,
+// Holds the IDasTaskComponent instance created from IDasTaskComponentCreator,
 // along with metadata about whether settings have been applied (v17 data-sep).
 // ---------------------------------------------------------------------------
 struct NodeComponentEntry
@@ -41,9 +41,9 @@ struct NodeComponentEntry
 //
 // Plan 02-14 adds Configure/Prepare/RunWithHost:
 //   - Configure() creates per-node IDasTaskComponent instances from
-//     IDasTaskComponentHost and applies compiled_settings/compiled_payload_json
-//     via ApplySettingsChange (v17 data-sep: settings bound pre-Do, NOT in
-//     PortMap).
+//     IDasTaskComponentCreator and applies
+//     compiled_settings/compiled_payload_json via ApplySettingsChange (v17
+//     data-sep: settings bound pre-Do, NOT in PortMap).
 //   - Prepare() validates all configured components are ready.
 //   - RunWithHost() is the full Configure → Prepare → Execute pipeline.
 //   - IDasErrorLens integration provides structured error messages.
@@ -77,7 +77,7 @@ public:
     // -- Configure / Prepare / RunWithHost (Plan 02-14) ---------------------
 
     // Configure: create per-node IDasTaskComponent instances from
-    // IDasTaskComponentHost, then apply compiled_settings and
+    // IDasTaskComponentCreator, then apply compiled_settings and
     // compiled_payload_json via ApplySettingsChange.
     //
     // v17 data-sep: settings and compiledPayload are bound here, pre-Do,
@@ -85,15 +85,15 @@ public:
     //
     // Must be called before Prepare() and RunWithHost().
     DasResult Configure(
-        const Dto::CompiledGraphPlanDto&             plan,
-        Das::PluginInterface::IDasTaskComponentHost* p_host);
+        const Dto::CompiledGraphPlanDto&                plan,
+        Das::PluginInterface::IDasTaskComponentCreator* p_host);
 
     // Prepare: validate all configured components are ready for execution.
     // Must be called after Configure().
     DasResult Prepare() const;
 
     // RunWithHost: full Configure → Prepare → Execute pipeline using
-    // IDasTaskComponentHost for real component resolution.
+    // IDasTaskComponentCreator for real component resolution.
     //
     // Internally calls Configure(), Prepare(), then executes nodes
     // using the pre-configured IDasTaskComponent instances.
@@ -104,10 +104,10 @@ public:
     // JSON graphOutputs channel. Null keeps the legacy three-parameter
     // behaviour untouched.
     DasResult RunWithHost(
-        const Dto::CompiledGraphPlanDto&             plan,
-        const std::string&                           current_fingerprint,
-        Das::PluginInterface::IDasStopToken*         p_stop_token,
-        Das::PluginInterface::IDasTaskComponentHost* p_host,
+        const Dto::CompiledGraphPlanDto&                plan,
+        const std::string&                              current_fingerprint,
+        Das::PluginInterface::IDasStopToken*            p_stop_token,
+        Das::PluginInterface::IDasTaskComponentCreator* p_host,
         Das::ExportInterface::IDasPortMap** pp_out_typed_outputs = nullptr);
 
     // Typed graph-level inputs consulted by the broadcast-binding overlay

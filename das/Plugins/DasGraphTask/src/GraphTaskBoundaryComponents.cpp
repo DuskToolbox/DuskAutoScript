@@ -153,8 +153,8 @@ namespace Das::Plugins::DasGraphTask
     } // namespace
 
     GraphTaskBoundaryComponent::GraphTaskBoundaryComponent(
-        std::string_view                                    kind,
-        DasPtr<Das::PluginInterface::IDasTaskComponentHost> host)
+        std::string_view                                       kind,
+        DasPtr<Das::PluginInterface::IDasTaskComponentCreator> host)
         : kind_(kind), host_(std::move(host))
     {
     }

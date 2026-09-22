@@ -24,7 +24,7 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 // --- GraphRuntimeImpl implementation ---
 
 GraphRuntimeImpl::GraphRuntimeImpl(
-    Das::PluginInterface::IDasTaskComponentHost* p_host)
+    Das::PluginInterface::IDasTaskComponentCreator* p_host)
     : host_(p_host)
 {
 }
@@ -276,8 +276,8 @@ CreateGraphRuntime(Das::ExportInterface::IDasGraphRuntime** pp_out_runtime)
 }
 
 DAS_C_API DasResult CreateGraphRuntimeWithHost(
-    Das::PluginInterface::IDasTaskComponentHost* p_host,
-    Das::ExportInterface::IDasGraphRuntime**     pp_out_runtime)
+    Das::PluginInterface::IDasTaskComponentCreator* p_host,
+    Das::ExportInterface::IDasGraphRuntime**        pp_out_runtime)
 {
     if (!pp_out_runtime)
     {
@@ -339,11 +339,11 @@ struct GraphAuthoringSessionState
     Das::Core::GraphRuntime::GraphCompiler::EntryFacesMap entry_faces;
     std::vector<Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType>
         entry_face_types;
-    // creator（TaskComponentHost）借用指针：会话编译路径经
+    // creator（TaskComponentCreator）借用指针：会话编译路径经
     // 它开被引条目的 authoring 会话（GetDocument 现算口面 + Compile 产
     // 物）。借用不拥有——插件包持有的 host_ 保证本尊长命于会话（与
     // CreateGraphRuntimeWithHost 的执行侧对称）；nullptr = 不携带。
-    Das::PluginInterface::IDasTaskComponentHost* creator = nullptr;
+    Das::PluginInterface::IDasTaskComponentCreator* creator = nullptr;
 };
 
 namespace
@@ -2225,9 +2225,9 @@ namespace
 } // anonymous namespace
 
 DAS_C_API DasResult CreateGraphAuthoringSession(
-    Das::PluginInterface::IDasTaskComponentHost* p_creator,
-    IDasReadOnlyString*                          p_context_json,
-    GraphAuthoringSessionState**                 pp_out)
+    Das::PluginInterface::IDasTaskComponentCreator* p_creator,
+    IDasReadOnlyString*                             p_context_json,
+    GraphAuthoringSessionState**                    pp_out)
 {
     if (pp_out == nullptr)
     {

@@ -34,7 +34,7 @@ namespace
         {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
 
     // 跨 host 测试约定的 component guid：与 IpcTestPlugin2 侧的同名常量
-    // 逐字节一致（对端 TestTaskComponentHostFeature 只认这个 guid）。
+    // 逐字节一致（对端 TestTaskComponentCreatorFeature 只认这个 guid）。
     constexpr DasGuid IPC_HELD_TASK_COMPONENT_GUID{
         0x26B2F2BC,
         0xFC73,
@@ -324,7 +324,7 @@ DasResult DasTouchMockImpl::Swipe(
 // === DasQueryComponentImpl ===
 
 DasQueryComponentImpl::DasQueryComponentImpl(
-    PluginInterface::IDasTaskComponentHost* p_task_component_host)
+    PluginInterface::IDasTaskComponentCreator* p_task_component_host)
     : task_component_host_(p_task_component_host)
 {
 }
@@ -1083,7 +1083,7 @@ DasResult DasQueryComponentImpl::HandleReleaseHeldTaskComponent(
 // === DasQueryComponentFactoryImpl ===
 
 DasQueryComponentFactoryImpl::DasQueryComponentFactoryImpl(
-    PluginInterface::IDasTaskComponentHost* p_task_component_host)
+    PluginInterface::IDasTaskComponentCreator* p_task_component_host)
     : task_component_host_(p_task_component_host)
 {
 }
@@ -1363,7 +1363,7 @@ DasResult IpcTestPlugin1::CreateFeatureInterface(
         // index == 1: 创建 DasQueryComponentFactoryImpl（构造递 host，
         // 组件经持有的 host 发起跨进程/跨 host 调用）
         auto* factory =
-            new DasQueryComponentFactoryImpl(GetTaskComponentHost());
+            new DasQueryComponentFactoryImpl(GetTaskComponentCreator());
         factory->AddRef();
         *pp_out_interface =
             static_cast<PluginInterface::IDasComponentFactory*>(factory);

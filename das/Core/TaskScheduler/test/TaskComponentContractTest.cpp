@@ -17,7 +17,7 @@
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentCreator.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <boost/dll/runtime_symbol_info.hpp>
@@ -411,7 +411,7 @@ namespace
         return DasPtr<Das::DasFlowControlTaskComponent>{
             new Das::DasFlowControlTaskComponent(
                 LAUNCH_KIND_TEXT,
-                DasPtr<Das::PluginInterface::IDasTaskComponentHost>{})};
+                DasPtr<Das::PluginInterface::IDasTaskComponentCreator>{})};
     }
 
     // 经 GraphRuntime 的 {"settings": S, "payload": null} 包装形投递节点
@@ -999,7 +999,7 @@ namespace
     // GraphRuntime 直驱用 host：创建测试 exe 内静态编入的真实 FlowControl
     // 组件（与 DLL 内副本同源码；直驱用例需要真实组件行为，不经工厂注册表）。
     class StaticFlowControlComponentHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
               StaticFlowControlComponentHost>
     {
     public:
@@ -1019,7 +1019,7 @@ namespace
 
             auto* component = new Das::DasFlowControlTaskComponent(
                 DELAY_KIND_TEXT,
-                DasPtr<Das::PluginInterface::IDasTaskComponentHost>(this));
+                DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(this));
             component->AddRef();
             *pp_out_component = component;
             return DAS_S_OK;
@@ -1043,7 +1043,7 @@ namespace
     // host 替身：为 invokeRepository 的子执行段创建记录型子组件
     // （FAKE_CHILD_COMPONENT_GUID）。
     class RecordingChildComponentHost final
-        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
               RecordingChildComponentHost>
     {
     public:
@@ -1096,12 +1096,12 @@ namespace
     // 用例走直构——经 DLL 工厂拿到的实例绑定宿主工厂，与 MakeLaunchComponent
     // 同因）。
     DasPtr<Das::DasFlowControlTaskComponent> MakeInvokeRepositoryComponent(
-        Das::PluginInterface::IDasTaskComponentHost* host)
+        Das::PluginInterface::IDasTaskComponentCreator* host)
     {
         return DasPtr<Das::DasFlowControlTaskComponent>{
             new Das::DasFlowControlTaskComponent(
                 "das.flow.invokeRepository",
-                DasPtr<Das::PluginInterface::IDasTaskComponentHost>(host))};
+                DasPtr<Das::PluginInterface::IDasTaskComponentCreator>(host))};
     }
 
     // envelope 形态子执行快照（无 {fingerprint, plan} 外壳——maapi/envelope

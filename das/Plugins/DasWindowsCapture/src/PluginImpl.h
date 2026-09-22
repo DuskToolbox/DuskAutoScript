@@ -28,7 +28,7 @@ DAS_NS_BEGIN
 class WindowsCapturePlugin final
     : public PluginInterface::DasPluginPackageImplBase<WindowsCapturePlugin>
 {
-    DasPtr<PluginInterface::IDasTaskComponentHost> task_component_host_;
+    DasPtr<PluginInterface::IDasTaskComponentCreator> task_component_host_;
 
 public:
     DAS_IMPL EnumFeature(
@@ -38,15 +38,15 @@ public:
         override;
 
     // 存储加载器注入的 task component host（顺序契约：注入先于枚举）。
-    DAS_IMPL SetTaskComponentHost(
-        PluginInterface::IDasTaskComponentHost* p_host) override
+    DAS_IMPL SetTaskComponentCreator(
+        PluginInterface::IDasTaskComponentCreator* p_host) override
     {
         task_component_host_ =
-            DasPtr<PluginInterface::IDasTaskComponentHost>(p_host);
+            DasPtr<PluginInterface::IDasTaskComponentCreator>(p_host);
         return DAS_S_OK;
     }
 
-    PluginInterface::IDasTaskComponentHost* GetTaskComponentHost() const
+    PluginInterface::IDasTaskComponentCreator* GetTaskComponentCreator() const
     {
         return task_component_host_.Get();
     }

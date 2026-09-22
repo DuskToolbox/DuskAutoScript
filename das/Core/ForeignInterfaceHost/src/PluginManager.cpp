@@ -501,12 +501,12 @@ DasResult PluginManager::LoadPlugin(
     // [in] 接口参数自动编组（DOM 注册 + 对端生成 host 代理），与工厂注入
     // 同型。失败仅告警并继续加载——实现者显式返回失败（如跨进程编组
     // 出错）时加载无需中断，host 消费方在创建组件时自行失败即可。
-    const auto inject_host_result = plugin.package->SetTaskComponentHost(
-        task_component_factory_mgr_.GetTaskComponentHost());
+    const auto inject_host_result = plugin.package->SetTaskComponentCreator(
+        task_component_factory_mgr_.GetTaskComponentCreator());
     if (DAS::IsFailed(inject_host_result))
     {
         DAS_CORE_LOG_WARN(
-            "SetTaskComponentHost failed for plugin {}: result={}",
+            "SetTaskComponentCreator failed for plugin {}: result={}",
             path_str,
             static_cast<int>(inject_host_result));
     }

@@ -1041,8 +1041,8 @@ FlowControlSpawnResult SpawnProcessWithElevationFallback(
 }
 
 DasFlowControlTaskComponent::DasFlowControlTaskComponent(
-    std::string_view                               kind,
-    DasPtr<PluginInterface::IDasTaskComponentHost> host)
+    std::string_view                                  kind,
+    DasPtr<PluginInterface::IDasTaskComponentCreator> host)
     : kind_(kind), settings_(Das::Utils::MakeYyjsonObject()),
       host_(std::move(host))
 {
@@ -2667,8 +2667,8 @@ DasResult DasFlowControlTaskComponent::Do(
 }
 
 DasFlowControlTaskComponentFactory::DasFlowControlTaskComponentFactory(
-    PluginInterface::IDasTaskComponentHost* p_host)
-    : host_(DasPtr<PluginInterface::IDasTaskComponentHost>(p_host))
+    PluginInterface::IDasTaskComponentCreator* p_host)
+    : host_(DasPtr<PluginInterface::IDasTaskComponentCreator>(p_host))
 {
 }
 

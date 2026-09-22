@@ -174,7 +174,7 @@ class DasQueryComponentImpl final
 public:
     // 构造递 host（跨 host 代理时组件经此发起中转调用）。
     explicit DasQueryComponentImpl(
-        PluginInterface::IDasTaskComponentHost* p_task_component_host);
+        PluginInterface::IDasTaskComponentCreator* p_task_component_host);
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -229,8 +229,8 @@ private:
     DasResult HandleReleaseHeldTaskComponent(
         ExportInterface::IDasVariantVector** pp_out_result);
 
-    DasPtr<PluginInterface::IDasTaskComponentHost> task_component_host_;
-    DasPtr<PluginInterface::IDasTaskComponent>     held_task_component_;
+    DasPtr<PluginInterface::IDasTaskComponentCreator> task_component_host_;
+    DasPtr<PluginInterface::IDasTaskComponent>        held_task_component_;
 };
 
 /**
@@ -244,7 +244,7 @@ class DasQueryComponentFactoryImpl final
 {
 public:
     explicit DasQueryComponentFactoryImpl(
-        PluginInterface::IDasTaskComponentHost* p_task_component_host);
+        PluginInterface::IDasTaskComponentCreator* p_task_component_host);
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -255,7 +255,7 @@ public:
         PluginInterface::IDasComponent** pp_out_component) override;
 
 private:
-    DasPtr<PluginInterface::IDasTaskComponentHost> task_component_host_;
+    DasPtr<PluginInterface::IDasTaskComponentCreator> task_component_host_;
 };
 
 class IpcTaskAuthoringSessionImpl final
@@ -320,7 +320,7 @@ public:
 class IpcTestPlugin1 final
     : public PluginInterface::DasPluginPackageImplBase<IpcTestPlugin1>
 {
-    DasPtr<PluginInterface::IDasTaskComponentHost> task_component_host_;
+    DasPtr<PluginInterface::IDasTaskComponentCreator> task_component_host_;
 
 public:
     // IDasPluginPackage methods
@@ -332,15 +332,15 @@ public:
         override;
 
     // 存储加载器注入的 task component host（顺序契约：注入先于枚举）。
-    DAS_IMPL SetTaskComponentHost(
-        PluginInterface::IDasTaskComponentHost* p_host) override
+    DAS_IMPL SetTaskComponentCreator(
+        PluginInterface::IDasTaskComponentCreator* p_host) override
     {
         task_component_host_ =
-            DasPtr<PluginInterface::IDasTaskComponentHost>(p_host);
+            DasPtr<PluginInterface::IDasTaskComponentCreator>(p_host);
         return DAS_S_OK;
     }
 
-    PluginInterface::IDasTaskComponentHost* GetTaskComponentHost() const
+    PluginInterface::IDasTaskComponentCreator* GetTaskComponentCreator() const
     {
         return task_component_host_.Get();
     }

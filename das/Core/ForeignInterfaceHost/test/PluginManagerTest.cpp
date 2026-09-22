@@ -216,21 +216,21 @@ namespace
         }
 
         DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
+        SetTaskComponentCreator(IDasTaskComponentCreator* p_host) override
         {
-            task_component_host_ = DasPtr<IDasTaskComponentHost>(p_host);
+            task_component_host_ = DasPtr<IDasTaskComponentCreator>(p_host);
             return DAS_S_OK;
         }
 
-        IDasTaskComponentHost* GetTaskComponentHost() const
+        IDasTaskComponentCreator* GetTaskComponentCreator() const
         {
             return task_component_host_.Get();
         }
 
     private:
-        std::vector<DasPluginFeature> features_;
-        std::atomic<uint32_t>         ref_count_{0};
-        DasPtr<IDasTaskComponentHost> task_component_host_;
+        std::vector<DasPluginFeature>    features_;
+        std::atomic<uint32_t>            ref_count_{0};
+        DasPtr<IDasTaskComponentCreator> task_component_host_;
     };
 
     class CapturingRuntime final : public IForeignLanguageRuntime
@@ -799,21 +799,21 @@ namespace
         }
 
         DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
+        SetTaskComponentCreator(IDasTaskComponentCreator* p_host) override
         {
-            task_component_host_ = DasPtr<IDasTaskComponentHost>(p_host);
+            task_component_host_ = DasPtr<IDasTaskComponentCreator>(p_host);
             return DAS_S_OK;
         }
 
-        IDasTaskComponentHost* GetTaskComponentHost() const
+        IDasTaskComponentCreator* GetTaskComponentCreator() const
         {
             return task_component_host_.Get();
         }
 
     private:
-        DasGuid                       factory_guid_;
-        std::atomic<uint32_t>         ref_count_{0};
-        DasPtr<IDasTaskComponentHost> task_component_host_;
+        DasGuid                          factory_guid_;
+        std::atomic<uint32_t>            ref_count_{0};
+        DasPtr<IDasTaskComponentCreator> task_component_host_;
     };
 
     class TaskComponentRuntime final : public IForeignLanguageRuntime
@@ -987,21 +987,21 @@ namespace
         }
 
         DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
+        SetTaskComponentCreator(IDasTaskComponentCreator* p_host) override
         {
-            task_component_host_ = DasPtr<IDasTaskComponentHost>(p_host);
+            task_component_host_ = DasPtr<IDasTaskComponentCreator>(p_host);
             return DAS_S_OK;
         }
 
-        IDasTaskComponentHost* GetTaskComponentHost() const
+        IDasTaskComponentCreator* GetTaskComponentCreator() const
         {
             return task_component_host_.Get();
         }
 
     private:
-        DasGuid                       provider_guid_;
-        std::atomic<uint32_t>         ref_count_{0};
-        DasPtr<IDasTaskComponentHost> task_component_host_;
+        DasGuid                          provider_guid_;
+        std::atomic<uint32_t>            ref_count_{0};
+        DasPtr<IDasTaskComponentCreator> task_component_host_;
     };
 
     class ErrorLensRuntime final : public IForeignLanguageRuntime
@@ -3008,24 +3008,24 @@ namespace
         }
 
         DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
+        SetTaskComponentCreator(IDasTaskComponentCreator* p_host) override
         {
-            call_sequence.push_back("SetTaskComponentHost");
+            call_sequence.push_back("SetTaskComponentCreator");
             received_host = p_host;
-            task_component_host_ = DasPtr<IDasTaskComponentHost>(p_host);
+            task_component_host_ = DasPtr<IDasTaskComponentCreator>(p_host);
             return DAS_S_OK;
         }
 
-        IDasTaskComponentHost* GetTaskComponentHost() const
+        IDasTaskComponentCreator* GetTaskComponentCreator() const
         {
             return task_component_host_.Get();
         }
 
-        std::vector<std::string> call_sequence;
-        IDasTaskComponentHost*   received_host = nullptr;
+        std::vector<std::string>  call_sequence;
+        IDasTaskComponentCreator* received_host = nullptr;
 
     private:
-        DasPtr<IDasTaskComponentHost> task_component_host_;
+        DasPtr<IDasTaskComponentCreator> task_component_host_;
     };
 
     class HostInjectionRuntime final : public IForeignLanguageRuntime
@@ -3077,7 +3077,7 @@ namespace
     };
 
     // IPC 加载形态的远端替身：生产中 IpcRemotePluginHost 返回的是远端包
-    // 的 main 侧代理，PluginManager 对它调 SetTaskComponentHost 经代理
+    // 的 main 侧代理，PluginManager 对它调 SetTaskComponentCreator 经代理
     // 调用送达（[in] 接口参数自动编组）；替身以本尊直连复现同一加载面
     // （object → QI package → 注入 → 枚举）。
     class RecordingRemotePluginHost final : public IRemotePluginHost
@@ -3173,10 +3173,10 @@ TEST_F(
 
     const auto& sequence = runtime_->last_package->call_sequence;
     ASSERT_FALSE(sequence.empty());
-    EXPECT_EQ(sequence.front(), "SetTaskComponentHost");
+    EXPECT_EQ(sequence.front(), "SetTaskComponentCreator");
 
     const auto host_pos =
-        std::find(sequence.begin(), sequence.end(), "SetTaskComponentHost");
+        std::find(sequence.begin(), sequence.end(), "SetTaskComponentCreator");
     const auto enum_pos =
         std::find(sequence.begin(), sequence.end(), "EnumFeature");
     ASSERT_NE(enum_pos, sequence.end());
@@ -3186,7 +3186,7 @@ TEST_F(
     EXPECT_NE(runtime_->last_package->received_host, nullptr);
     EXPECT_EQ(
         runtime_->last_package->received_host,
-        pm_->GetTaskComponentFactoryManager().GetTaskComponentHost());
+        pm_->GetTaskComponentFactoryManager().GetTaskComponentCreator());
 }
 
 // IPC 加载形态（loadMode=ipc → NativeIpcRuntime → remote host）：加载完成
@@ -3227,10 +3227,10 @@ TEST_F(
 
     const auto& sequence = remote_package->call_sequence;
     ASSERT_FALSE(sequence.empty());
-    EXPECT_EQ(sequence.front(), "SetTaskComponentHost");
+    EXPECT_EQ(sequence.front(), "SetTaskComponentCreator");
 
     const auto host_pos =
-        std::find(sequence.begin(), sequence.end(), "SetTaskComponentHost");
+        std::find(sequence.begin(), sequence.end(), "SetTaskComponentCreator");
     const auto enum_pos =
         std::find(sequence.begin(), sequence.end(), "EnumFeature");
     ASSERT_NE(enum_pos, sequence.end());
@@ -3240,5 +3240,5 @@ TEST_F(
     EXPECT_NE(remote_package->received_host, nullptr);
     EXPECT_EQ(
         remote_package->received_host,
-        pm_->GetTaskComponentFactoryManager().GetTaskComponentHost());
+        pm_->GetTaskComponentFactoryManager().GetTaskComponentCreator());
 }

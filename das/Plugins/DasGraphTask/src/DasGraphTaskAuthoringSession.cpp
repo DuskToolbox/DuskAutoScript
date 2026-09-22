@@ -501,8 +501,8 @@ namespace Plugins::DasGraphTask
     }
 
     DasGraphTaskAuthoringSession::DasGraphTaskAuthoringSession(
-        std::string                             context_json,
-        PluginInterface::IDasTaskComponentHost* p_creator)
+        std::string                                context_json,
+        PluginInterface::IDasTaskComponentCreator* p_creator)
     {
         auto ctx_str = MakeReadOnlyString(context_json);
         // CreateGraphAuthoringSession seeds the Core-owned GraphDocumentDto

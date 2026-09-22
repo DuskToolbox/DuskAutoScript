@@ -11,7 +11,7 @@
 #include <das/Utils/TaskComponentPorts.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentCreator.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -132,7 +132,7 @@ namespace
     // 观测点 2 的宿主：RepositoryInvoke 组件经宿主创建子组件，maapi run
     // guid 命中记录型替身（喂线接收端观测）。
     class EnvelopeParityRecordingHost final
-        : public PluginInterface::DasTaskComponentHostImplBase<
+        : public PluginInterface::DasTaskComponentCreatorImplBase<
               EnvelopeParityRecordingHost>
     {
     public:
@@ -608,7 +608,7 @@ TEST(
     auto       host = EnvelopeParityRecordingHost::Make(recording_state);
     DasFlowControlTaskComponent invoke_component(
         REPOSITORY_INVOKE_KIND,
-        DasPtr<PluginInterface::IDasTaskComponentHost>(host.Get()));
+        DasPtr<PluginInterface::IDasTaskComponentCreator>(host.Get()));
 
     DasPtr<ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);

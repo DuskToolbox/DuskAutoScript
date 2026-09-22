@@ -35,11 +35,11 @@ namespace
         return result;
     }
 
-    class TaskComponentHost final
-        : public Das::PluginInterface::IDasTaskComponentHost
+    class TaskComponentCreator final
+        : public Das::PluginInterface::IDasTaskComponentCreator
     {
     public:
-        explicit TaskComponentHost(TaskComponentFactoryManager& manager)
+        explicit TaskComponentCreator(TaskComponentFactoryManager& manager)
             : manager_(manager)
         {
         }
@@ -69,11 +69,11 @@ namespace
                 AddRef();
                 return DAS_S_OK;
             }
-            if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+            if (iid
+                == DasIidOf<Das::PluginInterface::IDasTaskComponentCreator>())
             {
-                *pp_out =
-                    static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
-                        this);
+                *pp_out = static_cast<
+                    Das::PluginInterface::IDasTaskComponentCreator*>(this);
                 AddRef();
                 return DAS_S_OK;
             }
@@ -107,7 +107,7 @@ namespace
 } // namespace
 
 TaskComponentFactoryManager::TaskComponentFactoryManager()
-    : host_(new TaskComponentHost(*this))
+    : host_(new TaskComponentCreator(*this))
 {
 }
 
@@ -119,8 +119,8 @@ TaskComponentFactoryManager::~TaskComponentFactoryManager()
     Shutdown();
 }
 
-Das::PluginInterface::IDasTaskComponentHost*
-TaskComponentFactoryManager::GetTaskComponentHost() const
+Das::PluginInterface::IDasTaskComponentCreator*
+TaskComponentFactoryManager::GetTaskComponentCreator() const
 {
     return host_.Get();
 }
@@ -213,7 +213,7 @@ void TaskComponentFactoryManager::RegisterHostObject()
     if (concrete_context == nullptr)
     {
         DAS_CORE_LOG_WARN(
-            "TaskComponentHost DOM registration skipped: ipc context is not "
+            "TaskComponentCreator DOM registration skipped: ipc context is not "
             "the concrete main process implementation");
         return;
     }
@@ -225,7 +225,7 @@ void TaskComponentFactoryManager::RegisterHostObject()
     if (DAS::IsFailed(register_result))
     {
         DAS_CORE_LOG_WARN(
-            "TaskComponentHost DOM registration failed, result={}",
+            "TaskComponentCreator DOM registration failed, result={}",
             register_result);
         return;
     }
@@ -255,7 +255,7 @@ void TaskComponentFactoryManager::Shutdown()
     if (DAS::IsFailed(unregister_result))
     {
         DAS_CORE_LOG_WARN(
-            "TaskComponentHost DOM unregister failed, result={}",
+            "TaskComponentCreator DOM unregister failed, result={}",
             unregister_result);
     }
 }

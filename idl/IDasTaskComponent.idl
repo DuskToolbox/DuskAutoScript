@@ -21,7 +21,7 @@ namespace Das::PluginInterface
     }
 
     [uuid(
-        "BDB3D247-4A1E-44D4-8D9E-93B0767E6201")] interface IDasTaskComponentHost
+        "BDB3D247-4A1E-44D4-8D9E-93B0767E6201")] interface IDasTaskComponentCreator
         : IDasBase
     {
         DasResult CreateTaskComponent(
