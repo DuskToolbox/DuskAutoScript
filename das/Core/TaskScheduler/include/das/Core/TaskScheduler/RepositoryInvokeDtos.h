@@ -1,7 +1,7 @@
 #ifndef DAS_CORE_TASK_SCHEDULER_REPOSITORY_INVOKE_DTOS_H
 #define DAS_CORE_TASK_SCHEDULER_REPOSITORY_INVOKE_DTOS_H
 
-#include <das/Core/TaskScheduler/TaskRepositoryDtos.h>
+#include <das/Core/GraphRuntime/RepositoryInvokeDtos.h>
 
 #include <cpp_yyjson.hpp>
 
@@ -12,25 +12,15 @@
 
 namespace Das::Core::TaskScheduler::RepositoryInvoke::Dto
 {
-    struct RepositoryTaskRefDto
-    {
-        std::string                kind = "taskRepositoryRef";
-        int64_t                    entry_id = 0;
-        std::optional<int64_t>     expected_revision;
-        std::optional<std::string> source_fingerprint;
-    };
-
-    struct ChildExecutionSnapshotDto
-    {
-        int32_t                    version = 1;
-        int64_t                    source_entry_id = 0;
-        int64_t                    source_revision = 0;
-        std::optional<std::string> source_fingerprint;
-        std::string                plugin_guid;
-        std::string                task_type_guid;
-        std::string                component_guid;
-        yyjson::value              execution_input;
-    };
+    // Repository reference (reconciliation) and child-execution-snapshot
+    // DTOs now live in GraphRuntime (compile algorithms home with the
+    // closure-driven graph compiler). The aliases below keep this
+    // invokeRepository wire header self-contained; the families defined
+    // here are invokeRepository-component-specific and retire together
+    // with that component.
+    using Das::Core::GraphRuntime::RepositoryInvoke::Dto::
+        ChildExecutionSnapshotDto;
+    using Das::Core::GraphRuntime::RepositoryInvoke::Dto::RepositoryTaskRefDto;
 
     struct InvokeRepositoryTaskSettingsDto
     {
@@ -108,8 +98,6 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke::Dto
         }                                                                      \
     }
 
-DAS_REPOSITORY_INVOKE_DTO_CASTER(RepositoryTaskRefDto);
-DAS_REPOSITORY_INVOKE_DTO_CASTER(ChildExecutionSnapshotDto);
 DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskSettingsDto);
 DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskInputDto);
 DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskDiagnosticDto);
@@ -118,20 +106,6 @@ DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskSignalsDto);
 DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskResultDto);
 
 #undef DAS_REPOSITORY_INVOKE_DTO_CASTER
-
-template <>
-struct yyjson::field_name_rule<
-    Das::Core::TaskScheduler::RepositoryInvoke::Dto::RepositoryTaskRefDto>
-{
-    using type = yyjson::snake_to_camel_transform;
-};
-
-template <>
-struct yyjson::field_name_rule<
-    Das::Core::TaskScheduler::RepositoryInvoke::Dto::ChildExecutionSnapshotDto>
-{
-    using type = yyjson::snake_to_camel_transform;
-};
 
 template <>
 struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::

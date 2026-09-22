@@ -3318,9 +3318,10 @@ namespace
             yyjson::value authoring(Das::Utils::MakeYyjsonObject());
             (*authoring.as_object())[std::string_view("revision")] = 5;
             // Phase 84 authoring metadata is revision + optional lastChangeKind
-            // + legacy best-effort sourceFingerprint consumed by
-            // RepositoryInvokeCompiler. The legacy kind/migrationState fields
-            // are no longer part of the persisted wire.
+            // + legacy best-effort sourceFingerprint consumed by the
+            // repository-reference reconciliation wire. The legacy
+            // kind/migrationState fields are no longer part of the persisted
+            // wire.
             (*authoring.as_object())[std::string_view("lastChangeKind")] =
                 "setValue";
             (*authoring.as_object())[std::string_view("sourceFingerprint")] =
@@ -4777,135 +4778,6 @@ TEST_F(
     EXPECT_EQ(shared_state_->last_context_entry_id, 0);
     EXPECT_FALSE(shared_state_->last_context_had_task_id);
     EXPECT_EQ(shared_state_->get_last_props_key1_value(), "default");
-    EXPECT_TRUE((shared_state_->executed_count == 0));
-}
-
-// 条目任务类型声明的执行组件 guid 经 compile 响应 compile 段外显
-// （executionComponentGuid）：插件侧调用方无组件注册表访问，仅凭编译
-// 响应即可组装子执行快照。执行组件声明为 das.graph 的执行组件 guid
-// （真实 DasGraphTask manifest 中任务类型与执行组件同 guid 的映射在
-// 注册表层的等价形态）。解析不到执行组件时该字段缺省不发（engaged-only）。
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerRepositoryCompileSurfacesExecutionComponentGuid)
-{
-    constexpr std::string_view graph_execution_component_guid =
-        "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
-
-    WriteFactoryPluginManifest(manifest_path_);
-    DeclareExecutionComponentInFactoryManifest(
-        manifest_path_,
-        FactoryTaskGuidString,
-        graph_execution_component_guid);
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    auto created = scheduler_->CreateRepositoryEntry(
-        MakeRepositoryCreateRequest("Graph execution component entry"));
-    ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
-            -1),
-        0);
-
-    yyjson::value request(Das::Utils::MakeYyjsonObject());
-    (*request.as_object())[std::string_view("purpose")] = "execution";
-    auto result = scheduler_->CompileRepositoryEntryAuthoring(0, request);
-    auto obj = result.as_object();
-    ASSERT_TRUE(obj.has_value());
-    auto compile = (*obj)[std::string_view("compile")].as_object();
-    ASSERT_TRUE(compile.has_value());
-    EXPECT_EQ(
-        (*compile)[std::string_view("executionComponentGuid")]
-            .as_string()
-            .value_or(""),
-        graph_execution_component_guid);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerRepositoryInvokeGraphCompileBuildsSnapshot)
-{
-    WriteFactoryPluginManifest(
-        manifest_path_,
-        FactoryPluginGuidString,
-        FactoryTaskGuidString,
-        true,
-        "Cpp",
-        FactoryExecutionComponentGuidString);
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    auto created = scheduler_->CreateRepositoryEntry(
-        MakeRepositoryCreateRequest("Repository invoke graph child", 8));
-    ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
-            -1),
-        0);
-
-    RepositoryInvoke::Dto::RepositoryTaskRefDto ref;
-    ref.entry_id = 0;
-    ref.expected_revision = 0;
-
-    RepositoryInvoke::RepositoryInvokeSourceContext context;
-    context.source_entry_id = 100;
-    auto graph = Das::Utils::ParseYyjsonFromString(R"json({
-        "nodes": [
-            {
-                "id": "invoke-repository-maapi",
-                "label": "Invoke repository child",
-                "settings": {
-                    "repositoryRef": {
-                        "kind": "taskRepositoryRef",
-                        "entryId": 0,
-                        "expectedRevision": 0
-                    }
-                }
-            }
-        ]
-    })json");
-    ASSERT_TRUE(graph.has_value());
-    context.source_graph = std::move(*graph);
-
-    auto result = scheduler_->ResolveRepositoryInvokeSnapshot(ref, context);
-
-    ASSERT_TRUE(result.ok);
-    ASSERT_TRUE(result.snapshot.has_value());
-    EXPECT_TRUE(result.diagnostics.empty());
-    EXPECT_EQ(result.snapshot->source_entry_id, 0);
-    EXPECT_EQ(result.snapshot->source_revision, 0);
-    EXPECT_EQ(result.snapshot->plugin_guid, FactoryPluginGuidString);
-    EXPECT_EQ(result.snapshot->task_type_guid, FactoryTaskGuidString);
-    EXPECT_EQ(
-        result.snapshot->component_guid,
-        FactoryExecutionComponentGuidString);
-
-    RepositoryInvoke::Dto::InvokeRepositoryTaskInputDto runtime_input;
-    runtime_input.compiled_snapshot = std::move(result.snapshot.value());
-    runtime_input.runtime_inputs = Das::Utils::MakeYyjsonObject();
-    auto serialized_runtime_input = yyjson::object(runtime_input);
-    auto runtime_input_text =
-        serialized_runtime_input.write(yyjson::WriteFlag::NoFlag);
-    auto runtime_input_json = Das::Utils::ParseYyjsonFromString(
-        std::string_view(runtime_input_text.data(), runtime_input_text.size()));
-    ASSERT_TRUE(runtime_input_json.has_value());
-    auto runtime_input_obj = runtime_input_json->as_object();
-    ASSERT_TRUE(runtime_input_obj.has_value());
-    EXPECT_TRUE(
-        runtime_input_obj->contains(std::string_view("compiledSnapshot")));
-
-    auto compiled_snapshot =
-        (*runtime_input_obj)[std::string_view("compiledSnapshot")].as_object();
-    ASSERT_TRUE(compiled_snapshot.has_value());
-    auto execution_input =
-        (*compiled_snapshot)[std::string_view("executionInput")].as_object();
-    ASSERT_TRUE(execution_input.has_value());
-    EXPECT_EQ(
-        (*execution_input)[std::string_view("key1")].as_string().value_or(""),
-        std::string_view("compiled"));
-
-    const ipc_scoped_lock lock(shared_state_->mutex);
-    EXPECT_EQ(shared_state_->compile_count, 1);
-    EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
-    EXPECT_EQ(shared_state_->last_context_entry_id, 0);
-    EXPECT_FALSE(shared_state_->last_context_had_task_id);
     EXPECT_TRUE((shared_state_->executed_count == 0));
 }
 
@@ -9196,57 +9068,6 @@ TEST_F(
     EXPECT_EQ(
         (*ref_field_object)[std::string_view("label")].as_string().value_or(""),
         "repositoryRef");
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerRepositoryInvokeCompileBuildsSnapshot)
-{
-    WriteFactoryPluginManifest(
-        manifest_path_,
-        FactoryPluginGuidString,
-        FactoryTaskGuidString,
-        true,
-        "Cpp",
-        FactoryExecutionComponentGuidString);
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    auto created = scheduler_->CreateRepositoryEntry(
-        MakeRepositoryCreateRequest("Repository invoke child", 8));
-    ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
-            -1),
-        0);
-
-    RepositoryInvoke::Dto::RepositoryTaskRefDto ref;
-    ref.entry_id = 0;
-    ref.expected_revision = 0;
-
-    auto result = scheduler_->ResolveRepositoryInvokeSnapshot(ref);
-
-    ASSERT_TRUE(result.ok);
-    ASSERT_TRUE(result.snapshot.has_value());
-    EXPECT_TRUE(result.diagnostics.empty());
-    EXPECT_EQ(result.snapshot->source_entry_id, 0);
-    EXPECT_EQ(result.snapshot->source_revision, 0);
-    EXPECT_EQ(result.snapshot->plugin_guid, FactoryPluginGuidString);
-    EXPECT_EQ(result.snapshot->task_type_guid, FactoryTaskGuidString);
-    EXPECT_EQ(
-        result.snapshot->component_guid,
-        FactoryExecutionComponentGuidString);
-
-    auto execution_input = result.snapshot->execution_input.as_object();
-    ASSERT_TRUE(execution_input.has_value());
-    EXPECT_EQ(
-        (*execution_input)[std::string_view("key1")].as_string().value_or(""),
-        std::string_view("compiled"));
-
-    const ipc_scoped_lock lock(shared_state_->mutex);
-    EXPECT_EQ(shared_state_->compile_count, 1);
-    EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
-    EXPECT_EQ(shared_state_->last_context_entry_id, 0);
-    EXPECT_FALSE(shared_state_->last_context_had_task_id);
-    EXPECT_TRUE((shared_state_->executed_count == 0));
 }
 
 TEST_F(

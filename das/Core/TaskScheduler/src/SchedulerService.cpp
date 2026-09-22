@@ -1352,7 +1352,7 @@ namespace Das::Core::TaskScheduler
     // provider compile 结果是否显式声明 ok=false：键缺席（各 provider 契约
     // 不同，如 graph 的 compile 只带 executionInput）视为未声明——不抛、
     // 不拒（cpp_yyjson object operator[] 对缺失键 throw out_of_range，
-    // 消费侧必须 contains 先行，同 RepositoryInvokeCompiler 判定形态）。
+    // 消费侧必须 contains 先行）。
     static bool ProviderCompileExplicitFalse(const yyjson::value& compile)
     {
         auto compile_obj = compile.as_object();
@@ -1557,9 +1557,10 @@ namespace Das::Core::TaskScheduler
     // Builds the persisted authoring metadata object. Per D-84-02/D-84-04 the
     // metadata records only revision and an optional lastChangeKind; migration
     // and migrationState are removed from the authority. sourceFingerprint is
-    // preserved best-effort because the RepositoryInvokeCompiler still consumes
-    // it as an entry-identity guard, and RepositoryAuthoringMetadataDto still
-    // requires the key when reading older entries.
+    // preserved best-effort as an entry-identity guard for the
+    // repository-reference reconciliation wire, and
+    // RepositoryAuthoringMetadataDto still requires the key when reading
+    // older entries.
     static yyjson::value MakePersistedAuthoringMetadata(
         int64_t              revision,
         std::string_view     last_change_kind,
@@ -2167,43 +2168,6 @@ namespace Das::Core::TaskScheduler
 
         result.ok = true;
         return result;
-    }
-
-    struct RepositoryProviderCompileResult
-    {
-        yyjson::value compile;
-        std::string   error_kind;
-        std::string   message;
-
-        bool Succeeded() const { return error_kind.empty(); }
-    };
-
-    static RepositoryProviderCompileResult CompileRepositoryEntryProvider(
-        std::shared_ptr<AuthoringSessionEntry> entry,
-        const yyjson::value&                   request)
-    {
-        if (!entry || !entry->session)
-        {
-            return {
-                {},
-                "sessionCreateFailed",
-                "Failed to create repository authoring session"};
-        }
-        auto& session = entry->session;
-
-        auto request_json = WrapJsonValue(CloneJsonValue(request));
-        DasPtr<Das::ExportInterface::IDasJson> compile_json;
-        auto                                   compile_result =
-            session->Compile(request_json.Get(), compile_json.Put());
-        if (DAS::IsFailed(compile_result) || !compile_json)
-        {
-            return {
-                {},
-                "providerFailed",
-                "Repository authoring provider failed to compile document"};
-        }
-
-        return {ReadJsonInterface(compile_json.Get()), {}, {}};
     }
 
     static TaskInstanceRecord* FindNextRunnableTask(
@@ -2914,9 +2878,9 @@ namespace Das::Core::TaskScheduler
         // 一次性搬家费：creator（TaskComponentCreator）后端两条解析
         // 能力注入——数据源本就在 SchedulerService（条目存储+能力注册
         // 表），经函数对象倒置依赖，ForeignInterfaceHost 不 include
-        // TaskScheduler 头。① entryId→条目最小字段集（逻辑原
-        // BuildRepositoryInvokeCompileServices 的 load_entry）；② 任务
-        // 类型→会话工厂（逻辑原 CreateAuthoringSessionWithContext）。
+        // TaskScheduler 头。① entryId→条目最小字段集（逻辑源自已退役的
+        // 仓库条目编译服务装配 load_entry 回调）；② 任务类型→会话工厂
+        // （逻辑原 CreateAuthoringSessionWithContext）。
         plugin_manager_.GetTaskComponentFactoryManager().SetBackendResolvers(
             [this](int64_t entry_id)
             {
@@ -4929,25 +4893,6 @@ namespace Das::Core::TaskScheduler
         // D-84-08/09: Compile response preserves the Provider envelope
         // `{compile, diagnostics}`. canExecute/summary rewrapping was removed;
         // entryId is echoed purely as a routing ack, matching Get/Apply.
-        //
-        // 插件侧调用方无组件注册表访问：把条目任务类型解析出的执行组件
-        // guid 附到 compile 段（engaged-only——解析不到缺省不发），调用方
-        // 仅凭编译响应即可组装子执行快照。
-        if (auto execution_component =
-                BuildRepositoryInvokeCompileServices().find_execution_component(
-                    entry);
-            execution_component.has_value())
-        {
-            if (auto compile_object = pipeline.parsed.compile.as_object())
-            {
-                // 左值 std::string 直接赋值只存裸指针（源串析构即悬挂），
-                // 必须经 copy_string 拷入 yyjson 文档池。
-                (*compile_object)[std::string_view("executionComponentGuid")] =
-                    std::make_pair(
-                        std::string_view(*execution_component),
-                        yyjson::copy_string);
-            }
-        }
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
         (*obj)[std::string_view("entryId")] = entry_id;
@@ -4956,215 +4901,6 @@ namespace Das::Core::TaskScheduler
         (*obj)[std::string_view("diagnostics")] =
             std::move(pipeline.parsed.diagnostics);
         return result;
-    }
-
-    RepositoryInvoke::RepositoryInvokeCompileResult
-    SchedulerService::ResolveRepositoryInvokeSnapshot(
-        const RepositoryInvoke::Dto::RepositoryTaskRefDto& repository_ref)
-    {
-        return ResolveRepositoryInvokeSnapshot(
-            repository_ref,
-            RepositoryInvoke::RepositoryInvokeSourceContext{});
-    }
-
-    RepositoryInvoke::RepositoryInvokeCompileResult
-    SchedulerService::ResolveRepositoryInvokeSnapshot(
-        const RepositoryInvoke::Dto::RepositoryTaskRefDto&     repository_ref,
-        const RepositoryInvoke::RepositoryInvokeSourceContext& source_context)
-    {
-        auto fail = [](std::string code, std::string message)
-            -> RepositoryInvoke::RepositoryInvokeCompileResult
-        {
-            RepositoryInvoke::RepositoryInvokeCompileDiagnostic diagnostic;
-            diagnostic.code = std::move(code);
-            diagnostic.message = std::move(message);
-
-            RepositoryInvoke::RepositoryInvokeCompileResult result;
-            result.ok = false;
-            result.diagnostics.push_back(std::move(diagnostic));
-            return result;
-        };
-
-        {
-            const std::scoped_lock lock(mutex_);
-            if (state_.load() == SchedulerState::Running
-                || state_.load() == SchedulerState::Stopping)
-            {
-                return fail("task-working", "Scheduler is running or stopping");
-            }
-            if (!initialized_ || !task_repository_store_)
-            {
-                return fail(
-                    "not-initialized",
-                    "Scheduler profile has not been initialized");
-            }
-        }
-
-        return RepositoryInvoke::ResolveRepositoryInvokeSnapshot(
-            BuildRepositoryInvokeCompileServices(),
-            repository_ref,
-            source_context);
-    }
-
-    RepositoryInvoke::RepositoryInvokeCompileServices
-    SchedulerService::BuildRepositoryInvokeCompileServices()
-    {
-        RepositoryInvoke::RepositoryInvokeCompileServices services;
-        services.load_entry = [this](int64_t entry_id)
-            -> std::optional<Repository::Dto::RepositoryEntryDto>
-        {
-            auto& settings = plugin_manager_.GetSettingsManager();
-            auto  entry_json =
-                settings.GetTaskRepositoryEntryJson("0", entry_id);
-            if (entry_json.is_null() || !entry_json.is_object())
-            {
-                return std::nullopt;
-            }
-
-            Repository::Dto::RepositoryEntryDto entry;
-            try
-            {
-                entry = yyjson::cast<Repository::Dto::RepositoryEntryDto>(
-                    entry_json);
-            }
-            catch (const std::exception&)
-            {
-                return std::nullopt;
-            }
-
-            const std::scoped_lock lock(mutex_);
-            entry.availability = DeriveRepositoryAvailabilityLocked(entry);
-            return entry;
-        };
-        services.find_execution_component =
-            [this](const Repository::Dto::RepositoryEntryDto& entry)
-            -> std::optional<std::string>
-        {
-            DasGuid task_guid{};
-            try
-            {
-                task_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                    entry.task_type_guid);
-            }
-            catch (const std::exception&)
-            {
-                return std::nullopt;
-            }
-
-            const std::scoped_lock lock(mutex_);
-            auto*                  execution_component =
-                capability_registry_.FindExecutionComponent(task_guid);
-            if (execution_component == nullptr)
-            {
-                return std::nullopt;
-            }
-            return GuidToString(*execution_component);
-        };
-        services.compile_authoring =
-            [this](
-                const Repository::Dto::RepositoryEntryDto& entry,
-                const yyjson::value&                       request)
-            -> RepositoryInvoke::RepositoryInvokeProviderCompileResult
-        {
-            DasGuid task_guid{};
-            try
-            {
-                task_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                    entry.task_type_guid);
-            }
-            catch (const std::exception&)
-            {
-                RepositoryInvoke::RepositoryInvokeProviderCompileResult result;
-                result.ok = false;
-                return result;
-            }
-
-            TaskAuthoringCapability capability;
-            {
-                const std::scoped_lock lock(mutex_);
-                auto* authoring = capability_registry_.FindAuthoring(task_guid);
-                if (authoring == nullptr)
-                {
-                    RepositoryInvoke::RepositoryInvokeProviderCompileResult
-                        result;
-                    result.ok = false;
-                    return result;
-                }
-                capability = *authoring;
-            }
-
-            auto entry_json = CloneJsonValue(yyjson::object(entry));
-            // faces 预备 pass（执行链编译宿主与 HTTP 管线外圈同源）：嵌套
-            // 调用（graph→graph）经本通道编译子图时，子图动态边界口面
-            // （begin/end 文档口、绑条目文档口）经 context 注入编译知识源
-            // ——冷启动执行不依赖任何 UI Get 预热。混合 stamp 作缓存失效
-            // 键 + enforce_fresh=true：执行编译恒用最新口面。
-            auto context = MakeRepositoryAuthoringContextJson(
-                plugin_manager_,
-                entry.entry_id,
-                entry.accepted_properties,
-                entry_json);
-            const int64_t faces_revision = AppendComponentFacesContextKeys(
-                context,
-                entry.accepted_properties,
-                entry.entry_id);
-            auto compile_entry = GetOrCreateAuthoringSession(
-                repository_authoring_sessions_,
-                capability,
-                entry.entry_id,
-                std::move(context),
-                faces_revision,
-                /*enforce_fresh=*/true);
-            if (!compile_entry)
-            {
-                RepositoryInvoke::RepositoryInvokeProviderCompileResult result;
-                result.ok = false;
-                RepositoryInvoke::RepositoryInvokeCompileDiagnostic diagnostic;
-                diagnostic.code = "provider-compile-failed";
-                diagnostic.message =
-                    "Failed to create repository authoring session";
-                result.diagnostics.push_back(std::move(diagnostic));
-                return result;
-            }
-            RepositoryProviderCompileResult provider_compile;
-            {
-                const std::shared_lock<std::shared_mutex> read_lock(
-                    compile_entry->lock);
-                provider_compile =
-                    CompileRepositoryEntryProvider(compile_entry, request);
-            }
-
-            RepositoryInvoke::RepositoryInvokeProviderCompileResult result;
-            result.ok = provider_compile.Succeeded();
-            if (!result.ok)
-            {
-                RepositoryInvoke::RepositoryInvokeCompileDiagnostic diagnostic;
-                diagnostic.code = "provider-compile-failed";
-                diagnostic.message = provider_compile.message;
-                result.diagnostics.push_back(std::move(diagnostic));
-                return result;
-            }
-
-            // Phase 84 strict Compile result envelope is `{compile,
-            // diagnostics}`. RepositoryInvokeCompiler consumes the inner
-            // compile payload, so unwrap the validated envelope here rather
-            // than asking every downstream consumer to understand the new wire.
-            auto parsed =
-                ParseAuthoringProviderCompile(provider_compile.compile);
-            if (!parsed.error_kind.empty())
-            {
-                result.ok = false;
-                RepositoryInvoke::RepositoryInvokeCompileDiagnostic diagnostic;
-                diagnostic.code = "provider-compile-failed";
-                diagnostic.message = parsed.error_message;
-                result.diagnostics.push_back(std::move(diagnostic));
-                return result;
-            }
-            result.compile_result = std::move(parsed.compile);
-            return result;
-        };
-
-        return services;
     }
 
     // ----------------------------------------------------------------

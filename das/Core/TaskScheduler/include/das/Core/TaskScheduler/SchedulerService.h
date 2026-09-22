@@ -14,7 +14,6 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
-#include <das/Core/TaskScheduler/RepositoryInvokeCompiler.h>
 #include <das/Core/TaskScheduler/TaskAuthoringContract.h>
 #include <das/Core/TaskScheduler/TaskCapabilityRegistry.h>
 #include <das/Core/TaskScheduler/TaskRepositoryStore.h>
@@ -266,16 +265,6 @@ namespace Das::Core::TaskScheduler
         std::optional<DasGuid> FindTaskExecutionComponent(
             const DasGuid& task_guid) const;
 
-        RepositoryInvoke::RepositoryInvokeCompileResult
-        ResolveRepositoryInvokeSnapshot(
-            const RepositoryInvoke::Dto::RepositoryTaskRefDto& repository_ref);
-
-        RepositoryInvoke::RepositoryInvokeCompileResult
-        ResolveRepositoryInvokeSnapshot(
-            const RepositoryInvoke::Dto::RepositoryTaskRefDto& repository_ref,
-            const RepositoryInvoke::RepositoryInvokeSourceContext&
-                source_context);
-
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }
 
@@ -333,11 +322,6 @@ namespace Das::Core::TaskScheduler
             const TaskTypeRecord&            task_type,
             Das::PluginInterface::IDasTask** pp_out_task);
 
-        /// Repository-invoke compile services backing the public snapshot
-        /// resolver (entry resolution for settings-driven invocation nodes).
-        RepositoryInvoke::RepositoryInvokeCompileServices
-        BuildRepositoryInvokeCompileServices();
-
         /// Find task type by GUID. Returns nullptr if not found.
         TaskTypeRecord* FindTaskType(const DasGuid& task_guid);
 
@@ -367,8 +351,8 @@ namespace Das::Core::TaskScheduler
 
         /// 组件文档口面预备 pass：图会话 context 装配时（Get/Apply/Compile
         /// 管线外圈 + 执行链编译宿主——ExecuteSelectedTask/
-        /// ComputeInitialNextExecutionTime/RepositoryInvoke 的
-        /// compile_authoring，锁外）扫图文档节点，把组件文档的口面快照现
+        /// ComputeInitialNextExecutionTime 等编译调用方，锁外）扫图文档节
+        /// 点，把组件文档的口面快照现
         /// 算注入 context 的 nodeFaces/entryFaces
         /// 键。瞬态现算零持久化零新缓存层
         /// ——绑条目节点复用既有条目会话缓存（GetOrCreateAuthoringSession，
