@@ -156,9 +156,7 @@ class DasFlowControlTaskComponent final
           DasFlowControlTaskComponent>
 {
 public:
-    DasFlowControlTaskComponent(
-        std::string_view                                  kind,
-        DasPtr<PluginInterface::IDasTaskComponentCreator> host);
+    DasFlowControlTaskComponent(std::string_view kind);
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -178,11 +176,6 @@ public:
     void SetWindowEnumeratorForTest(FlowControlWindowEnumerator enumerator);
 
 private:
-    DasResult DoRepositoryInvoke(
-        PluginInterface::IDasStopToken*       stop_token,
-        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
-        ExportInterface::IDasPortMap**        pp_out_port_map);
-
     // Pure signal routing: read `condition`, emit the `true`/`false` signal.
     // The runtime gates the downstream branch on the emitted signal (DAS-60
     // Stage 4).
@@ -316,9 +309,8 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
-    std::string                                       kind_;
-    yyjson::value                                     settings_;
-    DasPtr<PluginInterface::IDasTaskComponentCreator> host_;
+    std::string   kind_;
+    yyjson::value settings_;
 
     // 注入缝：空 = 用生产实现（首次 DoLaunch 惰性安装）。
     FlowControlProcessSpawner   process_spawner_;
@@ -330,8 +322,7 @@ class DasFlowControlTaskComponentFactory final
           DasFlowControlTaskComponentFactory>
 {
 public:
-    explicit DasFlowControlTaskComponentFactory(
-        PluginInterface::IDasTaskComponentCreator* p_host);
+    DasFlowControlTaskComponentFactory() = default;
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -339,9 +330,6 @@ public:
     DAS_IMPL CreateComponent(
         const DasGuid&                       component_guid,
         PluginInterface::IDasTaskComponent** pp_out_component) override;
-
-private:
-    DasPtr<PluginInterface::IDasTaskComponentCreator> host_;
 };
 
 DAS_NS_END

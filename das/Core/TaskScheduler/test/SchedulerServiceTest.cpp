@@ -4769,7 +4769,6 @@ TEST_F(
         std::string_view("fake.compile"));
 
     EXPECT_FALSE(obj->contains(std::string_view("executionInput")));
-    EXPECT_FALSE(obj->contains(std::string_view("compiledSnapshot")));
     EXPECT_FALSE(obj->contains(std::string_view("providerDebug")));
 
     const ipc_scoped_lock lock(shared_state_->mutex);
@@ -5358,8 +5357,8 @@ TEST_F(SchedulerRuntimeBackedTest, GraphFacesPassInjectsEntryFacesForBoundNode)
                         "targetKind": "componentRef",
                         "componentRef": {
                             "kind": "componentRef",
-                            "componentGuid": "68F10007-0000-4000-8000-000000000007",
-                            "pluginGuid": "12345678-9ABC-4DEF-8123-456789ABCDEF"
+                            "componentGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
                         }
                     },
                     "settings": {
@@ -5380,7 +5379,7 @@ TEST_F(SchedulerRuntimeBackedTest, GraphFacesPassInjectsEntryFacesForBoundNode)
     EnableStrictAuthoringWire(*shared_state_);
 
     const auto invoke_node_guid =
-        std::string_view("68F10007-0000-4000-8000-000000000007");
+        std::string_view("F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3");
     const yyjson::value request(Das::Utils::MakeYyjsonObject());
 
     // ① 条目文档无 ports section（A4）：跳过——绑节点无动态口，Get 正常。
@@ -5584,7 +5583,7 @@ TEST_F(
     }
 
     // 父图任务实例（task 0）：begin 动态口 p0（连线源——begin 口对的出侧
-    // 供图内寻址）+ 绑条目调用节点（invokeRepository 组件，repositoryRef
+    // 供图内寻址）+ 绑条目调用节点（GraphTask 执行组件，repositoryRef
     // 持 entry 7）。
     {
         auto properties = Das::Utils::ParseYyjsonFromString(R"json({
@@ -5613,8 +5612,8 @@ TEST_F(
                         "targetKind": "componentRef",
                         "componentRef": {
                             "kind": "componentRef",
-                            "componentGuid": "68F10007-0000-4000-8000-000000000007",
-                            "pluginGuid": "7115BBFA-7E57-494E-82D5-D4134C367E13"
+                            "componentGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
                         }
                     },
                     "settings": {
@@ -5709,7 +5708,7 @@ TEST_F(
     //    GetDocument 根 ports section 被抽取路径命中 → 调用节点口面含
     //    内层动态口（p1/q1）。
     const auto invoke_node_guid =
-        std::string_view("68F10007-0000-4000-8000-000000000007");
+        std::string_view("F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3");
     {
         auto result = scheduler_->GetTaskAuthoringDocument(0, request);
         auto obj = result.as_object();
@@ -6009,8 +6008,8 @@ TEST_F(
                         "targetKind": "componentRef",
                         "componentRef": {
                             "kind": "componentRef",
-                            "componentGuid": "68F10007-0000-4000-8000-000000000007",
-                            "pluginGuid": "7115BBFA-7E57-494E-82D5-D4134C367E13"
+                            "componentGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
                         }
                     },
                     "settings": {
@@ -6124,7 +6123,7 @@ TEST_F(
 
     // ② 父图 Get：预备 pass 抽取命中——调用节点口面含三口。
     const auto invoke_node_guid =
-        std::string_view("68F10007-0000-4000-8000-000000000007");
+        std::string_view("F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3");
     {
         auto result = scheduler_->GetTaskAuthoringDocument(0, request);
         auto obj = result.as_object();

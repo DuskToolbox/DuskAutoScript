@@ -9,8 +9,6 @@ DAS_NS_BEGIN
 class DasFlowControlPlugin final
     : public PluginInterface::DasPluginPackageImplBase<DasFlowControlPlugin>
 {
-    DasPtr<PluginInterface::IDasTaskComponentCreator> task_component_host_;
-
 public:
     DAS_IMPL EnumFeature(
         size_t                             index,
@@ -19,18 +17,12 @@ public:
     DAS_IMPL CreateFeatureInterface(size_t index, IDasBase** pp_out_interface)
         override;
 
-    // 存储加载器注入的 task component host（顺序契约：注入先于枚举）。
+    // 加载器顺序契约（注入先于枚举）仍需本方法可达；流程组件不消费
+    // creator（调用中介组件退役后组件工厂零宿主依赖），接受注入即丢弃。
     DAS_IMPL SetTaskComponentCreator(
-        PluginInterface::IDasTaskComponentCreator* p_host) override
+        PluginInterface::IDasTaskComponentCreator* /*p_host*/) override
     {
-        task_component_host_ =
-            DasPtr<PluginInterface::IDasTaskComponentCreator>(p_host);
         return DAS_S_OK;
-    }
-
-    PluginInterface::IDasTaskComponentCreator* GetTaskComponentCreator() const
-    {
-        return task_component_host_.Get();
     }
 };
 

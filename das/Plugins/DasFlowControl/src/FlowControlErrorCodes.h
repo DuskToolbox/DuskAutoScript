@@ -13,9 +13,7 @@ namespace Das::Plugins::DasFlowControl
     // （跨插件撞段会导致 ErrorLens 误路由）。
     //
     // 两层失败语义（执行失败 = 错误码；业务结果 = status 端口）：
-    // - launch 全部失败场景是「无法完成启动动作」→ 错误码；
-    // - invokeRepository 的快照/子组件创建失败是「无法完成调用动作」→
-    //   错误码；子任务自身成败是业务结果 → status 端口（不走这些码）。
+    // launch 全部失败场景是「无法完成启动动作」→ 错误码。
 
     /// 启动组件未配置可执行文件路径（对应 flow.diagnostic.
     /// launch-exe-path-missing）。
@@ -33,30 +31,6 @@ namespace Das::Plugins::DasFlowControl
     /// 多个窗口匹配等待配置（launch-window-ambiguous）。
     inline constexpr DasResult DAS_E_FLOW_LAUNCH_WINDOW_AMBIGUOUS =
         static_cast<DasResult>(-10104);
-
-    /// invokeRepository 输入缺 compiledSnapshot 端口。
-    inline constexpr DasResult DAS_E_FLOW_INVOKE_SNAPSHOT_MISSING =
-        static_cast<DasResult>(-10105);
-
-    /// compiledSnapshot JSON 解析/反序列化失败。
-    inline constexpr DasResult DAS_E_FLOW_INVOKE_SNAPSHOT_INVALID =
-        static_cast<DasResult>(-10106);
-
-    /// compiledSnapshot 版本不受支持。
-    inline constexpr DasResult DAS_E_FLOW_INVOKE_SNAPSHOT_VERSION_UNSUPPORTED =
-        static_cast<DasResult>(-10107);
-
-    /// 任务组件宿主不可用（无法创建子组件的宿主环境）。
-    inline constexpr DasResult DAS_E_FLOW_INVOKE_HOST_UNAVAILABLE =
-        static_cast<DasResult>(-10108);
-
-    /// 编译快照的组件 GUID 非法。
-    inline constexpr DasResult DAS_E_FLOW_INVOKE_CHILD_GUID_INVALID =
-        static_cast<DasResult>(-10109);
-
-    /// 子任务组件创建失败（宿主未注册该组件或工厂拒绝）。
-    inline constexpr DasResult DAS_E_FLOW_INVOKE_CHILD_CREATE_FAILED =
-        static_cast<DasResult>(-10110);
 
     /// 比较/算术组件配置的运算符在值域外（operator-invalid）。
     inline constexpr DasResult DAS_E_FLOW_OPERATOR_INVALID =
@@ -80,12 +54,6 @@ namespace Das::Plugins::DasFlowControl
         DAS_E_FLOW_LAUNCH_SPAWN_FAILED,
         DAS_E_FLOW_LAUNCH_WINDOW_TIMEOUT,
         DAS_E_FLOW_LAUNCH_WINDOW_AMBIGUOUS,
-        DAS_E_FLOW_INVOKE_SNAPSHOT_MISSING,
-        DAS_E_FLOW_INVOKE_SNAPSHOT_INVALID,
-        DAS_E_FLOW_INVOKE_SNAPSHOT_VERSION_UNSUPPORTED,
-        DAS_E_FLOW_INVOKE_HOST_UNAVAILABLE,
-        DAS_E_FLOW_INVOKE_CHILD_GUID_INVALID,
-        DAS_E_FLOW_INVOKE_CHILD_CREATE_FAILED,
         DAS_E_FLOW_OPERATOR_INVALID,
         DAS_E_FLOW_DIVIDE_BY_ZERO,
         DAS_E_FLOW_LAUNCH_EXE_NOT_FOUND,

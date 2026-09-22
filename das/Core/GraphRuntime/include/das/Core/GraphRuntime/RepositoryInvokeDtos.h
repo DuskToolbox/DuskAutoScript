@@ -10,30 +10,16 @@
 
 namespace Das::Core::GraphRuntime::RepositoryInvoke::Dto
 {
-    // Repository reference and child-execution-snapshot DTOs; home is
-    // GraphRuntime because the reconciliation wire (expectedRevision /
-    // sourceFingerprint) rides with the closure-driven compile chain.
-    // Moved here from TaskScheduler RepositoryInvokeDtos.h;
-    // invokeRepository-specific Settings/Input/Outputs/Signals/Result
-    // families stay in TaskScheduler until that component retires.
+    // Repository reference wire; home is GraphRuntime because the
+    // reconciliation fields (expectedRevision / sourceFingerprint) ride with
+    // the closure-driven compile chain. The invokeRepository component's
+    // snapshot wire retired together with that component.
     struct RepositoryTaskRefDto
     {
         std::string                kind = "taskRepositoryRef";
         int64_t                    entry_id = 0;
         std::optional<int64_t>     expected_revision;
         std::optional<std::string> source_fingerprint;
-    };
-
-    struct ChildExecutionSnapshotDto
-    {
-        int32_t                    version = 1;
-        int64_t                    source_entry_id = 0;
-        int64_t                    source_revision = 0;
-        std::optional<std::string> source_fingerprint;
-        std::string                plugin_guid;
-        std::string                task_type_guid;
-        std::string                component_guid;
-        yyjson::value              execution_input;
     };
 
     namespace Detail
@@ -71,20 +57,12 @@ namespace Das::Core::GraphRuntime::RepositoryInvoke::Dto
     }
 
 DAS_GRAPH_RUNTIME_REPOSITORY_INVOKE_DTO_CASTER(RepositoryTaskRefDto);
-DAS_GRAPH_RUNTIME_REPOSITORY_INVOKE_DTO_CASTER(ChildExecutionSnapshotDto);
 
 #undef DAS_GRAPH_RUNTIME_REPOSITORY_INVOKE_DTO_CASTER
 
 template <>
 struct yyjson::field_name_rule<
     Das::Core::GraphRuntime::RepositoryInvoke::Dto::RepositoryTaskRefDto>
-{
-    using type = yyjson::snake_to_camel_transform;
-};
-
-template <>
-struct yyjson::field_name_rule<
-    Das::Core::GraphRuntime::RepositoryInvoke::Dto::ChildExecutionSnapshotDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

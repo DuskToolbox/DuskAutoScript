@@ -160,42 +160,6 @@
           "diagnostics": []
         }
       },
-      "68F10007-0000-4000-8000-000000000007": {
-        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
-        "definition": {
-          "schemaVersion": 1,
-          "kind": "das.flow.invokeRepository",
-          "label": { "en": "Invoke Repository", "zh-cn": "调用仓库" },
-          "componentGuid": "68F10007-0000-4000-8000-000000000007",
-          "inputs": [
-            {
-              "id": "compiledSnapshot",
-              "type": "object",
-              "label": { "en": "Compiled Snapshot", "zh-cn": "编译快照" }
-            },
-            {
-              "id": "runtimeInputs",
-              "type": "object",
-              "label": { "en": "Runtime Inputs", "zh-cn": "运行期输入" }
-            }
-          ],
-          "outputs": [
-            {
-              "id": "result",
-              "type": "object",
-              "label": { "en": "Result", "zh-cn": "结果" }
-            }
-          ],
-          "config": {
-            "repositoryRef": {
-              "type": "taskRepositoryRef",
-              "label": { "en": "Repository Entry", "zh-cn": "仓库条目" },
-              "taskGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3"
-            }
-          },
-          "diagnostics": []
-        }
-      },
       "68F10008-0000-4000-8000-000000000008": {
         "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
         "definition": {
