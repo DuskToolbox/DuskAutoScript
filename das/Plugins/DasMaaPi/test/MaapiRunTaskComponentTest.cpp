@@ -3,6 +3,7 @@
 #include "../src/PluginUtils.h"
 #include "FakeMaaApiBoundary.h"
 
+#include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
@@ -92,22 +93,7 @@ namespace
         ~ScopedBoundaryHook() { SetMaaApiBoundaryForTest(nullptr); }
     };
 
-    // 仓库解析缝注入 RAII：测试体内 fake resolver，析构恢复生产实现。
-    class ScopedRepositoryResolverHook final
-    {
-    public:
-        explicit ScopedRepositoryResolverHook(RepositoryEntryResolver resolver)
-        {
-            SetRepositoryEntryResolverForTest(std::move(resolver));
-        }
-
-        ~ScopedRepositoryResolverHook()
-        {
-            SetRepositoryEntryResolverForTest(nullptr);
-        }
-    };
-
-    // 空 PortMap（executionInput 缺席）构造器——repositoryRef 分支的输入面。
+    // 空 PortMap（executionInput 缺席）构造器——缺线具名失败用例的输入面。
     DasPtr<ExportInterface::IDasPortMap> MakeEmptyPortMap()
     {
         DasPtr<ExportInterface::IDasPortMap> input_map;
@@ -228,8 +214,10 @@ TEST(DasMaaPiRunTaskComponent, DoExecutesEnvelopeFromExecutionInputPort)
     EXPECT_FALSE(diagnostics.empty());
 }
 
-// 输入口缺 executionInput（空 PortMap）：显性失败，无静默兜底。
-TEST(DasMaaPiRunTaskComponent, DoWithoutExecutionInputReturnsInvalidArgument)
+// 输入口缺 executionInput（空 PortMap）：遇缺即错——具名失败码
+// DAS_E_MAAPI_EXECUTION_INPUT_MISSING（与 FlowControl compiledSnapshot
+// 缺失同语义），运行期零回退、零主进程服务查询，boundary 零调用。
+TEST(DasMaaPiRunTaskComponent, DoWithoutExecutionInputReturnsMissingCode)
 {
     MaapiRunTaskComponent    component;
     FakeMaaApiBoundary       fake;
@@ -241,7 +229,7 @@ TEST(DasMaaPiRunTaskComponent, DoWithoutExecutionInputReturnsInvalidArgument)
     DasPtr<ExportInterface::IDasPortMap> result;
     const auto hr = component.Do(nullptr, empty_map.Get(), result.Put());
 
-    EXPECT_EQ(hr, DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(hr, DAS_E_MAAPI_EXECUTION_INPUT_MISSING);
     EXPECT_TRUE(fake.calls.empty());
 }
 
@@ -545,25 +533,14 @@ TEST(DasMaaPiRunTaskComponent, DoPropagatesRuntimeFailureWithDiagnostics)
     EXPECT_FALSE(stopped);
 }
 
-// executionInput 缺失 + repositoryRef 有效：Do 经解析缝取编译 envelope，
-// 自行执行（invokeRepository 逻辑内化——用户不手动包节点）；输出端口
-// 三键照常填充。
-TEST(DasMaaPiRunTaskComponent, DoResolvesRepositoryEntryWhenInputPortMissing)
+// settings 携带 repositoryRef 但 executionInput 端口缺线：同样遇缺即错
+// （D-10 后 envelope 唯一来源 = 编译期注入链经输入口喂线，节点不再自查
+// 仓库条目）——具名失败码与空 PortMap 情形一致，boundary 零调用。
+TEST(DasMaaPiRunTaskComponent, DoWithRepositoryRefButMissingWireFailsLoudly)
 {
     MaapiRunTaskComponent    component;
     FakeMaaApiBoundary       fake;
     const ScopedBoundaryHook hook(fake);
-
-    int64_t                            resolved_entry_id = -1;
-    const ScopedRepositoryResolverHook resolver_hook(
-        [&resolved_entry_id](int64_t entry_id)
-        {
-            resolved_entry_id = entry_id;
-            RepositoryResolveOutcome outcome;
-            outcome.ok = true;
-            outcome.envelope_json = MakeEnvelopeJson();
-            return outcome;
-        });
 
     DasPtr<ExportInterface::IDasJson> settings_result;
     ASSERT_EQ(
@@ -576,69 +553,18 @@ TEST(DasMaaPiRunTaskComponent, DoResolvesRepositoryEntryWhenInputPortMissing)
     const auto                           hr =
         component.Do(nullptr, MakeEmptyPortMap().Get(), result.Put());
 
-    EXPECT_EQ(hr, DAS_S_OK);
-    EXPECT_EQ(resolved_entry_id, 5);
-    EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:"));
-
-    ASSERT_TRUE(result);
-    const auto completed_tasks = ReadStringPort(result.Get(), "completedTasks");
-    EXPECT_NE(completed_tasks.find("E2ETestTask"), std::string::npos);
-    const auto diagnostics = ReadStringPort(result.Get(), "diagnostics");
-    EXPECT_FALSE(diagnostics.empty());
-}
-
-// 解析失败：Do 返回失败 DasResult，diagnostics 携带可读原因（不崩、不
-// 静默成功），boundary 零调用。
-TEST(DasMaaPiRunTaskComponent, DoRepositoryResolveFailureReturnsFail)
-{
-    MaapiRunTaskComponent    component;
-    FakeMaaApiBoundary       fake;
-    const ScopedBoundaryHook hook(fake);
-
-    const ScopedRepositoryResolverHook resolver_hook(
-        [](int64_t)
-        {
-            RepositoryResolveOutcome outcome;
-            outcome.ok = false;
-            outcome.error_message = "repository entry exploded";
-            return outcome;
-        });
-
-    DasPtr<ExportInterface::IDasJson> settings_result;
-    ASSERT_EQ(
-        component.ApplySettingsChange(
-            MakeSettingsChangeRequestFromText(R"({"repositoryRef": 5})").Get(),
-            settings_result.Put()),
-        DAS_S_OK);
-
-    DasPtr<ExportInterface::IDasPortMap> result;
-    const auto                           hr =
-        component.Do(nullptr, MakeEmptyPortMap().Get(), result.Put());
-
-    EXPECT_TRUE(DAS::IsFailed(hr));
+    EXPECT_EQ(hr, DAS_E_MAAPI_EXECUTION_INPUT_MISSING);
     EXPECT_TRUE(fake.calls.empty());
-    ASSERT_TRUE(result);
-    const auto diagnostics = ReadStringPort(result.Get(), "diagnostics");
-    EXPECT_NE(diagnostics.find("repository entry exploded"), std::string::npos);
 }
 
-// runtimeInputs 覆盖合并：envelope 的运行时输入段（maapi.tasks[].pipeline
-// 前对象级覆盖）被 settings.runtimeInputs 合并后执行——合并键进
-// PostTask 的 pipeline_override。
-TEST(DasMaaPiRunTaskComponent, DoMergesRuntimeInputsIntoResolvedEnvelope)
+// runtimeInputs 覆盖合并：envelope 来自 executionInput 端口喂线（编译期
+// 注入链），settings.runtimeInputs 的键级覆盖与 envelope 来源无关——合并
+// 键进 PostTask 的 pipeline_override。
+TEST(DasMaaPiRunTaskComponent, DoMergesRuntimeInputsIntoPortFedEnvelope)
 {
     MaapiRunTaskComponent    component;
     FakeMaaApiBoundary       fake;
     const ScopedBoundaryHook hook(fake);
-
-    const ScopedRepositoryResolverHook resolver_hook(
-        [](int64_t)
-        {
-            RepositoryResolveOutcome outcome;
-            outcome.ok = true;
-            outcome.envelope_json = MakeEnvelopeJson();
-            return outcome;
-        });
 
     DasPtr<ExportInterface::IDasJson> settings_result;
     ASSERT_EQ(
@@ -649,9 +575,10 @@ TEST(DasMaaPiRunTaskComponent, DoMergesRuntimeInputsIntoResolvedEnvelope)
             settings_result.Put()),
         DAS_S_OK);
 
+    DasPtr<ExportInterface::IDasPortMap> input_map =
+        MakeInputPortMap(MakeEnvelopeJson());
     DasPtr<ExportInterface::IDasPortMap> result;
-    const auto                           hr =
-        component.Do(nullptr, MakeEmptyPortMap().Get(), result.Put());
+    const auto hr = component.Do(nullptr, input_map.Get(), result.Put());
 
     EXPECT_EQ(hr, DAS_S_OK);
     EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:"));
@@ -660,24 +587,14 @@ TEST(DasMaaPiRunTaskComponent, DoMergesRuntimeInputsIntoResolvedEnvelope)
     EXPECT_TRUE(fake.ContainsSubstring("custom_flag"));
 }
 
-// executionInput 端口有值时喂线路径优先：即使 repositoryRef 已设置也不走
-// 解析缝（既有喂线路径零回归）。
-TEST(DasMaaPiRunTaskComponent, DoPrefersExecutionInputPortOverRepositoryRef)
+// settings 携带 repositoryRef 且 executionInput 端口喂线：直接消费端口
+// envelope（唯一来源契约锁定——repositoryRef 供编译期注入链识别节点绑定
+// 的条目，运行期不参与供数）。
+TEST(DasMaaPiRunTaskComponent, DoWithRepositoryRefConsumesExecutionInputPort)
 {
     MaapiRunTaskComponent    component;
     FakeMaaApiBoundary       fake;
     const ScopedBoundaryHook hook(fake);
-
-    bool                               resolver_called = false;
-    const ScopedRepositoryResolverHook resolver_hook(
-        [&resolver_called](int64_t)
-        {
-            resolver_called = true;
-            RepositoryResolveOutcome outcome;
-            outcome.ok = true;
-            outcome.envelope_json = MakeEnvelopeJson();
-            return outcome;
-        });
 
     DasPtr<ExportInterface::IDasJson> settings_result;
     ASSERT_EQ(
@@ -692,7 +609,6 @@ TEST(DasMaaPiRunTaskComponent, DoPrefersExecutionInputPortOverRepositoryRef)
     const auto hr = component.Do(nullptr, input_map.Get(), result.Put());
 
     EXPECT_EQ(hr, DAS_S_OK);
-    EXPECT_FALSE(resolver_called);
     EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:"));
 }
 
