@@ -87,7 +87,7 @@ void GraphCompiler::SetPortSurfaceProvider(
 }
 
 // ---------------------------------------------------------------------------
-// BindNodeFaces / BindEntryFaces / MergeFacesOntoSurface
+// BindNodeFaces / BindRepositoryFields / MergeFacesOntoSurface
 // ---------------------------------------------------------------------------
 
 void GraphCompiler::BindNodeFaces(const NodeFacesMap* node_faces)
@@ -95,11 +95,8 @@ void GraphCompiler::BindNodeFaces(const NodeFacesMap* node_faces)
     node_faces_ = node_faces;
 }
 
-void GraphCompiler::BindEntryFaces(
-    const EntryFacesMap* entry_faces,
-    RepositoryFieldMap   repository_fields)
+void GraphCompiler::BindRepositoryFields(RepositoryFieldMap repository_fields)
 {
-    entry_faces_ = entry_faces;
     repository_fields_ = std::move(repository_fields);
 }
 
@@ -188,7 +185,7 @@ void GraphCompiler::MergeFacesOntoSurface(
 std::optional<std::string> GraphCompiler::ResolveBoundEntryId(
     const Dto::GraphNodeDto& node) const
 {
-    if (repository_fields_.empty() || entry_faces_ == nullptr)
+    if (repository_fields_.empty())
     {
         return std::nullopt;
     }
@@ -771,10 +768,8 @@ GraphCompiler::ManifestPorts GraphCompiler::ResolveNodePorts(
                 node_is_boundary);
         }
     }
-    // 绑条目调用节点口面：注入 pass 已供面的节点由 pass 接管（文档根
-    // ports 现算，新链）；未接管者并入 entryFaces[该 entryId]（去重
-    // 规则同上，face 胜出+WARN）——签名物化存储副本（112-06 通道）的
-    // 替代数据源，存储退役前的并行通道（后续删除）。
+    // 绑条目调用节点口面：唯一源=注入 pass 编译期现算（被引条目文档根
+    // ports 自述——文档自述消费，禁第二份推导）。
     const auto pass_face = reference_faces_.find(node.node_id);
     if (pass_face != reference_faces_.end())
     {
@@ -783,15 +778,6 @@ GraphCompiler::ManifestPorts GraphCompiler::ResolveNodePorts(
             MergeFacesOntoSurface(ports, node.node_id, pass_face->second);
         }
         return ports;
-    }
-    const auto bound_entry_id = ResolveBoundEntryId(node);
-    if (bound_entry_id.has_value() && entry_faces_ != nullptr)
-    {
-        const auto found = entry_faces_->find(*bound_entry_id);
-        if (found != entry_faces_->end() && !found->second.empty())
-        {
-            MergeFacesOntoSurface(ports, node.node_id, found->second);
-        }
     }
     return ports;
 }
@@ -1010,13 +996,13 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
 {
     std::vector<CompileEdgeDiagnostic> diagnostics;
 
-    // 边校验的口面 = 声明面 ∪ 投影面 ∪ faces 注入面：工厂 manifest、会话
-    // 注入的 catalog 端口面、nodeFaces/entryFaces 文档口面快照任一可用
-    // 即可出诊断（authoring 会话编译路径只绑定 provider，faces-only 文档
-    // 只绑定 faces，提前返回会静默吞掉全部边诊断）。
+    // 边校验的口面 = 声明面 ∪ 投影面 ∪ faces 注入面 ∪ 注入 pass 现算面：
+    // 工厂 manifest、会话注入的 catalog 端口面、nodeFaces 文档口面快照、
+    // 引用闭包注入 pass 的文档根 ports 任一可用即可出诊断（authoring 会
+    // 话编译路径只绑定 provider，faces-only 文档只绑定 faces，提前返回会
+    // 静默吞掉全部边诊断）。
     const bool faces_channel_bound =
-        (node_faces_ != nullptr && !node_faces_->empty())
-        || (entry_faces_ != nullptr && !entry_faces_->empty());
+        (node_faces_ != nullptr && !node_faces_->empty());
     if (!factory_manager_ && !port_surface_provider_ && !faces_channel_bound)
     {
         DAS_CORE_LOG_WARN("Factory manager not set");
@@ -1293,14 +1279,8 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
 bool GraphCompiler::NodeCarriesInjectedFaces(
     const Dto::GraphNodeDto& node) const
 {
-    if (node_faces_ != nullptr
-        && node_faces_->find(node.node_id) != node_faces_->end())
-    {
-        return true;
-    }
-    const auto bound_entry_id = ResolveBoundEntryId(node);
-    return bound_entry_id.has_value() && entry_faces_ != nullptr
-           && entry_faces_->find(*bound_entry_id) != entry_faces_->end();
+    return node_faces_ != nullptr
+           && node_faces_->find(node.node_id) != node_faces_->end();
 }
 
 bool GraphCompiler::IsTypeCompatibleWithRegistry(

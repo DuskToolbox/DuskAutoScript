@@ -1123,72 +1123,6 @@ namespace Das::Core::TaskScheduler
         return ports;
     }
 
-    // faces 注册类型重建：文档根 types section → {name[,compatibleWith]}
-    // （name 必填非空；compatibleWith 仅取字符串元素重建）。缺 section 或
-    // 全畸形 → nullopt。
-    std::optional<yyjson::value> ExtractFaceTypesValue(
-        const yyjson::value& document)
-    {
-        auto doc_obj = document.as_object();
-        if (!doc_obj || !doc_obj->contains(std::string_view("types")))
-        {
-            return std::nullopt;
-        }
-        auto types_arr = (*doc_obj)[std::string_view("types")].as_array();
-        if (!types_arr)
-        {
-            return std::nullopt;
-        }
-        yyjson::value types(Das::Utils::MakeYyjsonArray());
-        auto          types_out = types.as_array();
-        for (const auto& type_value : *types_arr)
-        {
-            auto type_obj = type_value.as_object();
-            if (!type_obj || !type_obj->contains(std::string_view("name")))
-            {
-                continue;
-            }
-            auto name = (*type_obj)[std::string_view("name")].as_string();
-            if (!name || name->empty())
-            {
-                continue;
-            }
-            yyjson::value type(Das::Utils::MakeYyjsonObject());
-            auto          type_out = type.as_object();
-            (*type_out)[std::string_view("name")] =
-                std::make_pair(std::string_view(*name), yyjson::copy_string);
-            if (type_obj->contains(std::string_view("compatibleWith")))
-            {
-                auto compatible =
-                    (*type_obj)[std::string_view("compatibleWith")].as_array();
-                if (compatible)
-                {
-                    yyjson::value compatible_value(
-                        Das::Utils::MakeYyjsonArray());
-                    auto compatible_out = compatible_value.as_array();
-                    for (const auto& compatible_name : *compatible)
-                    {
-                        auto compatible_text = compatible_name.as_string();
-                        if (!compatible_text)
-                        {
-                            continue;
-                        }
-                        compatible_out->emplace_back(
-                            yyjson::value(std::string(*compatible_text)));
-                    }
-                    (*type_out)[std::string_view("compatibleWith")] =
-                        std::move(compatible_value);
-                }
-            }
-            types_out->emplace_back(std::move(type));
-        }
-        if (types_out->empty())
-        {
-            return std::nullopt;
-        }
-        return types;
-    }
-
     // 节点作用域组件会话 context：节点 settings（扫描清单已提取的独立
     // 值）平铺 + 宿主 revision + componentContext 标记（true 时投影器按
     // 组件语境门控）。平铺形状与边界会话的 context 契约一致（顶层
@@ -3748,6 +3682,8 @@ namespace Das::Core::TaskScheduler
         const yyjson::value& properties,
         int64_t              host_id)
     {
+        // host_id 保留在签名（调用方语境），绑条目分支退役后不再消费。
+        std::ignore = host_id;
         int64_t host_revision = -1;
         if (auto context_obj = context.as_object();
             context_obj && context_obj->contains(std::string_view("revision")))
@@ -3778,15 +3714,12 @@ namespace Das::Core::TaskScheduler
             return host_revision;
         }
 
-        // 宿主会话缓存的有效 revision 戳（见头文件注释）：宿主 revision 与
-        // 全部绑条目 revision 的混合，任一变化即触发宿主会话重建。
+        // 宿主会话缓存的有效 revision 戳（见头文件注释）：宿主 revision
+        // 本身（绑条目 revision 混入已随 entryFaces 预计算分支退役——
+        // 绑条目口面/产物改为编译期现算，缓存会话不再携带条目派生数据）。
         uint64_t stamp = static_cast<uint64_t>(host_revision);
 
-        auto& settings = plugin_manager_.GetSettingsManager();
-
-        yyjson::value               node_faces(Das::Utils::MakeYyjsonArray());
-        yyjson::value               entry_faces(Das::Utils::MakeYyjsonArray());
-        std::unordered_set<int64_t> seen_entry_ids;
+        yyjson::value node_faces(Das::Utils::MakeYyjsonArray());
         std::unordered_set<std::string> seen_node_ids;
 
         for (const auto& binding : bindings)
@@ -3796,110 +3729,12 @@ namespace Das::Core::TaskScheduler
                 continue;
             }
 
-            // ── 绑条目分支：entryFaces——条目文档口面经既有缓存会话现算
-            //    （缺条目/无 capability/无 ports section 一律跳过不产诊断）。
+            // ── 绑条目分支已退役（口面唯一源=编译期会话现算——注入 pass
+            //    对绑条目节点现算口面/产物；条目 revision 不再并入宿主会
+            //    话失效戳：编译产物不落盘不进缓存）。仅未绑 componentRef
+            //    分支产 nodeFaces。
             if (binding.bound_entry_id.has_value())
             {
-                const int64_t entry_id = *binding.bound_entry_id;
-                if (entry_id == host_id
-                    || !seen_entry_ids.insert(entry_id).second)
-                {
-                    // 自引用防护（宿主条目会话锁自死锁）+ wire 契约
-                    // （entryFaces 每条目一条）。
-                    continue;
-                }
-                auto entry_json =
-                    settings.GetTaskRepositoryEntryJson("0", entry_id);
-                if (entry_json.is_null() || !entry_json.is_object())
-                {
-                    continue;
-                }
-                Repository::Dto::RepositoryEntryDto entry;
-                try
-                {
-                    entry = yyjson::cast<Repository::Dto::RepositoryEntryDto>(
-                        entry_json);
-                }
-                catch (const std::exception&)
-                {
-                    continue;
-                }
-                // 条目 revision 并入宿主会话失效戳：该条目的持久层
-                // revision 推进（对条目自身的 apply）必须连带重建宿主
-                // 图会话，否则缓存会话带着旧 entryFaces 续命。
-                {
-                    const uint64_t entry_revision =
-                        static_cast<uint64_t>(GetAuthoringRevision(entry_json));
-                    const uint64_t entry_key = static_cast<uint64_t>(entry_id);
-                    stamp ^= entry_key * 0x9E3779B97F4A7C15ULL;
-                    stamp *= 0xBF58476D1CE4E5B9ULL;
-                    stamp ^= entry_revision * 0x94D049BB133111EBULL;
-                    stamp *= 0xBF58476D1CE4E5B9ULL;
-                }
-                DasGuid entry_task_guid{};
-                try
-                {
-                    entry_task_guid =
-                        Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                            entry.task_type_guid);
-                }
-                catch (const std::exception&)
-                {
-                    continue;
-                }
-                TaskAuthoringCapability entry_capability;
-                {
-                    const std::scoped_lock lock(mutex_);
-                    if (ResolveAuthoringCapabilityLocked(
-                            entry_task_guid,
-                            entry_capability))
-                    {
-                        continue;
-                    }
-                }
-                auto entry_session = GetOrCreateAuthoringSession(
-                    repository_authoring_sessions_,
-                    entry_capability,
-                    entry_id,
-                    MakeRepositoryAuthoringContextJson(
-                        plugin_manager_,
-                        entry_id,
-                        entry.accepted_properties,
-                        entry_json),
-                    GetAuthoringRevision(entry_json),
-                    /*enforce_fresh=*/true);
-                if (!entry_session || !entry_session->session)
-                {
-                    continue;
-                }
-                AuthoringGetPipelineResult pipeline;
-                {
-                    const std::shared_lock<std::shared_mutex> read_lock(
-                        entry_session->lock);
-                    pipeline = RunAuthoringGetPipeline(
-                        entry_session,
-                        MakeEmptyAuthoringGetRequest());
-                }
-                if (!pipeline.ok || !pipeline.parsed.has_document)
-                {
-                    continue;
-                }
-                auto ports = ExtractFacePortsValue(pipeline.parsed.document);
-                if (!ports.has_value())
-                {
-                    continue;
-                }
-                yyjson::value face(Das::Utils::MakeYyjsonObject());
-                auto          face_obj = face.as_object();
-                (*face_obj)[std::string_view("entryId")] = entry_id;
-                (*face_obj)[std::string_view("ports")] = std::move(*ports);
-                if (auto types =
-                        ExtractFaceTypesValue(pipeline.parsed.document);
-                    types.has_value())
-                {
-                    (*face_obj)[std::string_view("types")] = std::move(*types);
-                }
-                entry_faces.as_array()->emplace_back(std::move(face));
                 continue;
             }
 
@@ -3982,11 +3817,6 @@ namespace Das::Core::TaskScheduler
             {
                 (*context_obj)[std::string_view("nodeFaces")] =
                     std::move(node_faces);
-            }
-            if (!entry_faces.as_array()->empty())
-            {
-                (*context_obj)[std::string_view("entryFaces")] =
-                    std::move(entry_faces);
             }
         }
         return static_cast<int64_t>(stamp);

@@ -39,7 +39,6 @@ namespace Das::Core::TaskScheduler::Repository::Dto
         RepositoryAuthoringMetadataDto authoring;
         yyjson::value                  accepted_properties;
         yyjson::value                  graph_document;
-        yyjson::value                  compiled_artifact;
         RepositoryAvailabilityDto      availability;
     };
 

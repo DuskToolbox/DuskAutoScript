@@ -2710,9 +2710,9 @@ namespace
     }
 
     // 调用节点签名口物化通道（addNodePort portId 稳定物化 id）已随图文档
-    // ports 分区退役（口面改经 entryFaces 现算——编译侧按节点并入由
-    // EntryFacesMergeOntoBoundCallNode 锁定；分派期对 faces 口的连线端
-    // 点解析已随 faces 通道落地——ConnectResolvesFacesChannelEndpoints
+    // ports 分区退役（绑条目节点口面唯一源=注入 pass 编译期会话现算——
+    // ReferenceClosureInjectionPassTest 族锁定；分派期对 faces 口的连线端
+    // 点解析已随 nodeFaces 通道落地——ConnectResolvesFacesChannelEndpoints
     // 锁定 UI 预检与 Apply 分派语义同源）。原
     // InvokeNodePortMaterializationResolvesThroughDispatchAndCompile 用例
     // 测的正是被退役的物化通道，随之删除。
@@ -2898,145 +2898,35 @@ namespace
     }
 
     // ======================================================================
-    // entryFaces 通道（绑条目调用节点按 entryId 并口）
+    // faces 通道（nodeFaces——非边界组件节点的文档口按节点并入）
     // ======================================================================
 
-    /// Graph whose n_call node is a repository-bound call node ({g1} declares
-    /// a taskRepositoryRef field, settings carry entryId 7) and n_free is an
-    /// unbound sibling of the same shape. e_in/e_out ride the entry's
-    /// document ports on n_call; e_probe targets the entry's port on the
-    /// UNBOUND node (the contamination probe — it must stay PortNotFound).
-    std::string EntryFacesGraphContext(std::string_view entry_faces_json)
-    {
-        constexpr std::string_view catalog =
-            R"json([{"actionId":"{gs}","ports":[{"portId":"result","portType":"string","direction":"output"}]},{"actionId":"{g1}","config":[{"name":"repositoryRef","type":"taskRepositoryRef"}]},{"actionId":"{g2}","ports":[{"portId":"take","portType":"string","direction":"input"}]}])json";
-        return std::string(R"({"properties":)")
-               + RawGraphContextOf(
-                   {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
-                    RawGraphNodeOf("n_src", "{gs}"),
-                    R"({"nodeId":"n_call","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{g1}","pluginGuid":"{p}"}},"settings":{"repositoryRef":7}})",
-                    RawGraphNodeOf("n_free", "{g2}"),
-                    RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
-                   {R"({"edgeId":"e_in","sourceNodeId":"n_src","sourcePortId":"result","targetNodeId":"n_call","targetPortId":"doc_in","edgeType":"data"})",
-                    R"({"edgeId":"e_out","sourceNodeId":"n_call","sourcePortId":"doc_out","targetNodeId":"n_free","targetPortId":"take","edgeType":"data"})",
-                    R"({"edgeId":"e_probe","sourceNodeId":"n_src","sourcePortId":"result","targetNodeId":"n_free","targetPortId":"doc_in","edgeType":"data"})"})
-               + R"(,"actionCatalog":)" + std::string(catalog)
-               + R"(,"entryFaces":)" + std::string(entry_faces_json) + "}";
-    }
-
-    constexpr std::string_view kValidEntryFaces =
-        R"([{"entryId":7,"ports":[{"id":"doc_in","type":"string","direction":"input"},{"id":"doc_out","type":"string","direction":"output"}]}])";
-
-    // 绑条目节点（settings 含 taskRepositoryRef 正值）context 带
-    // entryFaces 后，该节点编译口面并出入参双方向的文档口；未绑条目节
-    // 点不受 entryFaces 影响（同文档口名在未绑节点上仍 PortNotFound）。
-    TEST(GraphAuthoringSessionTest, EntryFacesMergeOntoBoundCallNode)
-    {
-        const SessionHandle s{EntryFacesGraphContext(kValidEntryFaces)};
-
-        const auto outcome = CompileOutcomeOf(s.p);
-        // e_in/e_out：绑条目节点的文档口入/出双方向均并入编译口面，
-        // string→string 兼容——零 TypeMismatch，唯一的 PortNotFound 来自
-        // 污染探针 e_probe（未绑条目的 n_free 不吃 entryFaces）。
-        EXPECT_FALSE(DiagnosticsContainKind(
-            outcome,
-            Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
-        const auto not_found = DiagnosticMessageOfKind(
-            outcome,
-            Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound);
-        EXPECT_NE(not_found.find("doc_in"), std::string::npos);
-        EXPECT_NE(not_found.find("n_free"), std::string::npos);
-
-        // 编译产物携带文档口的双方向绑定（in 口作 target、out 口作
-        // source）。
-        DasPtr<Das::ExportInterface::IDasJson> compiled;
-        ASSERT_EQ(
-            GraphAuthoringSessionCompile(s.p, nullptr, compiled.Put()),
-            DAS_S_OK);
-        const auto plan_text = Compact(JsonToUtf8(compiled.Get()));
-        EXPECT_NE(
-            plan_text.find("\"targetPortId\":\"doc_in\""),
-            std::string::npos);
-        EXPECT_NE(
-            plan_text.find("\"sourcePortId\":\"doc_out\""),
-            std::string::npos);
-    }
-
-    // 畸形 entryFaces 键（缺 entryId / 缺 ports / entryId 非正整数）：
-    // 该键整体零 entryFaces + 会话继续加载文档——绑条目节点的文档口边
-    // 退回 PortNotFound（降级到「无口」）。
-    TEST(GraphAuthoringSessionTest, EntryFacesMalformedKeyDegradesToZeroFaces)
-    {
-        const std::array<std::string_view, 3> malformed = {
-            // 缺 entryId。
-            R"([{"ports":[{"id":"doc_in","type":"string","direction":"input"}]}])",
-            // 缺 ports 数组。
-            R"([{"entryId":7}])",
-            // entryId 非正整数。
-            R"([{"entryId":0,"ports":[{"id":"doc_in","type":"string","direction":"input"}]}])"};
-        for (const auto& faces_json : malformed)
-        {
-            const SessionHandle s{EntryFacesGraphContext(faces_json)};
-            // 会话创建成功、文档照常加载。
-            const auto document = DocumentOf(s.p);
-            auto       doc_obj = document.as_object();
-            ASSERT_TRUE(doc_obj.has_value());
-            ASSERT_TRUE(doc_obj->contains(std::string_view("graph")));
-            // 降级=零 entryFaces：绑条目节点的文档口边退回 PortNotFound。
-            const auto outcome = CompileOutcomeOf(s.p);
-            EXPECT_TRUE(DiagnosticsContainKind(
-                outcome,
-                Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound))
-                << faces_json;
-            const auto not_found = DiagnosticMessageOfKind(
-                outcome,
-                Das::Core::GraphRuntime::CompileDiagnosticKind::PortNotFound);
-            EXPECT_NE(not_found.find("doc_in"), std::string::npos)
-                << faces_json;
-        }
-    }
-
-    // 分派期端点解析吃 faces 通道（UI 预检与服务端 Apply 语义同源）：绑条
-    // 目调用节点的 entryFaces 文档口（doc_in 入向 / doc_out 出向）与非边
-    // 界组件节点的 nodeFaces 文档口（dyn_in）经 connectGraphPorts 建立连
-    // 线——Apply 端点解析消费与编译/投影同源的口面知识（faces 并集，
-    // face 胜出同名声明口），不再落 "port not declared" 拒绝。连线落地后
-    // 编译零 PortNotFound/TypeMismatch（同一口能连=编译不拒）。
+    // 分派期端点解析吃 faces 通道（UI 预检与服务端 Apply 语义同源）：非
+    // 边界组件节点的 nodeFaces 文档口（dyn_in）经 connectGraphPorts 建立
+    // 连线——Apply 端点解析消费与编译/投影同源的口面知识（face 胜出同
+    // 名声明口），不再落 "port not declared" 拒绝。连线落地后编译零
+    // PortNotFound/TypeMismatch（同一口能连=编译不拒）。绑条目节点的口
+    // 面唯一源=注入 pass 编译期会话现算（ReferenceClosureInjectionPassTest
+    // 族）。
     TEST(GraphAuthoringSessionTest, ConnectResolvesFacesChannelEndpoints)
     {
         constexpr std::string_view catalog =
-            R"json([{"actionId":"{gs}","ports":[{"portId":"result","portType":"string","direction":"output"}]},{"actionId":"{g1}","config":[{"name":"repositoryRef","type":"taskRepositoryRef"}]},{"actionId":"{g2}","ports":[{"portId":"take","portType":"string","direction":"input"}]}])json";
+            R"json([{"actionId":"{gs}","ports":[{"portId":"result","portType":"string","direction":"output"}]},{"actionId":"{g2}","ports":[{"portId":"take","portType":"string","direction":"input"}]}])json";
         const std::string context =
             std::string(R"({"properties":)")
             + RawGraphContextOf(
                 {RawGraphNodeOf("n_begin", BOUNDARY_BEGIN_GUID),
                  RawGraphNodeOf("n_src", "{gs}"),
-                 R"({"nodeId":"n_call","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{g1}","pluginGuid":"{p}"}},"settings":{"repositoryRef":7}})",
                  RawGraphNodeOf("n_free", "{g2}"),
                  RawGraphNodeOf("n_end", BOUNDARY_END_GUID)},
                 {})
             + R"(,"actionCatalog":)" + std::string(catalog)
-            + R"(,"entryFaces":[{"entryId":7,"ports":[)"
-            + R"({"id":"doc_in","type":"string","direction":"input"},)"
-            + R"({"id":"doc_out","type":"string","direction":"output"}]}],)"
-            + R"("nodeFaces":[{"nodeId":"n_free","ports":[)"
+            + R"(,"nodeFaces":[{"nodeId":"n_free","ports":[)"
             + R"({"id":"dyn_in","type":"string","direction":"input"}]}]})";
 
         const SessionHandle s{context};
 
-        // ① 图上游值接入被调条目暴露口（entryFaces 入向口作 target）。
-        ApplyChangeExpectOk(
-            s.p,
-            "connectGraphPorts",
-            R"({"fromNodeId":"n_src","fromPortId":"result","toNodeId":"n_call","toPortId":"doc_in"})");
-
-        // ② 被调条目暴露口对外供值（entryFaces 出向口作 source）。
-        ApplyChangeExpectOk(
-            s.p,
-            "connectGraphPorts",
-            R"({"fromNodeId":"n_call","fromPortId":"doc_out","toNodeId":"n_free","toPortId":"take"})");
-
-        // ③ 非边界组件节点的 nodeFaces 文档口作 target。
+        // 非边界组件节点的 nodeFaces 文档口作 target。
         ApplyChangeExpectOk(
             s.p,
             "connectGraphPorts",
@@ -3059,12 +2949,6 @@ namespace
             GraphAuthoringSessionCompile(s.p, nullptr, compiled.Put()),
             DAS_S_OK);
         const auto plan_text = Compact(JsonToUtf8(compiled.Get()));
-        EXPECT_NE(
-            plan_text.find("\"targetPortId\":\"doc_in\""),
-            std::string::npos);
-        EXPECT_NE(
-            plan_text.find("\"sourcePortId\":\"doc_out\""),
-            std::string::npos);
         EXPECT_NE(
             plan_text.find("\"targetPortId\":\"dyn_in\""),
             std::string::npos);
@@ -3285,62 +3169,11 @@ namespace
             << result.error_kind << ": " << result.message;
     }
 
-    // entryFaces 画布投影：绑条目调用节点的 ports 含条目文档口（dynamic
-    // 标记），未绑节点不吃 entryFaces。
-    TEST(GraphAuthoringSessionTest, EntryFacesProjectIntoCanvasPorts)
-    {
-        const SessionHandle s{EntryFacesGraphContext(kValidEntryFaces)};
-
-        const auto document = DocumentOf(s.p);
-        // 绑条目节点 n_call（{g1}）：双方向文档口均投影且带 dynamic。
-        const auto doc_in = NodePortByIdOfComponent(
-            document,
-            std::string_view("{g1}"),
-            std::string_view("doc_in"));
-        ASSERT_TRUE(doc_in.has_value());
-        auto in_obj = doc_in->as_object();
-        ASSERT_TRUE(in_obj.has_value());
-        EXPECT_TRUE(in_obj->contains(std::string_view("dynamic")));
-        auto in_direction =
-            (*in_obj)[std::string_view("direction")].as_string();
-        ASSERT_TRUE(in_direction.has_value());
-        EXPECT_EQ(*in_direction, "input");
-
-        const auto doc_out = NodePortByIdOfComponent(
-            document,
-            std::string_view("{g1}"),
-            std::string_view("doc_out"));
-        ASSERT_TRUE(doc_out.has_value());
-        auto out_obj = doc_out->as_object();
-        ASSERT_TRUE(out_obj.has_value());
-        EXPECT_TRUE(out_obj->contains(std::string_view("dynamic")));
-        auto out_direction =
-            (*out_obj)[std::string_view("direction")].as_string();
-        ASSERT_TRUE(out_direction.has_value());
-        EXPECT_EQ(*out_direction, "output");
-
-        // 未绑节点 n_free（{g2}）：不吃 entryFaces——doc_in 不在其口面，
-        // 其声明口 take 照常投影且无 dynamic。
-        const auto leaked = NodePortByIdOfComponent(
-            document,
-            std::string_view("{g2}"),
-            std::string_view("doc_in"));
-        EXPECT_FALSE(leaked.has_value());
-        const auto take = NodePortByIdOfComponent(
-            document,
-            std::string_view("{g2}"),
-            std::string_view("take"));
-        ASSERT_TRUE(take.has_value());
-        auto take_obj = take->as_object();
-        ASSERT_TRUE(take_obj.has_value());
-        EXPECT_FALSE(take_obj->contains(std::string_view("dynamic")));
-
-        // 带 entryFaces 的文档仍过严格校验器。
-        auto result =
-            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-        EXPECT_TRUE(result.valid)
-            << result.error_kind << ": " << result.message;
-    }
+    // 绑条目调用节点的画布口面投影（原 EntryFacesProjectIntoCanvasPorts
+    // 用例的通道）已随 context 预计算 entryFaces 通道退役删除——画布对绑
+    // 条目节点的文档口注入由插件侧 GetDocument 投影承担（条目边界口每次
+    // Get 现算现注入，不落盘）；Core 侧 nodeFaces 画布投影由
+    // NodeFacesProjectIntoCanvasPorts 用例锁定。
 
     // ------------------------------------------------------------------
     // Boundary component (graph begin/end) authoring session

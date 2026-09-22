@@ -197,7 +197,7 @@ public:
             const std::string& component_guid)>;
 
     // -----------------------------------------------------------------------
-    // Document port faces (nodeFaces / entryFaces context channel)
+    // Document port faces (nodeFaces context channel)
     // -----------------------------------------------------------------------
 
     /// One dynamic port entry of the faces channel — the authoring-document
@@ -230,12 +230,6 @@ public:
         std::vector<std::string> compatible_with;
     };
 
-    /// entry_id (decimal string of the positive integer the node settings
-    /// carry) → injected document port faces of that repository entry (the
-    /// invoked document's dynamic port snapshot).
-    using EntryFacesMap =
-        std::unordered_map<std::string, std::vector<DocumentFacePort>>;
-
     /// component_guid → names of its taskRepositoryRef-typed config fields
     /// (catalog-derived data snapshot injected by the session compile path —
     /// the same injected-knowledge pattern as required_fields; the compiler
@@ -253,17 +247,11 @@ public:
     /// same lifecycle premise as the port-surface provider closure).
     void BindNodeFaces(const NodeFacesMap* node_faces);
 
-    /// Bind the injected entry faces plus the repository-field snapshot.
-    /// ResolveNodePorts merges entryFaces[entryId] onto nodes holding a
-    /// bound repository entry (a taskRepositoryRef field carrying a positive
-    /// integer in settings — the business-neutral bound-entry judgment),
-    /// after the node's own faces and with the same dedupe semantics (face
-    /// wins, WARN on collision). The entry-faces map is borrowed for the
-    /// duration of the synchronous Compile call; the repository-field
-    /// snapshot is copied.
-    void BindEntryFaces(
-        const EntryFacesMap* entry_faces,
-        RepositoryFieldMap   repository_fields);
+    /// Bind the catalog-derived repository-field snapshot（component_guid →
+    /// taskRepositoryRef 字段名集——绑条目判定与注入 pass 的数据源；快照
+    /// 被拷贝）。绑条目节点的口面唯一源=注入 pass 编译期现算（被引条目
+    /// 文档根 ports 自述）。
+    void BindRepositoryFields(RepositoryFieldMap repository_fields);
 
     /// Bind the catalog-declared port surface provider. Extends (does not
     /// replace) factory-manager manifest resolution: edge validation,
@@ -285,8 +273,8 @@ public:
     /// 总数约束（每层压入不同 entryId——环检测保证）。
     void BindClosureEntryIds(std::vector<int64_t> entry_ids);
 
-    /// Bind the injected document type registry (the types[] array riding
-    /// the entryFaces context key — the same registry source the graph-view
+    /// Bind the injected document type registry (the types[] entries the
+    /// compile host carries — the same registry source the graph-view
     /// projection exposes as its root types section). The registry extends
     /// the type judgment of the
     /// stale-edge review only: registered custom types become judgeable
@@ -455,9 +443,6 @@ private:
     // Borrowed per-node document faces (nullptr = no faces channel bound).
     const NodeFacesMap* node_faces_ = nullptr;
 
-    // Borrowed entry faces (nullptr = no entry-faces channel bound).
-    const EntryFacesMap* entry_faces_ = nullptr;
-
     // Borrowed document type registry (nullptr = no types channel bound).
     const std::vector<DocumentFaceType>* face_types_ = nullptr;
 
@@ -498,7 +483,9 @@ private:
     /// node's referenced component (empty and unresolved when the target is
     /// not a componentRef or neither declaration source knows it), with the
     /// node's injected document faces and — for nodes holding a bound
-    /// repository entry — the entry's faces merged on top (per-node union).
+    /// repository entry — the injection pass's computed faces merged on top
+    /// (per-node union; the pass's document-root-ports computation is the
+    /// sole source for bound-entry nodes).
     ManifestPorts ResolveNodePorts(
         const Dto::GraphNodeDto&                        node,
         std::unordered_map<std::string, ManifestPorts>& cache) const;
@@ -521,8 +508,7 @@ private:
     /// Resolve the repository entry a node is bound to (nullopt = not a
     /// bound repository call node): the business-neutral judgment — a
     /// catalog-declared taskRepositoryRef field carrying a positive integer
-    /// in the node settings. Returns the entry id as its decimal string
-    /// (the EntryFacesMap key form).
+    /// in the node settings.
     std::optional<std::string> ResolveBoundEntryId(
         const Dto::GraphNodeDto& node) const;
 
@@ -531,14 +517,13 @@ private:
     /// （文档根 ports 自述，写入 reference_faces_）、Compile 产出产物
     /// （compile 段 executionInput 原文，写入 reference_artifacts_）。
     /// 任一环节失败 → 具名诊断 + reference_pass_failed_（Compile 出口清
-    /// 空 execution_order）。entryId 栈环检测（本 plan 单层栈深 1，
-    /// 递归栈随后续扩展）。
+    /// 空 execution_order）。entryId 编译递归栈环检测（继承闭包栈+本层
+    /// 压栈，跨编译层生效）。
     void RunReferenceClosurePass(const Dto::GraphDocumentDto& document);
 
     /// Whether the node carries an injected faces entry (its own nodeFaces
-    /// entry, or a bound repository entry with an entryFaces entry) — the
-    /// stale-review eligibility marker distinguishing "the face evolved"
-    /// from "the compile host did not run the prep pass".
+    /// entry) — the stale-review eligibility marker distinguishing "the face
+    /// evolved" from "the compile host did not run the prep pass".
     bool NodeCarriesInjectedFaces(const Dto::GraphNodeDto& node) const;
 
     /// Registry-extended type judgment for the stale review. Single

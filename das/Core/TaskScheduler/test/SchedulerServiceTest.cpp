@@ -3330,13 +3330,13 @@ namespace
         }
         (*entry.as_object())[std::string_view("acceptedProperties")] =
             yyjson::value(Das::Utils::MakeYyjsonObject());
-        // RepositoryEntryDto 的 graph_document / compiled_artifact 是 required
-        // 字段，caster 反序列化时要求 key 存在；生产 CreateEntry 用默认（空）
-        // 值序列化，seed 同样补空对象，否则后续 ListEntries 反序列化抛
-        // "JSON object key not found: graphDocument"。
+        // RepositoryEntryDto 的 graph_document 是 required 字段，caster 反
+        // 序列化时要求 key 存在；生产 CreateEntry 用默认（空）值序列化，
+        // seed 同样补空对象，否则后续 ListEntries 反序列化抛
+        // "JSON object key not found: graphDocument"。历史存量的
+        // compiledArtifact 键按未知键静默忽略（字段已退役——编译产物永不
+        // 落盘）。
         (*entry.as_object())[std::string_view("graphDocument")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
-        (*entry.as_object())[std::string_view("compiledArtifact")] =
             yyjson::value(Das::Utils::MakeYyjsonObject());
         {
             yyjson::value availability(Das::Utils::MakeYyjsonObject());
@@ -5699,8 +5699,6 @@ TEST_F(
             std::move(*inner_properties);
         (*entry.as_object())[std::string_view("graphDocument")] =
             yyjson::value(Das::Utils::MakeYyjsonObject());
-        (*entry.as_object())[std::string_view("compiledArtifact")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
         {
             yyjson::value availability(Das::Utils::MakeYyjsonObject());
             (*availability.as_object())[std::string_view("state")] =
@@ -6101,8 +6099,6 @@ TEST_F(
         (*entry.as_object())[std::string_view("acceptedProperties")] =
             std::move(*inner_properties);
         (*entry.as_object())[std::string_view("graphDocument")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
-        (*entry.as_object())[std::string_view("compiledArtifact")] =
             yyjson::value(Das::Utils::MakeYyjsonObject());
         {
             yyjson::value availability(Das::Utils::MakeYyjsonObject());
@@ -7326,8 +7322,6 @@ namespace
                 std::move(*properties);
         }
         (*entry.as_object())[std::string_view("graphDocument")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
-        (*entry.as_object())[std::string_view("compiledArtifact")] =
             yyjson::value(Das::Utils::MakeYyjsonObject());
         {
             yyjson::value availability(Das::Utils::MakeYyjsonObject());

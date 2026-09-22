@@ -570,58 +570,6 @@ namespace Contract
                 std::move(array_value);
         }
 
-        /// 已绑仓库条目的调用节点 entry id 解析（业务中立——不特判组件
-        /// guid，只认目录声明的 taskRepositoryRef 字段持正整数值）：
-        /// 返回该正整数（十进制文本键由调用方按容器键形转换），
-        /// nullopt = 未绑条目。entryFaces 消费（编译侧/投影侧）共用本判
-        /// 据——单一逻辑源。
-        std::optional<int64_t> BoundRepositoryEntryIdOf(
-            const Dto::GraphNodeDto&            node,
-            const std::optional<ActionCatalog>& action_catalog)
-        {
-            const ActionCatalogEntry* entry =
-                FindCatalogEntry(action_catalog, ComponentGuidOf(node));
-            if (entry == nullptr)
-            {
-                return std::nullopt;
-            }
-            std::vector<std::string_view> repository_field_names;
-            for (const auto& config_field : entry->config_fields)
-            {
-                if (config_field.type == std::string_view("taskRepositoryRef"))
-                {
-                    repository_field_names.push_back(config_field.name);
-                }
-            }
-            if (repository_field_names.empty())
-            {
-                return std::nullopt;
-            }
-            auto settings_obj = node.settings.as_object();
-            if (!settings_obj.has_value())
-            {
-                return std::nullopt;
-            }
-            for (const auto& field_name : repository_field_names)
-            {
-                if (!settings_obj->contains(std::string_view(field_name)))
-                {
-                    continue;
-                }
-                const auto& value =
-                    (*settings_obj)[std::string_view(field_name)];
-                if (value.is_int())
-                {
-                    const auto entry_id = value.as_int();
-                    if (entry_id.has_value() && *entry_id > 0)
-                    {
-                        return *entry_id;
-                    }
-                }
-            }
-            return std::nullopt;
-        }
-
         /// 口名规则（add/rename 共用）：非空、UTF-8 字节数 ≤100、不以
         /// "$" 开头（哨兵源命名空间保留——伪造 $ 前缀口名会污染绑定计
         /// 划的 source 判定）。返回违规描述，nullopt = 合法。
@@ -675,9 +623,9 @@ namespace Contract
         /// system, no component ever declares them; any other port resolves
         /// through the endpoint node's resolvable port surface, in the same
         /// precedence the compile path and the canvas projection apply:
-        /// injected faces first (nodeFaces[本节点] ∪ entryFaces[绑条目] —
-        /// face 胜出同名声明口，与 ResolveNodePorts/MapGraphView 同一知
-        /// 识源与去重规则：faces 口能连=编译不拒)，then the catalog-declared
+        /// injected faces first (nodeFaces[本节点] — face 胜出同名声明口，
+        /// 与 ResolveNodePorts/MapGraphView 同一知识源与去重规则：
+        /// faces 口能连=编译不拒)，then the catalog-declared
         /// surface of the endpoint node's component, then the begin/end
         /// boundary ports stored in node settings. Nullopt = the endpoint
         /// names no resolvable port, and the change must reject rather than
@@ -687,8 +635,7 @@ namespace Contract
             const std::optional<ActionCatalog>& action_catalog,
             const std::string&                  node_id,
             const std::string&                  port_id,
-            const GraphCompiler::NodeFacesMap*  node_faces,
-            const GraphCompiler::EntryFacesMap* entry_faces)
+            const GraphCompiler::NodeFacesMap*  node_faces)
         {
             if (port_id == FormSequenceProjector::SignalInPort
                 || port_id == FormSequenceProjector::SignalOutPort)
@@ -701,10 +648,8 @@ namespace Contract
                 {
                     continue;
                 }
-                // faces 注入口（消费与编译/投影同源）：nodeFaces[本节点]，
-                // 其后绑条目的 entryFaces[entryId]（判据复用
-                // BoundRepositoryEntryIdOf 单一逻辑源）——命中按
-                // DerivePortCategory(face.port_type) 归类。
+                // faces 注入口（消费与编译/投影同源）：nodeFaces[本节点]——
+                // 命中按 DerivePortCategory(face.port_type) 归类。
                 if (node_faces != nullptr)
                 {
                     const auto found = node_faces->find(node.node_id);
@@ -715,26 +660,6 @@ namespace Contract
                             if (face.port_id == port_id)
                             {
                                 return DerivePortCategory(face.port_type);
-                            }
-                        }
-                    }
-                }
-                if (entry_faces != nullptr)
-                {
-                    const auto bound_entry_id =
-                        BoundRepositoryEntryIdOf(node, action_catalog);
-                    if (bound_entry_id.has_value())
-                    {
-                        const auto found =
-                            entry_faces->find(std::to_string(*bound_entry_id));
-                        if (found != entry_faces->end())
-                        {
-                            for (const auto& face : found->second)
-                            {
-                                if (face.port_id == port_id)
-                                {
-                                    return DerivePortCategory(face.port_type);
-                                }
                             }
                         }
                     }
@@ -882,8 +807,7 @@ namespace Contract
         GraphView MapGraphView(
             const Dto::GraphDocumentDto&        doc,
             const std::optional<ActionCatalog>& action_catalog,
-            const GraphCompiler::NodeFacesMap*  node_faces,
-            const GraphCompiler::EntryFacesMap* entry_faces)
+            const GraphCompiler::NodeFacesMap*  node_faces)
         {
             GraphView view;
             // Connected input-port endpoints, keyed
@@ -963,11 +887,11 @@ namespace Contract
                 // 入）。
 
                 // faces 注入通道 merge（调用侧合并形态）：nodeFaces[本节
-                // 点] 与绑条目节点的 entryFaces[entryId]（判据复用
-                // BoundRepositoryEntryIdOf 单一逻辑源）直接并入
-                // GraphNodePort 列表——BuildPortsValue 的五键+dynamic 投
-                // 影键形不变，faces 口以既有 dynamic 标记呈现。去重规则
-                // 与编译侧一致：按口 id，face 胜出同名已投影口。
+                // 点] 直接并入 GraphNodePort 列表——BuildPortsValue 的五
+                // 键+dynamic 投影键形不变，faces 口以既有 dynamic 标记呈
+                // 现。去重规则与编译侧一致：按口 id，face 胜出同名已投
+                // 影口。绑条目节点的文档口面经插件侧 GetDocument 投影
+                // （条目边界口现算现注入）供画布。
                 const auto append_face_ports =
                     [&out, &node, &connected_input_sources](
                         const std::vector<GraphCompiler::DocumentFacePort>&
@@ -1002,20 +926,6 @@ namespace Contract
                     if (found != node_faces->end())
                     {
                         append_face_ports(found->second);
-                    }
-                }
-                if (entry_faces != nullptr)
-                {
-                    const auto bound_entry_id =
-                        BoundRepositoryEntryIdOf(node, action_catalog);
-                    if (bound_entry_id.has_value())
-                    {
-                        const auto found =
-                            entry_faces->find(std::to_string(*bound_entry_id));
-                        if (found != entry_faces->end())
-                        {
-                            append_face_ports(found->second);
-                        }
                     }
                 }
 
@@ -1094,8 +1004,7 @@ namespace Contract
     AuthoringDocument ToAuthoringDocument(
         const Dto::GraphDocumentDto&        document,
         const std::optional<ActionCatalog>& action_catalog,
-        const GraphCompiler::NodeFacesMap*  node_faces,
-        const GraphCompiler::EntryFacesMap* entry_faces)
+        const GraphCompiler::NodeFacesMap*  node_faces)
     {
         AuthoringDocument out;
         out.revision = document.version;
@@ -1110,8 +1019,7 @@ namespace Contract
         else
         {
             out.view_kind = ViewKind::Graph;
-            out.graph =
-                MapGraphView(document, action_catalog, node_faces, entry_faces);
+            out.graph = MapGraphView(document, action_catalog, node_faces);
         }
         return out;
     }
@@ -1489,7 +1397,6 @@ namespace Contract
         const Dto::GraphDocumentDto&                        document,
         const std::optional<ActionCatalog>&                 action_catalog,
         const GraphCompiler::NodeFacesMap*                  node_faces,
-        const GraphCompiler::EntryFacesMap*                 entry_faces,
         const std::vector<GraphCompiler::DocumentFaceType>* entry_face_types)
     {
         // Build the strict Phase 84 wire by hand. Earlier shape-based
@@ -1540,7 +1447,7 @@ namespace Contract
             root_obj["viewKind"] =
                 std::make_pair(std::string_view("graph"), yyjson::copy_string);
             const auto view =
-                MapGraphView(document, action_catalog, node_faces, entry_faces);
+                MapGraphView(document, action_catalog, node_faces);
             auto g_v = Das::Utils::MakeYyjsonObject();
             auto g_o = g_v.as_object();
             if (g_o)
@@ -2324,8 +2231,7 @@ namespace Contract
             const AuthoringChange&              change,
             const std::vector<std::string>&     valid_action_ids,
             const std::optional<ActionCatalog>& action_catalog,
-            const GraphCompiler::NodeFacesMap*  node_faces,
-            const GraphCompiler::EntryFacesMap* entry_faces)
+            const GraphCompiler::NodeFacesMap*  node_faces)
         {
             GraphAuthoringChange gac;
             if (change.kind == "addGraphNode")
@@ -2558,8 +2464,7 @@ namespace Contract
                         action_catalog,
                         conn.from_node_id,
                         conn.from_port_id,
-                        node_faces,
-                        entry_faces);
+                        node_faces);
                     if (!source_category.has_value())
                     {
                         return {
@@ -2575,8 +2480,7 @@ namespace Contract
                         action_catalog,
                         conn.to_node_id,
                         conn.to_port_id,
-                        node_faces,
-                        entry_faces);
+                        node_faces);
                     if (!target_category.has_value())
                     {
                         return {
@@ -3279,8 +3183,7 @@ namespace Contract
         const AuthoringChange&              change,
         const std::vector<std::string>&     valid_action_ids,
         const std::optional<ActionCatalog>& action_catalog,
-        const GraphCompiler::NodeFacesMap*  node_faces,
-        const GraphCompiler::EntryFacesMap* entry_faces)
+        const GraphCompiler::NodeFacesMap*  node_faces)
     {
         // 线性⊂图法则前门：图文档 + 线性 change kinds（item 家族与
         // formSequenceItem 定向 setValue）一律 InvalidOp 拒绝，拒绝零突
@@ -3302,8 +3205,7 @@ namespace Contract
                       change,
                       valid_action_ids,
                       action_catalog,
-                      node_faces,
-                      entry_faces);
+                      node_faces);
         if (r.Ok() && BumpsRevision(change.kind))
         {
             ++document.version;

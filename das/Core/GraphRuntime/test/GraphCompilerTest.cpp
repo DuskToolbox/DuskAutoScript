@@ -3154,8 +3154,7 @@ namespace
     // 会话工厂；repository_fields 声明 repositoryRef 字段。
     struct ReferencePassFixture
     {
-        StubFactoryManager           mgr;
-        GraphCompiler::EntryFacesMap empty_entry_faces;
+        StubFactoryManager mgr;
         // 会话工厂收到的 context 原文（闭包栈键经 context 传递的取证槽）。
         std::vector<std::string> seen_contexts;
 
@@ -3223,8 +3222,7 @@ namespace
         {
             GraphCompiler compiler;
             compiler.SetFactoryManager(&mgr);
-            compiler.BindEntryFaces(
-                &empty_entry_faces,
+            compiler.BindRepositoryFields(
                 {{std::string{BOUND_GRAPH_TASK_GUID}, {"repositoryRef"}}});
             return compiler;
         }

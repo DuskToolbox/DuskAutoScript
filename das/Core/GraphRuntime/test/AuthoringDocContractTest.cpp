@@ -77,11 +77,9 @@ namespace
     std::string ToJsonWithCatalog(
         const Dto::GraphDocumentDto&        doc,
         const std::optional<ActionCatalog>& catalog,
-        const GraphCompiler::NodeFacesMap*  node_faces = nullptr,
-        const GraphCompiler::EntryFacesMap* entry_faces = nullptr)
+        const GraphCompiler::NodeFacesMap*  node_faces = nullptr)
     {
-        auto v =
-            Contract::SerializeDocument(doc, catalog, node_faces, entry_faces);
+        auto v = Contract::SerializeDocument(doc, catalog, node_faces);
         auto str = Das::Utils::SerializeYyjsonValue(v);
         return str.value_or(std::string{});
     }
@@ -3256,8 +3254,7 @@ namespace
             GraphNodePort{"值", "值", "int", "input", "data"});
         catalog.entries.push_back(end_entry);
 
-        const auto out =
-            ToAuthoringDocument(doc, catalog, &node_faces, nullptr);
+        const auto out = ToAuthoringDocument(doc, catalog, &node_faces);
         ASSERT_EQ(out.graph->nodes.size(), 2u);
 
         // begin：face 口投影为 dynamic:true，方向按 face 条目。
@@ -3282,7 +3279,7 @@ namespace
         EXPECT_TRUE(end_ports[1].dynamic_port);
 
         // wire 上 dynamic 键 engaged-only：静态口序列化不含该键。
-        const auto json = ToJsonWithCatalog(doc, catalog, &node_faces, nullptr);
+        const auto json = ToJsonWithCatalog(doc, catalog, &node_faces);
         EXPECT_NE(
             json.find(R"("portId":"左值","displayLabel":"左值")"),
             std::string::npos);
@@ -3308,7 +3305,7 @@ namespace
         customs.push_back(GraphCompiler::DocumentFaceType{"裸类型", {}});
 
         const auto value =
-            SerializeDocument(doc, std::nullopt, nullptr, nullptr, &customs);
+            SerializeDocument(doc, std::nullopt, nullptr, &customs);
         auto obj = value.as_object();
         ASSERT_TRUE(obj.has_value());
         ASSERT_TRUE(obj->contains(std::string_view("types")));

@@ -305,8 +305,7 @@ namespace Contract
     AuthoringDocument ToAuthoringDocument(
         const Dto::GraphDocumentDto&        document,
         const std::optional<ActionCatalog>& action_catalog = std::nullopt,
-        const GraphCompiler::NodeFacesMap*  node_faces = nullptr,
-        const GraphCompiler::EntryFacesMap* entry_faces = nullptr);
+        const GraphCompiler::NodeFacesMap*  node_faces = nullptr);
 
     // -----------------------------------------------------------------------
     // Upgrade (formSequence → graph) — one-way, lossless, in-place on the store
@@ -334,14 +333,14 @@ namespace Contract
     /// `action_catalog` is optional; when present it is emitted on the
     /// document root so clients can render the "add item/node" affordance
     /// without a separate round-trip.
-    /// `node_faces` / `entry_faces` are the optional faces-channel snapshots
-    /// (the session state's injected document port faces). When present, the
-    /// graph view merges them onto the projected nodes[] ports arrays as
-    /// dynamic ports — same dedupe rule as the compile side (face wins over
-    /// a same-name projected port); nullptr = no faces channel (the
-    /// projection then matches the pre-faces wire exactly).
+    /// `node_faces` is the optional faces-channel snapshot (the session
+    /// state's injected document port faces). When present, the graph view
+    /// merges it onto the projected nodes[] ports arrays as dynamic ports —
+    /// same dedupe rule as the compile side (face wins over a same-name
+    /// projected port); nullptr = no faces channel (the projection then
+    /// matches the pre-faces wire exactly).
     /// `entry_face_types` is the optional faces-carried custom type registry
-    /// (the types[] arrays the entryFaces channel collects). In graph mode
+    /// (the types[] declarations the compile host carries). In graph mode
     /// the document root carries a types registry (the legislated types
     /// section shape: {name[, compatibleWith]}) built from the nine built-in
     /// words plus these custom declarations — the Core-side supply for the
@@ -350,7 +349,6 @@ namespace Contract
         const Dto::GraphDocumentDto&        document,
         const std::optional<ActionCatalog>& action_catalog = std::nullopt,
         const GraphCompiler::NodeFacesMap*  node_faces = nullptr,
-        const GraphCompiler::EntryFacesMap* entry_faces = nullptr,
         const std::vector<GraphCompiler::DocumentFaceType>* entry_face_types =
             nullptr);
 
@@ -517,10 +515,10 @@ namespace Contract
     /// (InvalidOp) instead of silently landing a data edge — as does an
     /// execution/data category mismatch across the endpoint pair.
     ///
-    /// `node_faces`/`entry_faces` (optional, default null) are the session's
-    /// injected document port faces — the same knowledge source the compile
-    /// path (ResolveNodePorts) and the canvas projection consume. connect
-    /// endpoint resolution consults them first (a face wins over a same-id
+    /// `node_faces` (optional, default null) is the session's injected
+    /// document port faces — the same knowledge source the compile path
+    /// (ResolveNodePorts) and the canvas projection consume. connect
+    /// endpoint resolution consults it first (a face wins over a same-id
     /// declared port, mirroring the compile-side dedupe), so a connect the
     /// canvas pre-check allows on an injected dynamic port is accepted here
     /// too (同一口能连=编译不拒). Null keeps the declared-surface-only
@@ -530,8 +528,7 @@ namespace Contract
         const AuthoringChange&              change,
         const std::vector<std::string>&     valid_action_ids = {},
         const std::optional<ActionCatalog>& action_catalog = std::nullopt,
-        const GraphCompiler::NodeFacesMap*  node_faces = nullptr,
-        const GraphCompiler::EntryFacesMap* entry_faces = nullptr);
+        const GraphCompiler::NodeFacesMap*  node_faces = nullptr);
 } // namespace Contract
 
 DAS_CORE_GRAPHRUNTIME_NS_END
