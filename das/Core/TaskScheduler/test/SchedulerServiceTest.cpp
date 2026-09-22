@@ -9,12 +9,10 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
-#include <das/Core/TaskScheduler/SchedulerServiceImpl.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasApi.h>
 #include <das/DasRef.hpp>
 #include <das/DasString.hpp>
-#include <das/IDasSchedulerService.h>
 #include <das/IDasSettingsService.h>
 #include <das/Plugins/SchedulerTestPlugin/SchedulerTestSharedState.h>
 #include <das/Utils/Expected.h>
@@ -1230,209 +1228,6 @@ TEST_F(SchedulerServiceTest, ConcurrentEnableDisable)
     EXPECT_TRUE(
         final_state == SchedulerState::Stopped
         || final_state == SchedulerState::Running);
-}
-
-// ============================================================
-// SchedulerServiceImpl wrapper tests
-// ============================================================
-
-class SchedulerServiceImplTest : public ::testing::Test
-{
-protected:
-    void SetUp() override
-    {
-        test_dir_ = UniqueTestDir();
-        std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / DAS_PATH_LITERAL("settings");
-        std::filesystem::create_directories(settings_dir_);
-        plugin_dir_ = test_dir_ / DAS_PATH_LITERAL("plugins");
-        std::filesystem::create_directories(plugin_dir_);
-
-        settings_manager_ =
-            std::make_unique<Das::Core::SettingsManager::SettingsManager>(
-                settings_dir_);
-        auto ipc_sp = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
-        plugin_manager_ = std::make_unique<
-            Das::Core::ForeignInterfaceHost::TestablePluginManager>(
-            *settings_manager_,
-            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp.Get()));
-        scheduler_ = std::make_unique<SchedulerService>(
-            *plugin_manager_,
-            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp.Get()));
-        // Use raw pointer with AddRef/Release lifecycle
-        impl_ = new SchedulerServiceImpl(*scheduler_);
-        impl_->AddRef();
-    }
-
-    void TearDown() override
-    {
-        if (impl_)
-        {
-            impl_->Release();
-            impl_ = nullptr;
-        }
-        scheduler_.reset();
-        plugin_manager_.reset();
-        settings_manager_.reset();
-        std::filesystem::remove_all(test_dir_);
-    }
-
-    std::filesystem::path test_dir_;
-    std::filesystem::path settings_dir_;
-    std::filesystem::path plugin_dir_;
-    std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
-        settings_manager_;
-    std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
-                                      plugin_manager_;
-    std::unique_ptr<SchedulerService> scheduler_;
-    SchedulerServiceImpl*             impl_ = nullptr;
-};
-
-TEST_F(SchedulerServiceImplTest, Get_NullPointer_ReturnsError)
-{
-    auto result = impl_->Get(nullptr);
-    EXPECT_EQ(result, DAS_E_INVALID_POINTER);
-}
-
-TEST_F(SchedulerServiceImplTest, Get_ReturnsJsonString)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    DasPtr<IDasReadOnlyString> p_json;
-    auto                       result = impl_->Get(p_json.Put());
-    EXPECT_EQ(result, DAS_S_OK);
-    ASSERT_TRUE(p_json);
-
-    const char* c_str = nullptr;
-    auto        get_result = p_json->GetUtf8(&c_str);
-    EXPECT_EQ(get_result, DAS_S_OK);
-
-    auto parsed = *Das::Utils::ParseYyjsonFromString(c_str);
-    EXPECT_TRUE((*parsed.as_object()).contains(std::string_view("state")));
-    EXPECT_TRUE((*parsed.as_object()).contains(std::string_view("tasks")));
-    EXPECT_TRUE(
-        (*parsed.as_object()).contains(std::string_view("availableTaskTypes")));
-}
-
-TEST_F(SchedulerServiceImplTest, AddTask_NullPointer_ReturnsError)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    const DasGuid guid{};
-    auto          result = impl_->AddTask(guid, nullptr);
-    EXPECT_EQ(result, DAS_E_INVALID_POINTER);
-}
-
-TEST_F(SchedulerServiceImplTest, AddTask_NotFound)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    DasGuid guid{};
-    guid.data1 = 0xDEADBEEF;
-    int64_t out_id = -1;
-    auto    result = impl_->AddTask(guid, &out_id);
-    EXPECT_EQ(result, DAS_E_NOT_FOUND);
-}
-
-TEST_F(SchedulerServiceImplTest, DeleteTask_NotFound)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    auto result = impl_->DeleteTask(99);
-    EXPECT_EQ(result, DAS_E_NOT_FOUND);
-}
-
-TEST_F(SchedulerServiceImplTest, UpdateTaskProperties_NullPointer_ReturnsError)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    auto result = impl_->UpdateTaskProperties(0, nullptr);
-    EXPECT_EQ(result, DAS_E_INVALID_POINTER);
-}
-
-TEST_F(SchedulerServiceImplTest, UpdateTaskProperties_InvalidJson_ReturnsError)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    DasPtr<IDasReadOnlyString> p_bad_json;
-    auto                       cr = CreateIDasReadOnlyStringFromUtf8(
-        "not valid json {{{",
-        p_bad_json.Put());
-    ASSERT_EQ(cr, DAS_S_OK);
-
-    auto result = impl_->UpdateTaskProperties(0, p_bad_json.Get());
-    EXPECT_EQ(result, DAS_E_INVALID_JSON);
-}
-
-TEST_F(SchedulerServiceImplTest, UpdateTaskInternalProperties_NullPointer)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    auto result = impl_->UpdateTaskInternalProperties(0, nullptr);
-    EXPECT_EQ(result, DAS_E_INVALID_POINTER);
-}
-
-TEST_F(SchedulerServiceImplTest, AddTask_DelegatesToSchedulerService)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    // Verify AddTask returns same error as direct call
-    DasGuid guid{};
-    guid.data1 = 0xDEAD;
-    int64_t out_id = -1;
-
-    auto impl_result = impl_->AddTask(guid, &out_id);
-    auto direct_result = scheduler_->AddTask(guid, &out_id);
-    EXPECT_EQ(impl_result, direct_result);
-}
-
-TEST_F(SchedulerServiceImplTest, QueryInterface_ReturnsSchedulerService)
-{
-    DasPtr<IDasSchedulerService> p_svc;
-    auto                         result = impl_->QueryInterface(
-        DasIidOf<IDasSchedulerService>(),
-        reinterpret_cast<void**>(p_svc.Put()));
-    EXPECT_EQ(result, DAS_S_OK);
-    EXPECT_TRUE(p_svc.Get() != nullptr);
-}
-
-TEST_F(SchedulerServiceImplTest, SchedulerServiceImplAuthoringNullOutRejected)
-{
-    DasPtr<IDasReadOnlyString> request;
-    ASSERT_EQ(CreateIDasReadOnlyStringFromUtf8("{}", request.Put()), DAS_S_OK);
-    EXPECT_EQ(
-        impl_->GetTaskAuthoringDocument(0, request.Get(), nullptr),
-        DAS_E_INVALID_POINTER);
-}
-
-TEST_F(SchedulerServiceImplTest, SchedulerServiceImplAuthoringInvalidJson)
-{
-    DasPtr<IDasReadOnlyString> request;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8("not-json", request.Put()),
-        DAS_S_OK);
-    DasPtr<IDasReadOnlyString> out;
-    EXPECT_EQ(
-        impl_->ApplyTaskAuthoringChange(0, request.Get(), out.Put()),
-        DAS_E_INVALID_JSON);
-}
-
-TEST_F(SchedulerServiceImplTest, SchedulerServiceImplAuthoringReturnsJson)
-{
-    DasPtr<IDasReadOnlyString> request;
-    ASSERT_EQ(CreateIDasReadOnlyStringFromUtf8("{}", request.Put()), DAS_S_OK);
-    DasPtr<IDasReadOnlyString> out;
-    ASSERT_EQ(
-        impl_->CompileTaskAuthoring(99, request.Get(), out.Put()),
-        DAS_S_OK);
-    ASSERT_TRUE(out.Get() != nullptr);
-    const char* raw = nullptr;
-    ASSERT_EQ(out->GetUtf8(&raw), DAS_S_OK);
-    auto parsed = Das::Utils::ParseYyjsonFromString(raw);
-    ASSERT_TRUE(parsed.has_value());
-    EXPECT_TRUE(parsed->as_object().has_value());
 }
 
 // ============================================================
@@ -3515,45 +3310,6 @@ namespace
         EXPECT_TRUE(entries->empty());
         ExpectNoRepositoryAuthoringProviderCalls(state);
     }
-
-    std::string SerializeJsonForTest(const yyjson::value& json)
-    {
-        auto serialized = Das::Utils::SerializeYyjsonValue(json, false);
-        EXPECT_TRUE(serialized.has_value());
-        return serialized.value_or("{}");
-    }
-
-    yyjson::value ParseReadOnlyJsonForTest(IDasReadOnlyString* json)
-    {
-        const char* raw = nullptr;
-        EXPECT_EQ(json->GetUtf8(&raw), DAS_S_OK);
-
-        auto parsed = Das::Utils::ParseYyjsonFromString(
-            raw ? std::string_view(raw) : std::string_view{});
-        EXPECT_TRUE(parsed.has_value());
-        return parsed ? std::move(*parsed)
-                      : yyjson::value(Das::Utils::MakeYyjsonObject());
-    }
-
-    void CreateRepositoryEntryThroughBridgeForTest(
-        SchedulerServiceImpl& impl,
-        std::string_view      display_name,
-        int64_t               retry_count = 3)
-    {
-        auto request_json = SerializeJsonForTest(
-            MakeRepositoryCreateRequest(display_name, retry_count));
-        DasPtr<IDasReadOnlyString> request;
-        ASSERT_EQ(
-            CreateIDasReadOnlyStringFromUtf8(
-                request_json.c_str(),
-                request.Put()),
-            DAS_S_OK);
-
-        DasPtr<IDasReadOnlyString> out;
-        ASSERT_EQ(
-            impl.CreateRepositoryEntry(request.Get(), out.Put()),
-            DAS_S_OK);
-    }
 } // namespace
 // ===========================================================================
 // Phase 84 Wave 03 — strict Authoring wire (D-84-04/05/06/08/09/10/11/32)
@@ -4320,108 +4076,16 @@ TEST_F(
 }
 
 TEST_F(
-    SchedulerServiceImplTest,
-    SchedulerServiceImplRepositoryGetNullOutRejected)
-{
-    EXPECT_EQ(impl_->GetTaskRepository(nullptr), DAS_E_INVALID_POINTER);
-}
-
-TEST_F(
-    SchedulerServiceImplTest,
-    SchedulerServiceImplRepositoryGetReturnsSchedulerJson)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    DasPtr<IDasReadOnlyString> out;
-    ASSERT_EQ(impl_->GetTaskRepository(out.Put()), DAS_S_OK);
-    ASSERT_TRUE(out.Get() != nullptr);
-
-    auto parsed = ParseReadOnlyJsonForTest(out.Get());
-    auto obj = parsed.as_object();
-    ASSERT_TRUE(obj.has_value());
-    auto entries = (*obj)[std::string_view("entries")].as_array();
-    ASSERT_TRUE(entries.has_value());
-    EXPECT_TRUE(entries->empty());
-}
-
-TEST_F(
     SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryCreateNullOutRejected)
+    SchedulerRepositoryCreateReturnsCreatedEntryJson)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl impl(*scheduler_);
 
-    auto request_json =
-        SerializeJsonForTest(MakeRepositoryCreateRequest("Bridge entry", 7));
-    DasPtr<IDasReadOnlyString> request;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8(request_json.c_str(), request.Put()),
-        DAS_S_OK);
-
-    EXPECT_EQ(
-        impl.CreateRepositoryEntry(request.Get(), nullptr),
-        DAS_E_INVALID_POINTER);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryCreateNullBodyRejected)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl       impl(*scheduler_);
-    DasPtr<IDasReadOnlyString> out;
-
-    EXPECT_EQ(
-        impl.CreateRepositoryEntry(nullptr, out.Put()),
-        DAS_E_INVALID_POINTER);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryCreateInvalidJsonRejected)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl impl(*scheduler_);
-
-    DasPtr<IDasReadOnlyString> malformed;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8("not-json", malformed.Put()),
-        DAS_S_OK);
-    DasPtr<IDasReadOnlyString> out;
-    EXPECT_EQ(
-        impl.CreateRepositoryEntry(malformed.Get(), out.Put()),
-        DAS_E_INVALID_JSON);
-
-    DasPtr<IDasReadOnlyString> non_object;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8("[]", non_object.Put()),
-        DAS_S_OK);
-    out.Reset();
-    EXPECT_EQ(
-        impl.CreateRepositoryEntry(non_object.Get(), out.Put()),
-        DAS_E_INVALID_JSON);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryCreateReturnsCreatedEntryJson)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl impl(*scheduler_);
-
-    auto request_json =
-        SerializeJsonForTest(MakeRepositoryCreateRequest("Bridge entry", 7));
-    DasPtr<IDasReadOnlyString> request;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8(request_json.c_str(), request.Put()),
-        DAS_S_OK);
-
-    DasPtr<IDasReadOnlyString> out;
-    ASSERT_EQ(impl.CreateRepositoryEntry(request.Get(), out.Put()), DAS_S_OK);
-    ASSERT_TRUE(out.Get() != nullptr);
-
-    auto parsed = ParseReadOnlyJsonForTest(out.Get());
-    auto obj = parsed.as_object();
+    // 具体类直调（COM 门面整删后）：create 响应携带新条目的完整投影
+    // （entryId/displayName/acceptedProperties）。
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Bridge entry", 7));
+    auto obj = created.as_object();
     ASSERT_TRUE(obj.has_value());
     EXPECT_EQ((*obj)[std::string_view("entryId")].as_sint().value_or(-1), 0);
     EXPECT_EQ(
@@ -4436,290 +4100,19 @@ TEST_F(
 
 TEST_F(
     SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryDeleteDelegatesResult)
+    SchedulerRepositoryDeleteCreatedEntryThenMissing)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl impl(*scheduler_);
 
-    auto request_json =
-        SerializeJsonForTest(MakeRepositoryCreateRequest("Delete me", 4));
-    DasPtr<IDasReadOnlyString> request;
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Delete me", 4));
     ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8(request_json.c_str(), request.Put()),
-        DAS_S_OK);
-    DasPtr<IDasReadOnlyString> created;
-    ASSERT_EQ(
-        impl.CreateRepositoryEntry(request.Get(), created.Put()),
-        DAS_S_OK);
-
-    EXPECT_EQ(impl.DeleteRepositoryEntry(0), DAS_S_OK);
-    EXPECT_EQ(impl.DeleteRepositoryEntry(0), DAS_E_NOT_FOUND);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryRenameNullOutRejected)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl impl(*scheduler_);
-
-    auto rename_json =
-        SerializeJsonForTest(MakeRepositoryRenameRequest("No output"));
-    DasPtr<IDasReadOnlyString> rename;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8(rename_json.c_str(), rename.Put()),
-        DAS_S_OK);
-
-    EXPECT_EQ(
-        impl.RenameRepositoryEntry(0, rename.Get(), nullptr),
-        DAS_E_INVALID_POINTER);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryRenameNullBodyRejected)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl       impl(*scheduler_);
-    DasPtr<IDasReadOnlyString> out;
-
-    EXPECT_EQ(
-        impl.RenameRepositoryEntry(0, nullptr, out.Put()),
-        DAS_E_INVALID_POINTER);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryRenameInvalidJsonRejected)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl impl(*scheduler_);
-
-    DasPtr<IDasReadOnlyString> malformed;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8("{bad", malformed.Put()),
-        DAS_S_OK);
-    DasPtr<IDasReadOnlyString> out;
-    EXPECT_EQ(
-        impl.RenameRepositoryEntry(0, malformed.Get(), out.Put()),
-        DAS_E_INVALID_JSON);
-
-    DasPtr<IDasReadOnlyString> non_object;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8("[]", non_object.Put()),
-        DAS_S_OK);
-    out.Reset();
-    EXPECT_EQ(
-        impl.RenameRepositoryEntry(0, non_object.Get(), out.Put()),
-        DAS_E_INVALID_JSON);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryRenameReturnsUpdatedEntryJson)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl impl(*scheduler_);
-
-    auto request_json =
-        SerializeJsonForTest(MakeRepositoryCreateRequest("Before rename", 6));
-    DasPtr<IDasReadOnlyString> request;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8(request_json.c_str(), request.Put()),
-        DAS_S_OK);
-    DasPtr<IDasReadOnlyString> created;
-    ASSERT_EQ(
-        impl.CreateRepositoryEntry(request.Get(), created.Put()),
-        DAS_S_OK);
-
-    auto rename_json =
-        SerializeJsonForTest(MakeRepositoryRenameRequest("After rename"));
-    DasPtr<IDasReadOnlyString> rename;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8(rename_json.c_str(), rename.Put()),
-        DAS_S_OK);
-
-    DasPtr<IDasReadOnlyString> out;
-    ASSERT_EQ(impl.RenameRepositoryEntry(0, rename.Get(), out.Put()), DAS_S_OK);
-
-    auto parsed = ParseReadOnlyJsonForTest(out.Get());
-    auto obj = parsed.as_object();
-    ASSERT_TRUE(obj.has_value());
-    EXPECT_EQ((*obj)[std::string_view("entryId")].as_sint().value_or(-1), 0);
-    EXPECT_EQ(
-        (*obj)[std::string_view("displayName")].as_string().value_or(""),
-        std::string_view("After rename"));
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryAuthoringNullOutRejected)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl impl(*scheduler_);
-
-    DasPtr<IDasReadOnlyString> request;
-    ASSERT_EQ(CreateIDasReadOnlyStringFromUtf8("{}", request.Put()), DAS_S_OK);
-
-    auto change_json = SerializeJsonForTest(MakeRepositoryAuthoringChange(0));
-    DasPtr<IDasReadOnlyString> change;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8(change_json.c_str(), change.Put()),
-        DAS_S_OK);
-
-    EXPECT_EQ(
-        impl.GetRepositoryEntryAuthoringDocument(0, request.Get(), nullptr),
-        DAS_E_INVALID_POINTER);
-    EXPECT_EQ(
-        impl.ApplyRepositoryEntryAuthoringChange(0, change.Get(), nullptr),
-        DAS_E_INVALID_POINTER);
-    EXPECT_EQ(
-        impl.CompileRepositoryEntryAuthoring(0, request.Get(), nullptr),
-        DAS_E_INVALID_POINTER);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryAuthoringNullBodyRejected)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl       impl(*scheduler_);
-    DasPtr<IDasReadOnlyString> out;
-
-    EXPECT_EQ(
-        impl.GetRepositoryEntryAuthoringDocument(0, nullptr, out.Put()),
-        DAS_E_INVALID_POINTER);
-    out.Reset();
-    EXPECT_EQ(
-        impl.ApplyRepositoryEntryAuthoringChange(0, nullptr, out.Put()),
-        DAS_E_INVALID_POINTER);
-    out.Reset();
-    EXPECT_EQ(
-        impl.CompileRepositoryEntryAuthoring(0, nullptr, out.Put()),
-        DAS_E_INVALID_POINTER);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryAuthoringInvalidJsonRejected)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl impl(*scheduler_);
-
-    DasPtr<IDasReadOnlyString> malformed;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8("{bad", malformed.Put()),
-        DAS_S_OK);
-    DasPtr<IDasReadOnlyString> out;
-    EXPECT_EQ(
-        impl.GetRepositoryEntryAuthoringDocument(0, malformed.Get(), out.Put()),
-        DAS_E_INVALID_JSON);
-    out.Reset();
-    EXPECT_EQ(
-        impl.ApplyRepositoryEntryAuthoringChange(0, malformed.Get(), out.Put()),
-        DAS_E_INVALID_JSON);
-    out.Reset();
-    EXPECT_EQ(
-        impl.CompileRepositoryEntryAuthoring(0, malformed.Get(), out.Put()),
-        DAS_E_INVALID_JSON);
-
-    DasPtr<IDasReadOnlyString> non_object;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8("[]", non_object.Put()),
-        DAS_S_OK);
-    out.Reset();
-    EXPECT_EQ(
-        impl.GetRepositoryEntryAuthoringDocument(
-            0,
-            non_object.Get(),
-            out.Put()),
-        DAS_E_INVALID_JSON);
-    out.Reset();
-    EXPECT_EQ(
-        impl.ApplyRepositoryEntryAuthoringChange(
-            0,
-            non_object.Get(),
-            out.Put()),
-        DAS_E_INVALID_JSON);
-    out.Reset();
-    EXPECT_EQ(
-        impl.CompileRepositoryEntryAuthoring(0, non_object.Get(), out.Put()),
-        DAS_E_INVALID_JSON);
-}
-
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    SchedulerServiceImplRepositoryAuthoringAndCompileReturnJson)
-{
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    EnableStrictAuthoringWire(*shared_state_);
-    SchedulerServiceImpl impl(*scheduler_);
-    CreateRepositoryEntryThroughBridgeForTest(impl, "Authoring bridge", 9);
-
-    DasPtr<IDasReadOnlyString> request;
-    ASSERT_EQ(CreateIDasReadOnlyStringFromUtf8("{}", request.Put()), DAS_S_OK);
-    DasPtr<IDasReadOnlyString> document_out;
-    ASSERT_EQ(
-        impl.GetRepositoryEntryAuthoringDocument(
-            0,
-            request.Get(),
-            document_out.Put()),
-        DAS_S_OK);
-    auto document = ParseReadOnlyJsonForTest(document_out.Get());
-    auto document_obj = document.as_object();
-    ASSERT_TRUE(document_obj.has_value());
-    EXPECT_EQ(
-        (*document_obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
-    EXPECT_TRUE(
-        (*document_obj)[std::string_view("document")].as_object().has_value());
 
-    auto change_json = SerializeJsonForTest(MakeRepositoryAuthoringChange(0));
-    DasPtr<IDasReadOnlyString> change;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8(change_json.c_str(), change.Put()),
-        DAS_S_OK);
-    DasPtr<IDasReadOnlyString> apply_out;
-    ASSERT_EQ(
-        impl.ApplyRepositoryEntryAuthoringChange(
-            0,
-            change.Get(),
-            apply_out.Put()),
-        DAS_S_OK);
-    auto apply = ParseReadOnlyJsonForTest(apply_out.Get());
-    auto apply_obj = apply.as_object();
-    ASSERT_TRUE(apply_obj.has_value());
-    EXPECT_TRUE((*apply_obj)[std::string_view("ok")].as_bool().value_or(false));
-    EXPECT_TRUE(apply_obj->contains(std::string_view("acceptedProperties")));
-    EXPECT_TRUE(apply_obj->contains(std::string_view("document")));
-    EXPECT_TRUE(apply_obj->contains(std::string_view("diagnostics")));
-
-    yyjson::value compile_request(Das::Utils::MakeYyjsonObject());
-    (*compile_request.as_object())[std::string_view("purpose")] = "preview";
-    auto compile_json = SerializeJsonForTest(compile_request);
-    DasPtr<IDasReadOnlyString> compile_request_string;
-    ASSERT_EQ(
-        CreateIDasReadOnlyStringFromUtf8(
-            compile_json.c_str(),
-            compile_request_string.Put()),
-        DAS_S_OK);
-    DasPtr<IDasReadOnlyString> compile_out;
-    ASSERT_EQ(
-        impl.CompileRepositoryEntryAuthoring(
-            0,
-            compile_request_string.Get(),
-            compile_out.Put()),
-        DAS_S_OK);
-
-    auto compile = ParseReadOnlyJsonForTest(compile_out.Get());
-    auto compile_obj = compile.as_object();
-    ASSERT_TRUE(compile_obj.has_value());
-    // Phase 84 strict Compile envelope: compile + diagnostics, plus Scheduler
-    // routing ack (entryId). The old canExecute/summary rewrapping is gone.
-    EXPECT_TRUE(compile_obj->contains(std::string_view("compile")));
-    EXPECT_TRUE(compile_obj->contains(std::string_view("diagnostics")));
-    EXPECT_FALSE(compile_obj->contains(std::string_view("canExecute")));
-    EXPECT_FALSE(compile_obj->contains(std::string_view("summary")));
+    EXPECT_EQ(scheduler_->DeleteRepositoryEntry(0), DAS_S_OK);
+    EXPECT_EQ(scheduler_->DeleteRepositoryEntry(0), DAS_E_NOT_FOUND);
 }
 
 TEST_F(
@@ -5815,12 +5208,11 @@ TEST_F(
 // + end 2 输出（e_1 int / e_2 string）——条目 Get 根 ports section 三口全
 // 量可见（无跳过）、父图预备 pass 抽取命中（调用节点口面含三口）、两条
 // 下游边经 faces 端点解析 Apply 落盘；子图执行编译产物（purpose=execution，
-// 与调用节点 das.scheduler 解析同通道）的 boundaryPorts.outputs 携带
-// e_1/e_2 双口清单（执行期 typed 边界导出与调用节点逐口投影的消费清
-// 单）。注：调用节点在子进程里经具名服务解析仓库条目需要
-// IDasSchedulerService 的 IPC 代理/存根——该接口系手写头（不在 IDL 代理
-// 生成面内），跨进程解析是全树既有缺口（DasMaaPi 生产路径同洞），父图
-// 经 RunTaskNow 的执行半段由 MultiValueBoundaryOutputs 任务级用例与
+// 与调用节点的条目解析同通道——creator 会话编译）的 boundaryPorts.outputs
+// 携带 e_1/e_2 双口清单（执行期 typed 边界导出与调用节点逐口投影的消费清
+// 单）。注：调度器接口面（原手写 COM 接口头，无 IDL 无 IPC）已整删，
+// worker 子进程经具名服务解析仓库条目的通路随之从根上消亡；父图经
+// RunTaskNow 的执行半段由 MultiValueBoundaryOutputs 任务级用例与
 // GraphRuntime 层 invoke 投影用例分段实测。
 TEST_F(
     SchedulerRuntimeBackedTest,
@@ -6244,10 +5636,10 @@ TEST_F(
             << "the string downstream edge did not persist";
     }
 
-    // ④ 子图执行编译产物（purpose=execution——调用节点 das.scheduler 解
-    //    析的同通道）：boundaryPorts.outputs 携带 e_1/e_2 双口清单（执行
-    //    期 typed 边界导出与调用节点逐口投影按这份清单消费），b_1 进
-    //    inputs 清单（父图→子图直塞半）。
+    // ④ 子图执行编译产物（purpose=execution——与调用节点的条目解析同
+    //    通道，creator 会话编译）：boundaryPorts.outputs 携带 e_1/e_2 双口
+    //    清单（执行期 typed 边界导出与调用节点逐口投影按这份清单消费），
+    //    b_1 进 inputs 清单（父图→子图直塞半）。
     {
         auto compile_request =
             Das::Utils::ParseYyjsonFromString(R"({"purpose":"execution"})");

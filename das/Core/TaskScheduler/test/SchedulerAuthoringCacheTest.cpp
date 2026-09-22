@@ -26,7 +26,6 @@
 #include <das/DasApi.h>
 #include <das/DasRef.hpp>
 #include <das/DasString.hpp>
-#include <das/IDasSchedulerService.h>
 #include <das/Plugins/SchedulerTestPlugin/SchedulerTestSharedState.h>
 #include <das/Utils/PathText.h>
 #include <gtest/gtest.h>
