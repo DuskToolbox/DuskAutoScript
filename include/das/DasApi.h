@@ -40,7 +40,6 @@ namespace Das::ExportInterface
 
 DAS_INTERFACE IDasSettingsService;
 DAS_INTERFACE IDasPluginManagerService;
-struct IDasSchedulerService;
 DAS_INTERFACE IDasCoreServices;
 
 #ifndef SWIG

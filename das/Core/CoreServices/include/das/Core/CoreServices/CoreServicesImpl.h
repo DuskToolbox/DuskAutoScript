@@ -44,7 +44,6 @@ public:
     DAS_IMPL GetSettingsService(IDasSettingsService** pp_out) override;
     DAS_IMPL GetPluginManagerService(
         IDasPluginManagerService** pp_out) override;
-    DAS_IMPL GetSchedulerService(IDasSchedulerService** pp_out) override;
     DAS_IMPL Shutdown() override;
 
     /// 借用内部拥有的 IPC context（裸指针，生命周期随本对象）
@@ -73,7 +72,6 @@ private:
     // COM-style service wrappers (owned)
     DasPtr<IDasSettingsService>      settings_service_;
     DasPtr<IDasPluginManagerService> plugin_manager_service_;
-    DasPtr<IDasSchedulerService>     scheduler_service_;
 };
 
 DAS_CORE_CORE_SERVICES_NS_END

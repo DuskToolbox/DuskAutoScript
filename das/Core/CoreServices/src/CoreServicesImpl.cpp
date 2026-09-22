@@ -6,7 +6,6 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
-#include <das/Core/TaskScheduler/SchedulerServiceImpl.h>
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
@@ -41,11 +40,6 @@ CoreServicesImpl::CoreServicesImpl(
     plugin_mgr_impl->AddRef();
     plugin_manager_service_ =
         DasPtr<IDasPluginManagerService>::Attach(plugin_mgr_impl);
-
-    auto* scheduler_impl =
-        new Das::Core::TaskScheduler::SchedulerServiceImpl(scheduler_svc_);
-    scheduler_impl->AddRef();
-    scheduler_service_ = DasPtr<IDasSchedulerService>::Attach(scheduler_impl);
 }
 
 CoreServicesImpl::~CoreServicesImpl()
@@ -146,19 +140,6 @@ DasResult CoreServicesImpl::GetPluginManagerService(
         return DAS_E_NOT_FOUND;
     }
     result.Set(plugin_manager_service_.Get());
-    result.Keep();
-    return DAS_S_OK;
-}
-
-DasResult CoreServicesImpl::GetSchedulerService(IDasSchedulerService** pp_out)
-{
-    DAS_UTILS_CHECK_POINTER(pp_out)
-    DasOutPtr<IDasSchedulerService> result(pp_out);
-    if (!scheduler_service_)
-    {
-        return DAS_E_NOT_FOUND;
-    }
-    result.Set(scheduler_service_.Get());
     result.Keep();
     return DAS_S_OK;
 }
