@@ -8,9 +8,9 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
-#include <das/IDasSchedulerService.h>
 
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -55,17 +55,14 @@ namespace Plugins::DasGraphTask
             return ro;
         }
 
-        // 主进程调度服务的具名注册名（与 DasFlowControl 调用组件同注册名）。
-        constexpr std::string_view SCHEDULER_SERVICE_NAME = "das.scheduler";
-
         // 内部条目文档获取请求：携带投影关闭旗标——被获取条目的 Provider
         // 会话收到同一请求后不再做边界投影，引用环（A 引 B、B 引 A）的
         // Get 投影递归在此断开。
         constexpr std::string_view ENTRY_DOCUMENT_REQUEST =
             R"({"boundaryPortProjection":false})";
 
-        // 条目文档获取缝（测试可注入；空 = 生产实现）。互斥保护：注入与
-        // Get 可能来自不同线程。
+        // 条目文档获取缝（测试注入槽；生产取数已迁 creator 通道，槽不再
+        // 被生产消费）。互斥保护：注入与 Get 可能来自不同线程。
         std::mutex& FetcherMutex()
         {
             static std::mutex mutex;
@@ -78,79 +75,200 @@ namespace Plugins::DasGraphTask
             return fetcher;
         }
 
-        // 条目文档获取的生产实现：经主进程 C ABI 查 IDasSchedulerService
-        // 的条目 authoring Get（跨进程服务访问必须走 C ABI——插件内联读
-        // IPC 上下文的 thread_local 跨 DLL 分裂恒空）。
-        std::optional<std::string> FetchEntryDocumentViaScheduler(
-            int64_t entry_id)
+        // creator 通道版条目文档获取：开被引条目自己的 authoring 会话再
+        // Get 文档（请求体携带投影关闭旗标）。creator 借用指针来自插件包
+        // 加载期注入（经代理可达主进程本尊——插件禁内联读 IPC 上下文）。
+        // 任务类型 guid 取节点组件 guid（绑条目节点的组件 guid 与条目任务
+        // 类型 guid 同值域——插件侧无注册表面可反查，与 Core 侧无 manager
+        // 回退同一判据）；context 的 repositoryEntryId 键由解析后端预载条
+        // 目持久化 properties。任何失败返回 nullopt（调用方走既有缺文档
+        // 路径降级零注入——投影期非编译期，不引入新错误面）。
+        std::optional<std::string> FetchEntryDocumentViaCreator(
+            PluginInterface::IDasTaskComponentCreator* creator,
+            const std::string&                         component_guid_text,
+            int64_t                                    entry_id)
         {
-            DasPtr<IDasBase> service_base;
-            if (DAS::IsFailed(DasQueryMainProcessInterfaceByName(
-                    std::string(SCHEDULER_SERVICE_NAME).c_str(),
-                    service_base.Put()))
-                || !service_base)
+            if (creator == nullptr || component_guid_text.empty())
+            {
+                return std::nullopt;
+            }
+            DasGuid task_type_guid{};
+            if (DAS::IsFailed(DasMakeDasGuid(
+                    component_guid_text.c_str(),
+                    &task_type_guid)))
             {
                 return std::nullopt;
             }
 
-            DasPtr<IDasSchedulerService> scheduler;
-            if (DAS::IsFailed(service_base.As(scheduler.Put())) || !scheduler)
+            yyjson::value context(Das::Utils::MakeYyjsonObject());
+            {
+                auto context_object = context.as_object();
+                (*context_object)[std::string_view("repositoryEntryId")] =
+                    entry_id;
+            }
+            auto context_text =
+                Das::Utils::SerializeYyjsonValue(std::move(context));
+            if (!context_text.has_value())
+            {
+                return std::nullopt;
+            }
+            DasPtr<ExportInterface::IDasJson> context_json;
+            if (DAS::IsFailed(ParseDasJsonFromString(
+                    context_text->c_str(),
+                    context_json.Put()))
+                || !context_json)
             {
                 return std::nullopt;
             }
 
-            auto request =
-                MakeReadOnlyString(std::string(ENTRY_DOCUMENT_REQUEST));
-            DasPtr<IDasReadOnlyString> response;
-            if (DAS::IsFailed(scheduler->GetRepositoryEntryAuthoringDocument(
-                    entry_id,
-                    request.Get(),
-                    response.Put()))
-                || !response)
+            DasPtr<PluginInterface::IDasTaskAuthoringSession> session;
+            if (DAS::IsFailed(creator->CreateAuthoringSession(
+                    task_type_guid,
+                    context_json.Get(),
+                    session.Put()))
+                || !session)
             {
                 return std::nullopt;
             }
-            const char* response_utf8 = nullptr;
-            if (DAS::IsFailed(response->GetUtf8(&response_utf8))
-                || response_utf8 == nullptr)
+
+            DasPtr<ExportInterface::IDasJson> request_json;
+            if (DAS::IsFailed(ParseDasJsonFromString(
+                    std::string(ENTRY_DOCUMENT_REQUEST).c_str(),
+                    request_json.Put()))
+                || !request_json)
             {
                 return std::nullopt;
             }
-            return std::string(response_utf8);
+            DasPtr<ExportInterface::IDasJson> document_json;
+            if (DAS::IsFailed(session->GetDocument(
+                    request_json.Get(),
+                    document_json.Put()))
+                || !document_json)
+            {
+                return std::nullopt;
+            }
+            return JsonToUtf8(document_json.Get());
         }
 
-        RepositoryEntryDocumentFetcher ActiveEntryDocumentFetcher()
-        {
-            const std::scoped_lock lock(FetcherMutex());
-            if (FetcherSlot())
-            {
-                return FetcherSlot();
-            }
-            return &FetchEntryDocumentViaScheduler;
-        }
-
-        // 从 Get 响应提取条目持久化源文档（acceptedProperties，
-        // GraphDocumentDto 形态）——边界推导的输入。
-        std::optional<std::string> ExtractAcceptedPropertiesText(
+        // 会话 Get 响应 → 边界合并形状：解信封 document 键，读文档根
+        // ports 自述（条目边界口面——与编译期注入 pass 消费同一文档面），
+        // flat {id,label?,type,direction} 条目转
+        // {inputs:[{portId,displayLabel,portType}],outputs:[...]}。无根
+        // ports 自述返回 nullopt（缺文档路径：调用方降级零注入）。
+        std::optional<yyjson::value> ExtractBoundaryPortsFromSessionDocument(
             const std::string& response_text)
         {
             try
             {
-                auto response = yyjson::read(response_text);
-                auto response_object = response.as_object();
-                if (!response_object.has_value()
-                    || !response_object->contains(
-                        std::string_view("acceptedProperties")))
+                yyjson::value response = yyjson::read(response_text);
+                auto          response_object = response.as_object();
+                if (!response_object.has_value())
                 {
                     return std::nullopt;
                 }
-                auto serialized = Das::Utils::SerializeYyjsonValue(
-                    (*response_object)[std::string_view("acceptedProperties")]);
-                if (!serialized.has_value())
+                yyjson::value* document = &response;
+                yyjson::value  unwrapped;
+                if (response_object->contains(std::string_view("document")))
+                {
+                    unwrapped = Das::Utils::CloneYyjsonValue(
+                        (*response_object)[std::string_view("document")]);
+                    document = &unwrapped;
+                }
+                auto document_object = document->as_object();
+                if (!document_object.has_value()
+                    || !document_object->contains(std::string_view("ports")))
                 {
                     return std::nullopt;
                 }
-                return *serialized;
+                auto ports =
+                    (*document_object)[std::string_view("ports")].as_array();
+                if (!ports.has_value())
+                {
+                    return std::nullopt;
+                }
+
+                auto boundary = Das::Utils::MakeYyjsonObject();
+                auto inputs = Das::Utils::MakeYyjsonArray();
+                auto outputs = Das::Utils::MakeYyjsonArray();
+                auto inputs_array = inputs.as_array();
+                auto outputs_array = outputs.as_array();
+                for (const auto& port : *ports)
+                {
+                    auto port_object = port.as_object();
+                    if (!port_object.has_value())
+                    {
+                        continue;
+                    }
+                    auto port_id =
+                        (*port_object)[std::string_view("id")].as_string();
+                    if (!port_id.has_value()
+                        && port_object->contains(std::string_view("portId")))
+                    {
+                        port_id = (*port_object)[std::string_view("portId")]
+                                      .as_string();
+                    }
+                    if (!port_id.has_value() || port_id->empty())
+                    {
+                        continue;
+                    }
+                    auto port_type =
+                        (*port_object)[std::string_view("type")].as_string();
+                    if (!port_type.has_value()
+                        && port_object->contains(std::string_view("portType")))
+                    {
+                        port_type = (*port_object)[std::string_view("portType")]
+                                        .as_string();
+                    }
+                    auto direction =
+                        (*port_object)[std::string_view("direction")]
+                            .as_string();
+                    if (!direction.has_value())
+                    {
+                        continue;
+                    }
+                    auto entry = Das::Utils::MakeYyjsonObject();
+                    auto entry_object = entry.as_object();
+                    (*entry_object)[std::string_view("portId")] =
+                        std::make_pair(
+                            std::string_view(*port_id),
+                            yyjson::copy_string);
+                    // displayLabel 键恒在场（消费方 object[] 对缺失键抛
+                    // 异常）；label 缺席时回落 port_id（与编译侧根 ports
+                    // 解析的回落一致）。
+                    std::string_view display_label{*port_id};
+                    if (port_object->contains(std::string_view("label")))
+                    {
+                        auto label = (*port_object)[std::string_view("label")]
+                                         .as_string();
+                        if (label.has_value() && !label->empty())
+                        {
+                            display_label = *label;
+                        }
+                    }
+                    (*entry_object)[std::string_view("displayLabel")] =
+                        std::make_pair(display_label, yyjson::copy_string);
+                    (*entry_object)[std::string_view("portType")] =
+                        std::make_pair(
+                            std::string_view(
+                                port_type.has_value()
+                                    ? std::string_view(*port_type)
+                                    : std::string_view("string")),
+                            yyjson::copy_string);
+                    if (*direction == std::string_view("input"))
+                    {
+                        inputs_array->emplace_back(std::move(entry));
+                    }
+                    else if (*direction == std::string_view("output"))
+                    {
+                        outputs_array->emplace_back(std::move(entry));
+                    }
+                }
+                auto boundary_object = boundary.as_object();
+                (*boundary_object)[std::string_view("inputs")] =
+                    Das::Utils::CloneYyjsonValue(inputs);
+                (*boundary_object)[std::string_view("outputs")] =
+                    Das::Utils::CloneYyjsonValue(outputs);
+                return boundary;
             }
             catch (...)
             {
@@ -376,13 +494,32 @@ namespace Plugins::DasGraphTask
             return std::nullopt;
         }
 
+        // 节点组件 guid 读取（creator 通道取条目会话的任务类型 guid 来
+        // 源——绑条目节点的组件 guid 与条目任务类型 guid 同值域）。
+        template <typename NodeValue>
+        std::string ComponentGuidOfNode(const NodeValue& node_value)
+        {
+            auto node_object = node_value.as_object();
+            if (!node_object.has_value())
+            {
+                return {};
+            }
+            return std::string((*node_object)[std::string_view("componentGuid")]
+                                   .as_string()
+                                   .value_or(""));
+        }
+
         // GetDocument 后处理主体：graph 视图内每个已绑 graph 条目的调用节
         // 点注入条目边界端口。任一步失败降级零注入（投影尽力而为，不阻断
         // Get）。返回空 = 无修改（原样透传）。
         std::optional<std::string> InjectBoundaryPortsIntoDocument(
-            GraphAuthoringSessionState* state,
-            const std::string&          envelope_text)
+            PluginInterface::IDasTaskComponentCreator* creator,
+            const std::string&                         envelope_text)
         {
+            if (creator == nullptr)
+            {
+                return std::nullopt;
+            }
             // 显式持有 owned 可变文档：yyjson::read 的 auto 推导得到的是
             // const 视图 reader，后续节点 ports 的就地改写需要可变链。
             yyjson::value root = yyjson::read(envelope_text);
@@ -421,7 +558,6 @@ namespace Plugins::DasGraphTask
             }
 
             // 逐节点解析绑定；条目文档同 id 只取一次。
-            const auto fetcher = ActiveEntryDocumentFetcher();
             std::unordered_map<int64_t, yyjson::value> boundary_cache;
             bool                                       modified = false;
             for (auto&& node_value : *nodes)
@@ -434,45 +570,23 @@ namespace Plugins::DasGraphTask
                 auto cached = boundary_cache.find(*entry_id);
                 if (cached == boundary_cache.end())
                 {
-                    auto response_text = fetcher(*entry_id);
+                    auto response_text = FetchEntryDocumentViaCreator(
+                        creator,
+                        ComponentGuidOfNode(node_value),
+                        *entry_id);
                     if (!response_text.has_value())
                     {
                         continue;
                     }
-                    auto document_source =
-                        ExtractAcceptedPropertiesText(*response_text);
-                    if (!document_source.has_value())
+                    auto boundary =
+                        ExtractBoundaryPortsFromSessionDocument(*response_text);
+                    if (!boundary.has_value())
                     {
                         continue;
                     }
-                    DasPtr<IDasReadOnlyString> boundary_text;
-                    auto document_str = MakeReadOnlyString(*document_source);
-                    if (DAS::IsFailed(GraphDeriveBoundaryPorts(
-                            state,
-                            document_str.Get(),
-                            boundary_text.Put()))
-                        || !boundary_text)
-                    {
-                        continue;
-                    }
-                    const char* boundary_utf8 = nullptr;
-                    if (DAS::IsFailed(boundary_text->GetUtf8(&boundary_utf8))
-                        || boundary_utf8 == nullptr)
-                    {
-                        continue;
-                    }
-                    try
-                    {
-                        auto boundary =
-                            yyjson::read(std::string(boundary_utf8));
-                        cached = boundary_cache
-                                     .emplace(*entry_id, std::move(boundary))
-                                     .first;
-                    }
-                    catch (...)
-                    {
-                        continue;
-                    }
+                    cached =
+                        boundary_cache.emplace(*entry_id, std::move(*boundary))
+                            .first;
                 }
                 if (MergeBoundaryPortsIntoNode(node_value, cached->second))
                 {
@@ -503,14 +617,16 @@ namespace Plugins::DasGraphTask
     DasGraphTaskAuthoringSession::DasGraphTaskAuthoringSession(
         std::string                                context_json,
         PluginInterface::IDasTaskComponentCreator* p_creator)
+        : creator_(p_creator)
     {
         auto ctx_str = MakeReadOnlyString(context_json);
         // CreateGraphAuthoringSession seeds the Core-owned GraphDocumentDto
         // store from the context (formSequence / graph / empty) —含
         // actionCatalog/faces 键的自解析（SeedFromContext）。插件是纯管
         // 道：完整 context 原文透传，零提取/零转发跳。creator 借用指针
-        // 随会话下传（D-07：与执行侧 CreateGraphRuntimeWithHost 对称，
-        // 本尊生命周期由 PluginPackage 的 host_ 保证）。
+        // 随会话下传（与执行侧 CreateGraphRuntimeWithHost 对称，本尊生
+        // 命周期由 PluginPackage 的注入方保证）；同时落到会话成员供
+        // GetDocument 投影期取被引条目文档（开条目自己的 authoring 会话）。
         CreateGraphAuthoringSession(p_creator, ctx_str.Get(), &state_);
     }
 
@@ -547,7 +663,7 @@ namespace Plugins::DasGraphTask
         if (!RequestDisablesBoundaryProjection(request_text))
         {
             auto enhanced = InjectBoundaryPortsIntoDocument(
-                state_,
+                creator_,
                 JsonToUtf8(document_json.Get()));
             if (enhanced.has_value())
             {

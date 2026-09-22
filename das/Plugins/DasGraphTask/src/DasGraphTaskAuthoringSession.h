@@ -81,6 +81,11 @@ namespace Plugins::DasGraphTask
     private:
         // Opaque Core-owned authoring session (GraphAuthoringSessionState*).
         GraphAuthoringSessionState* state_ = nullptr;
+
+        // creator 借用指针（会话本尊持有的同一实例）：GetDocument 投影期
+        // 取被引条目文档经它开条目自己的 authoring 会话（生命周期由
+        // PluginPackage 的注入方保证——与 state_ 同款借用前提）。
+        PluginInterface::IDasTaskComponentCreator* creator_ = nullptr;
     };
 } // namespace Plugins::DasGraphTask
 DAS_NS_END

@@ -17,6 +17,7 @@
 #include <das/_autogen/idl/header/IDasStringVector.generated.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentCreator.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include "../src/DasGraphTaskAuthoringSession.h"
@@ -25,6 +26,7 @@
 #include "../src/GraphTaskFocusLogComponent.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -731,32 +733,25 @@ TEST(DasGraphTaskTest, AuthoringSessionSurvivesMalformedCatalogContext)
 
 namespace
 {
-    // 条目 Get 响应信封：acceptedProperties 是条目的 GraphDocumentDto 持久
-    // 化源（内部节点引用目录组件 {gc}，其声明端口面在会话 catalog 中）。
-    constexpr std::string_view BOUND_ENTRY_RESPONSE = R"json({
-        "entryId": 42,
-        "taskTypeGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3",
-        "revision": 1,
-        "diagnostics": [],
-        "acceptedProperties": {
-            "nodes": [{
-                "nodeId": "inner_1",
-                "target": {
-                    "targetKind": "componentRef",
-                    "componentRef": {
-                        "kind": "componentRef",
-                        "componentGuid": "{gc}",
-                        "pluginGuid": "{gp}"
-                    }
-                },
-                "settings": {}
-            }],
-            "edges": []
-        }
+    // 被引条目会话的 Get 响应信封：document 根 ports 自述即条目边界口
+    // 面（与编译期注入 pass 消费同一文档面——同门通道）。条目内部结构
+    // 对投影消费方不可见，端口面以根 ports 自述呈现。
+    constexpr std::string_view BOUND_ENTRY_DOCUMENT = R"json({
+        "document": {
+            "viewKind": "graph",
+            "ports": [
+                {"id": "seed", "type": "int", "direction": "input"},
+                {"id": "result", "type": "string", "direction": "output"}
+            ]
+        },
+        "diagnostics": []
     })json";
 
     // 父图上下文：n_1 绑 repositoryRef=42（catalog 声明该字段类型为
-    // taskRepositoryRef）；目录组件 {gc} 的端口面在 actionCatalog。
+    // taskRepositoryRef）。节点组件 guid 用真实 GUID 形（creator 通道按
+    // 它开条目会话——绑条目节点的组件 guid 与条目任务类型 guid 同值
+    // 域）；条目端口面来自被引文档根 ports 自述（BOUND_ENTRY_DOCUMENT），
+    // 不再经父会话 catalog 推导。
     constexpr std::string_view BOUND_NODE_CONTEXT = R"json({
         "properties": {
             "nodes": [{
@@ -765,7 +760,7 @@ namespace
                     "targetKind": "componentRef",
                     "componentRef": {
                         "kind": "componentRef",
-                        "componentGuid": "{gi}",
+                        "componentGuid": "3F8E9D2A-1B4C-4A5D-9E6F-7A8B9C0D1E2F",
                         "pluginGuid": "{gp}"
                     }
                 },
@@ -775,34 +770,180 @@ namespace
         },
         "actionCatalog": [
             {
-                "actionId": "{gi}",
+                "actionId": "3F8E9D2A-1B4C-4A5D-9E6F-7A8B9C0D1E2F",
                 "config": [{"name": "repositoryRef", "type": "taskRepositoryRef"}]
-            },
-            {
-                "actionId": "{gc}",
-                "ports": [
-                    {"portId": "seed", "portType": "int", "direction": "input"},
-                    {"portId": "result", "portType": "string", "direction": "output"}
-                ]
             }
         ]
     })json";
 
-    // 获取缝注入守卫：测试结束（含断言早退）恢复生产实现。
-    struct ScopedEntryDocumentFetcherOverride
+    // fake 会话：GetDocument 回固定文档信封，ApplyChange/Compile 具名拒。
+    // 与 Core 侧注入链测试的固定响应会话同型（手动引用计数——会话接口
+    // 无 ImplBase 便捷基类的跨插件先例）。
+    class FakeEntryDocumentSession final
+        : public Das::PluginInterface::IDasTaskAuthoringSession
     {
-        explicit ScopedEntryDocumentFetcherOverride(
-            Das::Plugins::DasGraphTask::RepositoryEntryDocumentFetcher fetcher)
+    public:
+        explicit FakeEntryDocumentSession(std::string document_json)
+            : document_json_(std::move(document_json))
         {
-            Das::Plugins::DasGraphTask::
-                SetRepositoryEntryDocumentFetcherForTest(std::move(fetcher));
         }
 
-        ~ScopedEntryDocumentFetcherOverride()
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
         {
-            Das::Plugins::DasGraphTask::
-                SetRepositoryEntryDocumentFetcherForTest(nullptr);
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
         }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid
+                == DasIidOf<Das::PluginInterface::IDasTaskAuthoringSession>())
+            {
+                *pp_out = static_cast<
+                    Das::PluginInterface::IDasTaskAuthoringSession*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult GetGuid(DasGuid* p_out_guid) override
+        {
+            if (p_out_guid == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            const std::string guid_text{"F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3"};
+            return DasMakeDasGuid(guid_text.c_str(), p_out_guid);
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "FakeEntryDocumentSession",
+                pp_out_name);
+        }
+
+        DasResult GetDocument(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_document_json) override
+        {
+            if (pp_out_document_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_document_json = nullptr;
+            DasPtr<Das::ExportInterface::IDasJson> document;
+            if (DAS::IsFailed(ParseDasJsonFromString(
+                    document_json_.c_str(),
+                    document.Put()))
+                || document.Get() == nullptr)
+            {
+                return DAS_E_FAIL;
+            }
+            *pp_out_document_json = document.Get();
+            (*pp_out_document_json)->AddRef();
+            return DAS_S_OK;
+        }
+
+        DasResult ApplyChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_result_json = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult Compile(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_result_json = nullptr;
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+    private:
+        std::string           document_json_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    // fake creator：CreateTaskComponent 具名拒；CreateAuthoringSession 回
+    // 固定文档会话（可选计数槽供用例断言获取次数/零获取）。
+    class FakeEntryDocumentCreator final
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
+              FakeEntryDocumentCreator>
+    {
+    public:
+        FakeEntryDocumentCreator(
+            std::string document_json,
+            int*        create_calls = nullptr)
+            : document_json_(std::move(document_json)),
+              create_calls_(create_calls)
+        {
+        }
+
+        DasResult CreateTaskComponent(
+            const DasGuid&,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_component = nullptr;
+            return DAS_E_NOT_FOUND;
+        }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&,
+            Das::ExportInterface::IDasJson*,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (create_calls_ != nullptr)
+            {
+                ++(*create_calls_);
+            }
+            auto* session = new FakeEntryDocumentSession(document_json_);
+            session->AddRef();
+            *pp_out_session = session;
+            return DAS_S_OK;
+        }
+
+    private:
+        std::string document_json_;
+        int*        create_calls_ = nullptr;
     };
 
     std::string DocumentTextOf(
@@ -903,24 +1044,18 @@ namespace
 
 TEST(DasGraphTaskTest, AuthoringSessionProjectsBoundaryPortsOnBoundCallNode)
 {
-    int                                      fetch_calls = 0;
-    const ScopedEntryDocumentFetcherOverride fetcher_override{
-        [&fetch_calls](int64_t entry_id) -> std::optional<std::string>
-        {
-            ++fetch_calls;
-            if (entry_id != 42)
-            {
-                return std::nullopt;
-            }
-            return std::string{BOUND_ENTRY_RESPONSE};
-        }};
+    int                      create_calls = 0;
+    FakeEntryDocumentCreator creator{
+        std::string{BOUND_ENTRY_DOCUMENT},
+        &create_calls};
 
     Das::Plugins::DasGraphTask::DasGraphTaskAuthoringSession session{
-        std::string{BOUND_NODE_CONTEXT}};
+        std::string{BOUND_NODE_CONTEXT},
+        &creator};
 
     const auto document_text = DocumentTextOf(session, "{}");
     ASSERT_FALSE(document_text.empty());
-    EXPECT_EQ(fetch_calls, 1);
+    EXPECT_EQ(create_calls, 1);
 
     // 边界输入 seed / 边界输出 result 投影进该节点 ports[]（严格五键
     // wire 形，category 按 port_type 派生）。
@@ -930,12 +1065,11 @@ TEST(DasGraphTaskTest, AuthoringSessionProjectsBoundaryPortsOnBoundCallNode)
 
 TEST(DasGraphTaskTest, AuthoringSessionBoundaryProjectionIsIdempotent)
 {
-    const ScopedEntryDocumentFetcherOverride fetcher_override{
-        [](int64_t) -> std::optional<std::string>
-        { return std::string{BOUND_ENTRY_RESPONSE}; }};
+    FakeEntryDocumentCreator creator{std::string{BOUND_ENTRY_DOCUMENT}};
 
     Das::Plugins::DasGraphTask::DasGraphTaskAuthoringSession session{
-        std::string{BOUND_NODE_CONTEXT}};
+        std::string{BOUND_NODE_CONTEXT},
+        &creator};
 
     // 连续两次 Get：现算现投影，端口不重复叠加。
     const auto first = DocumentTextOf(session, "{}");
@@ -948,13 +1082,10 @@ TEST(DasGraphTaskTest, AuthoringSessionBoundaryProjectionIsIdempotent)
 
 TEST(DasGraphTaskTest, AuthoringSessionSkipsProjectionForUnboundNode)
 {
-    int                                      fetch_calls = 0;
-    const ScopedEntryDocumentFetcherOverride fetcher_override{
-        [&fetch_calls](int64_t) -> std::optional<std::string>
-        {
-            ++fetch_calls;
-            return std::string{BOUND_ENTRY_RESPONSE};
-        }};
+    int                      create_calls = 0;
+    FakeEntryDocumentCreator creator{
+        std::string{BOUND_ENTRY_DOCUMENT},
+        &create_calls};
 
     // settings 无 repositoryRef 值：字段声明在场但值为空 → 未绑条目。
     constexpr std::string_view unbound_context = R"json({
@@ -979,34 +1110,45 @@ TEST(DasGraphTaskTest, AuthoringSessionSkipsProjectionForUnboundNode)
     })json";
 
     Das::Plugins::DasGraphTask::DasGraphTaskAuthoringSession session{
-        std::string{unbound_context}};
+        std::string{unbound_context},
+        &creator};
 
     const auto document_text = DocumentTextOf(session, "{}");
     ASSERT_FALSE(document_text.empty());
-    EXPECT_EQ(fetch_calls, 0);
+    EXPECT_EQ(create_calls, 0);
     EXPECT_EQ(CountNodePort(document_text, "seed", "input"), 0u);
 }
 
 TEST(DasGraphTaskTest, AuthoringSessionBoundaryProjectionGuardDisablesFetch)
 {
-    int                                      fetch_calls = 0;
-    const ScopedEntryDocumentFetcherOverride fetcher_override{
-        [&fetch_calls](int64_t) -> std::optional<std::string>
-        {
-            ++fetch_calls;
-            return std::string{BOUND_ENTRY_RESPONSE};
-        }};
+    int                      create_calls = 0;
+    FakeEntryDocumentCreator creator{
+        std::string{BOUND_ENTRY_DOCUMENT},
+        &create_calls};
 
     Das::Plugins::DasGraphTask::DasGraphTaskAuthoringSession session{
-        std::string{BOUND_NODE_CONTEXT}};
+        std::string{BOUND_NODE_CONTEXT},
+        &creator};
 
     // 内部条目获取请求形态（投影关闭旗标）：零获取零注入——引用环的
     // Get 投影递归在此断开。
     const auto document_text =
         DocumentTextOf(session, R"({"boundaryPortProjection":false})");
     ASSERT_FALSE(document_text.empty());
-    EXPECT_EQ(fetch_calls, 0);
+    EXPECT_EQ(create_calls, 0);
     EXPECT_EQ(CountNodePort(document_text, "seed", "input"), 0u);
+}
+
+TEST(DasGraphTaskTest, AuthoringSessionWithoutCreatorSkipsEntryProjection)
+{
+    // creator 不可达（nullptr）：走既有缺文档路径——零注入，Get 不失败。
+    Das::Plugins::DasGraphTask::DasGraphTaskAuthoringSession session{
+        std::string{BOUND_NODE_CONTEXT}};
+
+    const auto document_text = DocumentTextOf(session, "{}");
+    ASSERT_FALSE(document_text.empty());
+    EXPECT_EQ(CountNodePort(document_text, "seed", "input"), 0u);
+    EXPECT_EQ(CountNodePort(document_text, "result", "output"), 0u);
 }
 
 // ---------------------------------------------------------------------
