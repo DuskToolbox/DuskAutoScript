@@ -159,6 +159,24 @@ namespace Plugins::DasMaaPi
             DAS_E_MAAPI_PROXY_UNSUPPORTED,
             "\xe4\xbb\xa3\xe7\x90\x86\xe6\x96\xb9\xe6\xa1\x88\xe4\xb8\x8d\xe6\x94\xaf\xe6\x8c\x81\xef\xbc\x88\xe4\xbb\x85\xe6\x94\xaf\xe6\x8c\x81 http://\xef\xbc\x89");
 
+        // DAS_E_MAAPI_EXECUTION_INPUT_MISSING (-10012): executionInput 端口
+        // 缺失（envelope 须经编译期注入链喂线）
+        RegisterOneMessage(
+            lens.Get(),
+            "en",
+            DAS_E_MAAPI_EXECUTION_INPUT_MISSING,
+            "executionInput port missing (envelope must be fed via the "
+            "compile-time injection chain)");
+        RegisterOneMessage(
+            lens.Get(),
+            "zh-cn",
+            DAS_E_MAAPI_EXECUTION_INPUT_MISSING,
+            "executionInput\xe7\xab\xaf\xe5\x8f\xa3\xe7\xbc\xba\xe5\xa4\xb1"
+            "\xef\xbc\x88"
+            "envelope"
+            "\xe9\xa1\xbb\xe7\xbb\x8f\xe7\xbc\x96\xe8\xaf\x91\xe6\x9c\x9f\xe6\xb3\xa8"
+            "\xe5\x85\xa5\xe9\x93\xbe\xe5\x96\x82\xe7\xba\xbf\xef\xbc\x89");
+
         return lens;
     }
 

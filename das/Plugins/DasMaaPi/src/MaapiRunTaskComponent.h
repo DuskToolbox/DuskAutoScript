@@ -47,31 +47,15 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
 {
-    // 仓库条目解析结果：成功携带编译产物 executionInput（envelope）JSON；
-    // 失败携带可读原因（进 diagnostics 出口，不静默成功）。
-    struct RepositoryResolveOutcome
-    {
-        bool        ok = false;
-        std::string envelope_json;
-        std::string error_message;
-    };
-
-    // 仓库条目解析缝：输入 = repositoryRef 的 entryId。生产实现经主进程
-    // C ABI（DasQueryMainProcessInterfaceByName → IDasSchedulerService）
-    // 编译仓库条目；测试注入 fake（照 SetMaaApiBoundaryForTest 范式）。
-    using RepositoryEntryResolver =
-        std::function<RepositoryResolveOutcome(int64_t entry_id)>;
-
-    // 测试注入 hook：传 nullptr 恢复生产实现。
-    void SetRepositoryEntryResolverForTest(RepositoryEntryResolver resolver);
-
     // manifest（DasMaaPi.json）声明的执行组件：config 声明 repositoryRef
-    // （type=taskRepositoryRef，值 = 纯 entryId 整数）与 runtimeInputs
-    // （object）两键、输入口 executionInput（object）、输出口
+    // （type=taskRepositoryRef，值 = 纯 entryId 整数；供编译期注入链识别
+    // 节点绑定的条目，运行期不参与供数）与 runtimeInputs（object）两键、
+    // 输入口 executionInput（object）、输出口
     // completedTasks/stopped/diagnostics、信号 succeeded/failed/cancelled。
-    // Do 消费 settings 的 repositoryRef/runtimeInputs 两键：executionInput
-    // 喂线时行为与纯消费者一致；executionInput 缺失且 repositoryRef 有效时
-    // 自行解析仓库条目并执行（envelope 经主进程调度服务编译产出）。
+    // Do 的 envelope 唯一来源 = 输入口 executionInput 喂线（父图编译期
+    // 注入链送达）；端口缺失遇缺即错返回
+    // DAS_E_MAAPI_EXECUTION_INPUT_MISSING，运行期零自解析回退、零主进程
+    // 服务查询。
     class MaapiRunTaskComponent final
         : public PluginInterface::DasTaskComponentImplBase<
               MaapiRunTaskComponent>
@@ -99,9 +83,9 @@ namespace Plugins::DasMaaPi
         // settings 存储锁：ApplySettingsChange（Configure 阶段投递）与 Do
         // （执行）可能来自不同线程。
         mutable std::mutex settings_mutex_;
-        // repositoryRef 存储值（纯 entryId 整数）；0 = 未设置。
-        int64_t repository_entry_id_ = 0;
         // runtimeInputs 存储值（对象级运行时输入覆盖）；null = 未设置。
+        // repositoryRef 不存储：编译期注入链直接读图文档节点的 settings，
+        // 组件运行期不消费条目 id。
         yyjson::value runtime_inputs_;
         // nextTime 口的计算时钟（D-B5）。
         ClockFn now_ = [] { return std::time(nullptr); };
