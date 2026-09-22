@@ -215,8 +215,8 @@ TEST(DasMaaPiRunTaskComponent, DoExecutesEnvelopeFromExecutionInputPort)
 }
 
 // 输入口缺 executionInput（空 PortMap）：遇缺即错——具名失败码
-// DAS_E_MAAPI_EXECUTION_INPUT_MISSING（与 FlowControl compiledSnapshot
-// 缺失同语义），运行期零回退、零主进程服务查询，boundary 零调用。
+// DAS_E_MAAPI_EXECUTION_INPUT_MISSING，运行期零回退、零主进程服务查询，
+// boundary 零调用。
 TEST(DasMaaPiRunTaskComponent, DoWithoutExecutionInputReturnsMissingCode)
 {
     MaapiRunTaskComponent    component;

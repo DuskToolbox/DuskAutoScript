@@ -18,6 +18,7 @@
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/header/IDasStringVector.generated.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentCreator.Implements.hpp>
 #include <gtest/gtest.h>
@@ -2995,4 +2996,1242 @@ TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
     ASSERT_TRUE(state->received)
         << "the bound GraphTask node must receive the child artifact";
     EXPECT_EQ(state->execution_input_text, child_shell_text);
+}
+
+// ===========================================================================
+// 引用闭包真实链的类型化值流 E2E：绑条目 GraphTask 节点的口面=被引条目文
+// 档根 ports 自述（编译期注入 pass 现算），编译产物经 $graph_input 广播绑
+// 定物化到节点 executionInput 口；执行期 GraphTask 形替身组件消费产物、
+// 经 GraphRuntime 类型化 IO 跑子图（graph_inputs=节点输入 map 的类型化直
+// 传覆盖层）、逐口回写类型化边界输出——image 引用全程同一实例 + 多值分
+// 型输出口各达各点（跨子图值流语义在注入链上的重建：调用中介组件退役
+// 后，调用节点=类型自身节点）。
+// ===========================================================================
+namespace
+{
+    using IDasImage = Das::ExportInterface::IDasImage;
+
+    const std::string TYPED_IMAGE_SOURCE_GUID =
+        "B0000000-0000-0000-0000-000000000001";
+    const std::string TYPED_RELAY_CHILD_GUID =
+        "B0000000-0000-0000-0000-000000000002";
+    const std::string TYPED_IMAGE_SINK_GUID =
+        "B0000000-0000-0000-0000-000000000003";
+    const std::string MULTIVALUE_CHILD_GUID =
+        "B0000000-0000-0000-0000-000000000004";
+    const std::string INT_STRING_SINK_GUID =
+        "B0000000-0000-0000-0000-000000000005";
+    const std::string GRAPH_BEGIN_NODE_GUID =
+        "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E";
+    const std::string GRAPH_END_NODE_GUID =
+        "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D";
+
+    class E2ECountingFakeImage final
+        : public Das::ExportInterface::DasImageImplBase<E2ECountingFakeImage>
+    {
+    public:
+        DAS_IMPL GetSize(Das::ExportInterface::DasSize* p_out_size) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetChannelCount(int32_t* p_out_channel_count) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL Clip(
+            const Das::ExportInterface::DasRect* p_rect,
+            Das::ExportInterface::IDasImage**    p_out_image) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetDataSize(uint64_t* p_out_size) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetBinaryBuffer(
+            Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DAS_IMPL GetPixelFormat(
+            Das::ExportInterface::DasImagePixelFormat* p_out_format) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+    };
+
+    struct TypedChainState
+    {
+        DAS::DasPtr<IDasImage> source_image;
+        // sink 收到的引用（非拥有记录——身份断言面）。
+        IDasImage* received_image = nullptr;
+        // 替身组件收到的编译产物串（注入物化断言面）。
+        std::string received_execution_input;
+    };
+
+    struct InvokeMultiValueE2EState
+    {
+        bool        received_int_present = false;
+        int64_t     received_int_value = 0;
+        bool        received_string_present = false;
+        std::string received_string_value;
+    };
+
+    // 父图 image 源替身：Do 输出 state 内持有的同一实例到 "img" 口。
+    class E2EImageSourceComponent final : public IDasTaskComponent
+    {
+    public:
+        std::atomic<uint32_t> ref_count_{0};
+
+        explicit E2EImageSourceComponent(std::shared_ptr<TypedChainState> state)
+            : state_(std::move(state))
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                ref_count_ = 1;
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                TYPED_IMAGE_SOURCE_GUID);
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "E2EImageSourceComponent",
+                pp_out_name);
+        }
+
+        DasResult ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken*,
+            IDasReadOnlyPortMap*,
+            IDasPortMap** pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_port_map = nullptr;
+            DAS::DasPtr<IDasPortMap> output_map;
+            DasResult                hr = CreateIDasPortMap(output_map.Put());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            const DasReadOnlyString image_key{"img"};
+            hr = output_map->SetImage(
+                image_key.Get(),
+                state_->source_image.Get());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            *pp_out_port_map = output_map.Get();
+            output_map.Get()->AddRef();
+            return DAS_S_OK;
+        }
+
+    private:
+        std::shared_ptr<TypedChainState> state_;
+    };
+
+    // 子图替身（模拟被引子图的类型化值流）：把 "p1" 口收到的 image 原引用
+    // 写到 "p2" 口——类型化中继的最小同构。
+    class E2ETypedRelayChildComponent final : public IDasTaskComponent
+    {
+    public:
+        std::atomic<uint32_t> ref_count_{0};
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                ref_count_ = 1;
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                TYPED_RELAY_CHILD_GUID);
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "E2ETypedRelayChildComponent",
+                pp_out_name);
+        }
+
+        DasResult ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken*,
+            IDasReadOnlyPortMap* p_input_port_map,
+            IDasPortMap**        pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_port_map = nullptr;
+            DAS::DasPtr<IDasPortMap> output_map;
+            DasResult                hr = CreateIDasPortMap(output_map.Put());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            DAS::DasPtr<IDasImage>  image;
+            const DasReadOnlyString in_key{"p1"};
+            if (p_input_port_map != nullptr
+                && DAS::IsOk(
+                    p_input_port_map->GetImage(in_key.Get(), image.Put()))
+                && image)
+            {
+                const DasReadOnlyString out_key{"p2"};
+                hr = output_map->SetImage(out_key.Get(), image.Get());
+                if (DAS::IsFailed(hr))
+                {
+                    return hr;
+                }
+            }
+            *pp_out_port_map = output_map.Get();
+            output_map.Get()->AddRef();
+            return DAS_S_OK;
+        }
+    };
+
+    // 父图 image 消费替身：Do 记录 "in" 口的引用身份到共享 state。
+    class E2EImageSinkComponent final : public IDasTaskComponent
+    {
+    public:
+        std::atomic<uint32_t> ref_count_{0};
+
+        explicit E2EImageSinkComponent(std::shared_ptr<TypedChainState> state)
+            : state_(std::move(state))
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                ref_count_ = 1;
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                TYPED_IMAGE_SINK_GUID);
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "E2EImageSinkComponent",
+                pp_out_name);
+        }
+
+        DasResult ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken*,
+            IDasReadOnlyPortMap* p_input_port_map,
+            IDasPortMap**        pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (p_input_port_map != nullptr)
+            {
+                DAS::DasPtr<IDasImage>  image;
+                const DasReadOnlyString in_key{"in"};
+                if (DAS::IsOk(
+                        p_input_port_map->GetImage(in_key.Get(), image.Put())))
+                {
+                    state_->received_image = image.Get();
+                }
+            }
+            *pp_out_port_map = nullptr;
+            return DAS_S_OK;
+        }
+
+    private:
+        std::shared_ptr<TypedChainState> state_;
+    };
+
+    // 子图替身（多值分型出口）：Do 直接产出两个分型边界口条目（e_1 int /
+    // e_2 string）——值出口集合=编译清单。
+    class E2EMultiValueChildComponent final : public IDasTaskComponent
+    {
+    public:
+        std::atomic<uint32_t> ref_count_{0};
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                ref_count_ = 1;
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                MULTIVALUE_CHILD_GUID);
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "E2EMultiValueChildComponent",
+                pp_out_name);
+        }
+
+        DasResult ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken*,
+            IDasReadOnlyPortMap*,
+            IDasPortMap** pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_port_map = nullptr;
+            DAS::DasPtr<IDasPortMap> output_map;
+            DasResult                hr = CreateIDasPortMap(output_map.Put());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            const DasReadOnlyString int_key{"e_1"};
+            hr = output_map->SetInt(int_key.Get(), int64_t{4242});
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            const DasReadOnlyString string_key{"e_2"};
+            const DasReadOnlyString string_value{"multi-out"};
+            hr = output_map->SetString(string_key.Get(), string_value.Get());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            *pp_out_port_map = output_map.Get();
+            output_map.Get()->AddRef();
+            return DAS_S_OK;
+        }
+    };
+
+    // 父图消费替身：Do 记录 in_int / in_string 两口收值。
+    class E2EIntStringSinkComponent final : public IDasTaskComponent
+    {
+    public:
+        std::atomic<uint32_t> ref_count_{0};
+
+        explicit E2EIntStringSinkComponent(
+            std::shared_ptr<InvokeMultiValueE2EState> state)
+            : state_(std::move(state))
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                ref_count_ = 1;
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                INT_STRING_SINK_GUID);
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "E2EIntStringSinkComponent",
+                pp_out_name);
+        }
+
+        DasResult ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken*,
+            IDasReadOnlyPortMap* p_input_port_map,
+            IDasPortMap**        pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (p_input_port_map != nullptr)
+            {
+                const DasReadOnlyString int_key{"in_int"};
+                int64_t                 int_value = 0;
+                if (DAS::IsOk(
+                        p_input_port_map->GetInt(int_key.Get(), &int_value)))
+                {
+                    state_->received_int_present = true;
+                    state_->received_int_value = int_value;
+                }
+                const DasReadOnlyString         string_key{"in_string"};
+                Das::DasPtr<IDasReadOnlyString> string_value;
+                if (DAS::IsOk(p_input_port_map->GetString(
+                        string_key.Get(),
+                        string_value.Put()))
+                    && string_value)
+                {
+                    const char* raw = nullptr;
+                    if (DAS::IsOk(string_value->GetUtf8(&raw)) && raw)
+                    {
+                        state_->received_string_present = true;
+                        state_->received_string_value = raw;
+                    }
+                }
+            }
+            *pp_out_port_map = nullptr;
+            return DAS_S_OK;
+        }
+
+    private:
+        std::shared_ptr<InvokeMultiValueE2EState> state_;
+    };
+
+    // GraphTask 形替身（生产 DasGraphTaskImpl::Do 的最小同构）：读
+    // executionInput 口的编译产物串（{"fingerprint","plan"} shell），经
+    // GraphRuntime 类型化通道执行子图——graph_inputs=自身输入 map（类型化
+    // 直传覆盖层，键=边界口 id），产物=类型化边界输出逐口直写自身输出。
+    class E2EGraphTaskStandInComponent final : public IDasTaskComponent
+    {
+    public:
+        std::atomic<uint32_t> ref_count_{0};
+
+        E2EGraphTaskStandInComponent(
+            Das::PluginInterface::IDasTaskComponentCreator* creator,
+            std::shared_ptr<TypedChainState>                state)
+            : creator_(creator), state_(std::move(state))
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                ref_count_ = 1;
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{REF_CHAIN_GRAPH_TASK_GUID});
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "E2EGraphTaskStandInComponent",
+                pp_out_name);
+        }
+
+        DasResult ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken*       stop_token,
+            IDasReadOnlyPortMap* p_input_port_map,
+            IDasPortMap**        pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_port_map = nullptr;
+
+            std::string artifact_text;
+            if (p_input_port_map != nullptr)
+            {
+                const DasReadOnlyString         key{"executionInput"};
+                Das::DasPtr<IDasReadOnlyString> artifact;
+                if (DAS::IsOk(
+                        p_input_port_map->GetString(key.Get(), artifact.Put()))
+                    && artifact.Get() != nullptr)
+                {
+                    const char* utf8 = nullptr;
+                    if (DAS::IsOk(artifact->GetUtf8(&utf8)) && utf8 != nullptr)
+                    {
+                        artifact_text = utf8;
+                    }
+                }
+            }
+            if (artifact_text.empty())
+            {
+                return DAS_E_FAIL;
+            }
+            if (state_)
+            {
+                state_->received_execution_input = artifact_text;
+            }
+
+            CompiledGraphPlanDto child_plan;
+            {
+                auto shell = yyjson::read(artifact_text);
+                auto shell_obj = shell.as_object();
+                if (!shell_obj.has_value())
+                {
+                    return DAS_E_INVALID_JSON;
+                }
+                child_plan = yyjson::cast<CompiledGraphPlanDto>(
+                    Das::Utils::CloneYyjsonValue(
+                        (*shell_obj)[std::string_view("plan")]));
+            }
+
+            // 与生产 ExecuteWithTypedIO 同款：current=plan.source_fingerprint
+            // （shell 指纹是产物完整性签，不是运行期比对值）。
+            GraphRuntime child_runtime;
+            child_runtime.SetGraphInputs(p_input_port_map);
+            return child_runtime.RunWithHost(
+                child_plan,
+                child_plan.source_fingerprint,
+                stop_token,
+                creator_,
+                pp_out_port_map);
+        }
+
+    private:
+        Das::PluginInterface::IDasTaskComponentCreator* creator_;
+        std::shared_ptr<TypedChainState>                state_;
+    };
+
+    // 链路 fake creator：绑条目节点的会话=固定响应 fake 会话（文档根
+    // ports 自述 + 固定编译产物）；图内其余组件按 guid 分发替身，begin/
+    // end 等未特判 guid 落到记录组件（零输出不阻断执行序）。
+    class TypedChainCreatorHost final
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
+              TypedChainCreatorHost>
+    {
+    public:
+        TypedChainCreatorHost(
+            std::shared_ptr<ReferenceChainState> recorder_state,
+            std::shared_ptr<TypedChainState>     typed_state,
+            std::string                          entry_document_json,
+            std::string                          entry_compile_json)
+            : recorder_state_(std::move(recorder_state)),
+              typed_state_(std::move(typed_state)),
+              entry_document_json_(std::move(entry_document_json)),
+              entry_compile_json_(std::move(entry_compile_json))
+        {
+        }
+
+        DasResult CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_component = nullptr;
+            const std::string guid_text =
+                Das::Core::ForeignInterfaceHost::DasGuidToStdString(
+                    component_guid);
+
+            IDasTaskComponent* component = nullptr;
+            if (guid_text == REF_CHAIN_GRAPH_TASK_GUID)
+            {
+                component =
+                    new E2EGraphTaskStandInComponent(this, typed_state_);
+            }
+            else if (guid_text == TYPED_IMAGE_SOURCE_GUID)
+            {
+                component = new E2EImageSourceComponent(typed_state_);
+            }
+            else if (guid_text == TYPED_IMAGE_SINK_GUID)
+            {
+                component = new E2EImageSinkComponent(typed_state_);
+            }
+            else if (guid_text == TYPED_RELAY_CHILD_GUID)
+            {
+                component = new E2ETypedRelayChildComponent();
+            }
+            else
+            {
+                component = new ExecutionInputRecorderComponent(
+                    recorder_state_,
+                    component_guid);
+            }
+            component->AddRef();
+            *pp_out_component = component;
+            return DAS_S_OK;
+        }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            std::ignore = task_guid;
+            std::ignore = p_context_json;
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            auto* session = new ReferenceChainFakeSession(
+                entry_document_json_,
+                entry_compile_json_);
+            session->AddRef();
+            *pp_out_session = session;
+            return DAS_S_OK;
+        }
+
+    private:
+        std::shared_ptr<ReferenceChainState> recorder_state_;
+        std::shared_ptr<TypedChainState>     typed_state_;
+        std::string                          entry_document_json_;
+        std::string                          entry_compile_json_;
+    };
+
+    struct ChainPlanHandle
+    {
+        std::string          shell_text;
+        std::string          fingerprint;
+        CompiledGraphPlanDto plan;
+    };
+
+    // 会话编译 → shell 解析（fingerprint + plan DTO）。
+    void CompileChainPlan(
+        Das::PluginInterface::IDasTaskComponentCreator* creator,
+        const std::string&                              context_text,
+        ChainPlanHandle&                                out)
+    {
+        // 前置校验：context 必须是合法 JSON——SeedFromContext 对非法输入
+        // 静默降级（空会话 + auto-seed begin/end），夹具拼接错误在此显性
+        // 化而非表现为「广播绑定缺失」。
+        ASSERT_NO_THROW(yyjson::read(context_text)) << context_text;
+
+        GraphAuthoringSessionState* session_state = nullptr;
+        {
+            auto ctx = RefChainMakeText(context_text);
+            ASSERT_EQ(
+                CreateGraphAuthoringSession(creator, ctx.Get(), &session_state),
+                DAS_S_OK);
+        }
+        ASSERT_NE(session_state, nullptr);
+
+        Das::DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(
+                session_state,
+                nullptr,
+                compiled.Put()),
+            DAS_S_OK);
+        DestroyGraphAuthoringSession(session_state);
+
+        const auto envelope_text = RefChainJsonText(compiled.Get());
+        ASSERT_FALSE(envelope_text.empty()) << envelope_text;
+
+        auto envelope = yyjson::read(envelope_text);
+        auto envelope_obj = envelope.as_object();
+        ASSERT_TRUE(envelope_obj.has_value());
+        auto compile_obj =
+            (*envelope_obj)[std::string_view("compile")].as_object();
+        ASSERT_TRUE(compile_obj.has_value());
+        const auto& execution_input =
+            (*compile_obj)[std::string_view("executionInput")];
+        if (const auto text = execution_input.as_string())
+        {
+            out.shell_text = std::string(*text);
+        }
+        else
+        {
+            out.shell_text = Das::Utils::SerializeYyjsonValue(
+                                 Das::Utils::CloneYyjsonValue(execution_input))
+                                 .value_or("");
+        }
+        ASSERT_FALSE(out.shell_text.empty());
+
+        auto shell = yyjson::read(out.shell_text);
+        auto shell_obj = shell.as_object();
+        ASSERT_TRUE(shell_obj.has_value());
+        auto fingerprint =
+            (*shell_obj)[std::string_view("fingerprint")].as_string();
+        ASSERT_TRUE(fingerprint.has_value());
+        out.fingerprint = std::string(*fingerprint);
+        out.plan =
+            yyjson::cast<CompiledGraphPlanDto>(Das::Utils::CloneYyjsonValue(
+                (*shell_obj)[std::string_view("plan")]));
+    }
+
+    // 断言 plan 携带产物广播绑定（$graph_input → node.executionInput，
+    // default_value=编译产物原文）。
+    void ExpectArtifactBroadcast(
+        const CompiledGraphPlanDto& plan,
+        const std::string&          node_id,
+        const std::string&          expected_artifact)
+    {
+        bool found_broadcast = false;
+        for (const auto& binding : plan.binding_plan.bindings)
+        {
+            if (binding.source_node_id != "$graph_input"
+                || binding.target_node_id != node_id
+                || binding.target_port_id != "executionInput")
+            {
+                continue;
+            }
+            const auto artifact = binding.default_value.as_string();
+            ASSERT_TRUE(artifact.has_value());
+            // 产物原文逐字节比对（string 标量承载编译产物 shell）。
+            EXPECT_EQ(*artifact, expected_artifact);
+            found_broadcast = true;
+        }
+        EXPECT_TRUE(found_broadcast)
+            << "compiled plan must carry the reference artifact broadcast "
+               "binding";
+    }
+
+    // 父图任务文档（graph 契约形状——nodes/edges 原文随 properties 播种）。
+    std::string MakeChainNode(
+        const std::string& node_id,
+        const std::string& component_guid,
+        const std::string& settings_json)
+    {
+        return "{\"nodeId\":\"" + node_id
+               + "\",\"target\":{\"targetKind\":\"componentRef\","
+                 "\"componentRef\":{\"kind\":\"componentRef\",\"componentGuid\":\""
+               + component_guid
+               + "\",\"pluginGuid\":\"C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D\"}},"
+                 "\"settings\":"
+               + settings_json + "}";
+    }
+
+    std::string MakeChainEdge(
+        const std::string& edge_id,
+        const std::string& source_node,
+        const std::string& source_port,
+        const std::string& target_node,
+        const std::string& target_port)
+    {
+        return "{\"edgeId\":\"" + edge_id + "\",\"sourceNodeId\":\""
+               + source_node + "\",\"sourcePortId\":\"" + source_port
+               + "\",\"targetNodeId\":\"" + target_node
+               + "\",\"targetPortId\":\"" + target_port
+               + "\",\"edgeType\":\"data\"}";
+    }
+
+    std::string MakeChainContext(
+        const std::string& parent_document_json,
+        const std::string& catalog_json)
+    {
+        return std::string(R"({"properties":)") + parent_document_json
+               + R"(,"actionCatalog":)" + catalog_json + "}";
+    }
+
+    // GraphTask 组件的 catalog 条目（repositoryRef 绑定判据 + executionInput
+    // 声明口）。
+    std::string MakeGraphTaskCatalogEntry()
+    {
+        return std::string(R"({"actionId":")")
+               + std::string{REF_CHAIN_GRAPH_TASK_GUID}
+               + R"(","ports":[{"portId":"executionInput","portType":"object","direction":"input"}],)"
+                 R"("config":[{"name":"repositoryRef","type":"taskRepositoryRef","taskGuid":")"
+               + std::string{REF_CHAIN_GRAPH_TASK_GUID} + R"("}]})";
+    }
+
+    std::string MakePortCatalogEntry(
+        const std::string& guid,
+        const std::string& ports_json)
+    {
+        return R"({"actionId":")" + guid + R"(","ports":[)" + ports_json
+               + R"(]})";
+    }
+
+    // 被引条目 Compile 响应：{compile:{executionInput:<shell 串>},
+    // diagnostics:[]}。
+    std::string MakeEntryCompileResponse(const std::string& child_shell_text)
+    {
+        yyjson::value compile_response(Das::Utils::MakeYyjsonObject());
+        auto          response_obj = compile_response.as_object();
+        yyjson::value compile_section(Das::Utils::MakeYyjsonObject());
+        (*compile_section.as_object())[std::string_view("executionInput")] =
+            yyjson::value(child_shell_text);
+        (*response_obj)[std::string_view("compile")] =
+            std::move(compile_section);
+        (*response_obj)[std::string_view("diagnostics")] =
+            Das::Utils::MakeYyjsonArray();
+        return Das::Utils::SerializeYyjsonValue(
+                   Das::Utils::CloneYyjsonValue(compile_response))
+            .value_or("");
+    }
+
+    // 被引条目文档（根 ports 自述——注入 pass 的节点口面唯一源）。
+    std::string MakeEntryDocument(const std::string& root_ports_json)
+    {
+        return std::string(R"({"document":{"viewKind":"graph","ports":[)")
+               + root_ports_json + R"(]},"diagnostics":[]})";
+    }
+} // namespace
+
+TEST_F(E2EGraphFlowTest, ReferenceClosureTypedImageFlowKeepsIdentity)
+{
+    const auto typed_state = std::make_shared<TypedChainState>();
+    typed_state->source_image = E2ECountingFakeImage::Make();
+
+    // 子图产物：单节点中继子图——p1 口的 $graph_input 广播声明（类型化直
+    // 传覆盖层命中父图喂入的 image 引用），p2 出口（boundaryPorts.outputs
+    // 声明）。
+    std::string child_shell_text;
+    {
+        CompiledGraphPlanDto child_plan;
+        child_plan.source_fingerprint = "fp_typed_child";
+        CompiledNodeSnapshotDto child_node;
+        child_node.node_id = "n_relay";
+        child_node.component_guid = TYPED_RELAY_CHILD_GUID;
+        child_plan.node_snapshots.push_back(std::move(child_node));
+        child_plan.execution_order = {"n_relay"};
+
+        PortBindingDto input_broadcast;
+        input_broadcast.source_node_id = "$graph_input";
+        input_broadcast.source_port_id = "p1";
+        input_broadcast.target_node_id = "n_relay";
+        input_broadcast.target_port_id = "p1";
+        input_broadcast.expected_type = "image";
+        child_plan.binding_plan.bindings.push_back(std::move(input_broadcast));
+
+        BoundaryPortDto child_boundary_output;
+        child_boundary_output.port_id = "p2";
+        child_boundary_output.port_type = "image";
+        child_boundary_output.node_ids = {"n_relay"};
+        child_plan.boundary_ports.outputs.push_back(
+            std::move(child_boundary_output));
+
+        child_shell_text =
+            Das::Utils::SerializeYyjsonValue(
+                BuildCompiledPlanShell(yyjson::object(child_plan)))
+                .value_or("");
+        ASSERT_FALSE(child_shell_text.empty());
+    }
+
+    auto creator = TypedChainCreatorHost::Make(
+        std::make_shared<ReferenceChainState>(),
+        typed_state,
+        MakeEntryDocument(
+            R"({"id":"p1","type":"image","direction":"input"},)"
+            R"({"id":"p2","type":"image","direction":"output"})"),
+        MakeEntryCompileResponse(child_shell_text));
+
+    // 父图文档：begin + image 源 → 绑条目 GraphTask 节点（entry 42）→
+    // 消费节点 + end。
+    const std::string parent_document =
+        std::string(R"({"documentId":"typed-chain","version":1,"nodes":[)")
+        + MakeChainNode("n_begin", GRAPH_BEGIN_NODE_GUID, "{}") + ","
+        + MakeChainNode("n_source", TYPED_IMAGE_SOURCE_GUID, "{}") + ","
+        + MakeChainNode(
+            "n_bound",
+            std::string{REF_CHAIN_GRAPH_TASK_GUID},
+            R"({"repositoryRef":42})")
+        + "," + MakeChainNode("n_sink", TYPED_IMAGE_SINK_GUID, "{}") + ","
+        + MakeChainNode("n_end", GRAPH_END_NODE_GUID, "{}") + R"(],"edges":[)"
+        + MakeChainEdge("e1", "n_source", "img", "n_bound", "p1") + ","
+        + MakeChainEdge("e2", "n_bound", "p2", "n_sink", "in")
+        + R"(],"tags":[]})";
+    const std::string catalog =
+        std::string(R"([)") + MakeGraphTaskCatalogEntry() + ","
+        + MakePortCatalogEntry(
+            TYPED_IMAGE_SOURCE_GUID,
+            R"({"portId":"img","portType":"image","direction":"output"})")
+        + ","
+        + MakePortCatalogEntry(
+            TYPED_IMAGE_SINK_GUID,
+            R"({"portId":"in","portType":"image","direction":"input"})")
+        + "]";
+
+    ChainPlanHandle parent;
+    CompileChainPlan(
+        creator.Get(),
+        MakeChainContext(parent_document, catalog),
+        parent);
+    ASSERT_NO_FATAL_FAILURE(
+        ExpectArtifactBroadcast(parent.plan, "n_bound", child_shell_text));
+
+    // 执行：image 引用经「父图数据边 → 类型化直传覆盖层 → 子图中继 →
+    // 类型化边界输出 → 父图数据边」全程同一实例。
+    GraphRuntime runtime;
+    const auto   hr = runtime.RunWithHost(
+        parent.plan,
+        parent.fingerprint,
+        token_.Get(),
+        creator.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    EXPECT_EQ(typed_state->received_execution_input, child_shell_text)
+        << "the bound node must receive the injected child artifact";
+    ASSERT_NE(typed_state->received_image, nullptr)
+        << "the sink never received the projected image";
+    EXPECT_EQ(typed_state->received_image, typed_state->source_image.Get());
+}
+
+TEST_F(E2EGraphFlowTest, ReferenceClosureProjectsMultiValueTypedOutputs)
+{
+    const auto multivalue_state = std::make_shared<InvokeMultiValueE2EState>();
+
+    // 子图产物：单节点子图，boundaryPorts.outputs 声明 e_1（int）/ e_2
+    // （string）双出口（类型化导出与逐口投影的消费清单）。
+    std::string child_shell_text;
+    {
+        CompiledGraphPlanDto child_plan;
+        child_plan.source_fingerprint = "fp_multivalue_child";
+        CompiledNodeSnapshotDto child_node;
+        child_node.node_id = "child_node";
+        child_node.component_guid = MULTIVALUE_CHILD_GUID;
+        child_plan.node_snapshots.push_back(std::move(child_node));
+        child_plan.execution_order = {"child_node"};
+        BoundaryPortDto int_boundary_output;
+        int_boundary_output.port_id = "e_1";
+        int_boundary_output.port_type = "int";
+        int_boundary_output.node_ids = {"child_node"};
+        child_plan.boundary_ports.outputs.push_back(
+            std::move(int_boundary_output));
+        BoundaryPortDto string_boundary_output;
+        string_boundary_output.port_id = "e_2";
+        string_boundary_output.port_type = "string";
+        string_boundary_output.node_ids = {"child_node"};
+        child_plan.boundary_ports.outputs.push_back(
+            std::move(string_boundary_output));
+
+        child_shell_text =
+            Das::Utils::SerializeYyjsonValue(
+                BuildCompiledPlanShell(yyjson::object(child_plan)))
+                .value_or("");
+        ASSERT_FALSE(child_shell_text.empty());
+    }
+
+    // 多值链 host：复用 TypedChainCreatorHost 的分发（多值子/汇组件落
+    // recorder 分支不行——需要专用分发）。直接构造派生 host。
+    const auto typed_state = std::make_shared<TypedChainState>();
+    const auto recorder_state = std::make_shared<ReferenceChainState>();
+
+    class MultiValueChainCreatorHost final
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
+              MultiValueChainCreatorHost>
+    {
+    public:
+        MultiValueChainCreatorHost(
+            std::shared_ptr<ReferenceChainState>      recorder_state,
+            std::shared_ptr<TypedChainState>          typed_state,
+            std::shared_ptr<InvokeMultiValueE2EState> multivalue_state,
+            std::string                               entry_document_json,
+            std::string                               entry_compile_json)
+            : recorder_state_(std::move(recorder_state)),
+              typed_state_(std::move(typed_state)),
+              multivalue_state_(std::move(multivalue_state)),
+              entry_document_json_(std::move(entry_document_json)),
+              entry_compile_json_(std::move(entry_compile_json))
+        {
+        }
+
+        DasResult CreateTaskComponent(
+            const DasGuid&      component_guid,
+            IDasTaskComponent** pp_out_component) override
+        {
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_component = nullptr;
+            const std::string guid_text =
+                Das::Core::ForeignInterfaceHost::DasGuidToStdString(
+                    component_guid);
+
+            IDasTaskComponent* component = nullptr;
+            if (guid_text == REF_CHAIN_GRAPH_TASK_GUID)
+            {
+                component =
+                    new E2EGraphTaskStandInComponent(this, typed_state_);
+            }
+            else if (guid_text == MULTIVALUE_CHILD_GUID)
+            {
+                component = new E2EMultiValueChildComponent();
+            }
+            else if (guid_text == INT_STRING_SINK_GUID)
+            {
+                component = new E2EIntStringSinkComponent(multivalue_state_);
+            }
+            else
+            {
+                component = new ExecutionInputRecorderComponent(
+                    recorder_state_,
+                    component_guid);
+            }
+            component->AddRef();
+            *pp_out_component = component;
+            return DAS_S_OK;
+        }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            std::ignore = task_guid;
+            std::ignore = p_context_json;
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            auto* session = new ReferenceChainFakeSession(
+                entry_document_json_,
+                entry_compile_json_);
+            session->AddRef();
+            *pp_out_session = session;
+            return DAS_S_OK;
+        }
+
+    private:
+        std::shared_ptr<ReferenceChainState>      recorder_state_;
+        std::shared_ptr<TypedChainState>          typed_state_;
+        std::shared_ptr<InvokeMultiValueE2EState> multivalue_state_;
+        std::string                               entry_document_json_;
+        std::string                               entry_compile_json_;
+    };
+
+    auto creator = MultiValueChainCreatorHost::Make(
+        recorder_state,
+        typed_state,
+        multivalue_state,
+        MakeEntryDocument(
+            R"({"id":"e_1","type":"int","direction":"output"},)"
+            R"({"id":"e_2","type":"string","direction":"output"})"),
+        MakeEntryCompileResponse(child_shell_text));
+
+    // 父图文档：begin + 绑条目 GraphTask 节点（entry 42）→ 两个分型消费
+    // 节点 + end。
+    const std::string parent_document =
+        std::string(R"({"documentId":"multivalue-chain","version":1,"nodes":[)")
+        + MakeChainNode("n_begin", GRAPH_BEGIN_NODE_GUID, "{}") + ","
+        + MakeChainNode(
+            "n_bound",
+            std::string{REF_CHAIN_GRAPH_TASK_GUID},
+            R"({"repositoryRef":42})")
+        + "," + MakeChainNode("n_sink_int", INT_STRING_SINK_GUID, "{}") + ","
+        + MakeChainNode("n_sink_str", INT_STRING_SINK_GUID, "{}") + ","
+        + MakeChainNode("n_end", GRAPH_END_NODE_GUID, "{}") + R"(],"edges":[)"
+        + MakeChainEdge("e1", "n_bound", "e_1", "n_sink_int", "in_int") + ","
+        + MakeChainEdge("e2", "n_bound", "e_2", "n_sink_str", "in_string")
+        + R"(],"tags":[]})";
+    const std::string catalog =
+        std::string(R"([)") + MakeGraphTaskCatalogEntry() + ","
+        + MakePortCatalogEntry(
+            INT_STRING_SINK_GUID,
+            R"({"portId":"in_int","portType":"int","direction":"input"},)"
+            R"({"portId":"in_string","portType":"string","direction":"input"})")
+        + "]";
+
+    ChainPlanHandle parent;
+    CompileChainPlan(
+        creator.Get(),
+        MakeChainContext(parent_document, catalog),
+        parent);
+    ASSERT_NO_FATAL_FAILURE(
+        ExpectArtifactBroadcast(parent.plan, "n_bound", child_shell_text));
+
+    GraphRuntime runtime;
+    const auto   hr = runtime.RunWithHost(
+        parent.plan,
+        parent.fingerprint,
+        token_.Get(),
+        creator.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    EXPECT_EQ(typed_state->received_execution_input, child_shell_text);
+    // 两下游各收各值（类型化边界导出 + 分型直连）。
+    ASSERT_TRUE(multivalue_state->received_int_present)
+        << "the int downstream node never received e_1";
+    EXPECT_EQ(multivalue_state->received_int_value, 4242);
+    ASSERT_TRUE(multivalue_state->received_string_present)
+        << "the string downstream node never received e_2";
+    EXPECT_EQ(multivalue_state->received_string_value, "multi-out");
 }

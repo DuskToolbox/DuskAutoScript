@@ -71,8 +71,7 @@ namespace Das::Plugins::DasMaaPi
     /// is the compile-time injection chain (parent graph compilation writes
     /// the compiled envelope into the node's input port); settings carrying
     /// repositoryRef do NOT trigger a runtime repository self-resolution
-    /// fallback. Missing wire fails loudly — same semantics as FlowControl's
-    /// compiledSnapshot-missing branch.
+    /// fallback. Missing wire fails loudly.
     inline constexpr DasResult DAS_E_MAAPI_EXECUTION_INPUT_MISSING =
         static_cast<DasResult>(-10012);
 
