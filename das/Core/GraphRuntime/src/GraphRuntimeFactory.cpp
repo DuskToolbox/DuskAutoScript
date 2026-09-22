@@ -2236,13 +2236,33 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
         // the same knowledge source the compile path and the canvas
         // projection use — a dynamic face port the pre-check allows is
         // accepted by the dispatch too (同一口能连=编译不拒).
+        //
+        // 绑条目调用节点的口面（编译期「唯一源=注入 pass 会话现算」的
+        // Apply 同款）：creator 携带时 per-apply 现算（GetDocument 根
+        // ports——零缓存零会话状态写入），叠加到会话 nodeFaces 之上仅供
+        // 本次端点解析；未携带（nullptr）时零叠加，绑条目端点照旧按未
+        // 声明拒绝。
+        Das::Core::GraphRuntime::GraphCompiler::NodeFacesMap endpoint_faces =
+            p->node_faces;
+        if (p->creator != nullptr)
+        {
+            Das::Core::GraphRuntime::GraphCompiler faces_compiler;
+            BindSessionPortKnowledge(faces_compiler, *p);
+            faces_compiler.BindCreator(p->creator);
+            faces_compiler.BindClosureEntryIds(p->closure_entry_ids);
+            for (auto& [node_id, node_face] :
+                 faces_compiler.CollectReferenceFaces(p->document))
+            {
+                endpoint_faces[node_id] = std::move(node_face);
+            }
+        }
         const int32_t version_before_apply = p->document.version;
         auto r = Das::Core::GraphRuntime::Contract::ApplyAuthoringChange(
             p->document,
             change,
             valid_action_ids,
             MakeCatalogFromState(*p),
-            &p->node_faces);
+            &endpoint_faces);
         // 编译期自动断线写回（Apply 专属使能——判别机制即调用位本身：
         // 会话 Apply 是唯一可写入口，Get/Compile/OnTick 三条编译路径不经
         // 此处，读无副作用）。变更成功且 revision 推进（viewData 通道类

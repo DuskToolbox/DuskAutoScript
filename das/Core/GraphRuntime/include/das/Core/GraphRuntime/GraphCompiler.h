@@ -273,6 +273,16 @@ public:
     /// 总数约束（每层压入不同 entryId——环检测保证）。
     void BindClosureEntryIds(std::vector<int64_t> entry_ids);
 
+    /// Apply 端点解析的绑条目口面现算：注入 pass 的口面半段（经 creator
+    /// 开被引条目会话 GetDocument 现算文档根 ports 自述）——不跑产物半段
+    /// （Apply 只需端点知识，不产 executionInput 广播绑定）。与编译期
+    /// 「绑条目节点口面唯一源=会话现算」同源同款：per-apply 现算零缓存，
+    /// 调用方把返回的 per-node 口面叠加到会话 nodeFaces 之上供端点解析
+    /// （connectGraphPorts 的声明口判定）。口面不可得的节点不出现在返回
+    /// 映射——其端点照旧按未声明拒绝（既有语义）。需要 creator 绑定
+    /// （BindCreator；未绑定时返回空映射——调用方零叠加）。
+    NodeFacesMap CollectReferenceFaces(const Dto::GraphDocumentDto& document);
+
     /// Bind the injected document type registry (the types[] entries the
     /// compile host carries — the same registry source the graph-view
     /// projection exposes as its root types section). The registry extends
@@ -518,8 +528,11 @@ private:
     /// （compile 段 executionInput 原文，写入 reference_artifacts_）。
     /// 任一环节失败 → 具名诊断 + reference_pass_failed_（Compile 出口清
     /// 空 execution_order）。entryId 编译递归栈环检测（继承闭包栈+本层
-    /// 压栈，跨编译层生效）。
-    void RunReferenceClosurePass(const Dto::GraphDocumentDto& document);
+    /// 压栈，跨编译层生效）。include_artifacts=false 时只跑口面半段
+    /// （CollectReferenceFaces 的载体——产物半段与 pass-fail 门不涉）。
+    void RunReferenceClosurePass(
+        const Dto::GraphDocumentDto& document,
+        bool                         include_artifacts = true);
 
     /// Whether the node carries an injected faces entry (its own nodeFaces
     /// entry) — the stale-review eligibility marker distinguishing "the face

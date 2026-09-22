@@ -366,8 +366,18 @@ namespace
     }
 } // namespace
 
-void GraphCompiler::RunReferenceClosurePass(
+GraphCompiler::NodeFacesMap GraphCompiler::CollectReferenceFaces(
     const Dto::GraphDocumentDto& document)
+{
+    RunReferenceClosurePass(document, /*include_artifacts=*/false);
+    // 拷贝返回（内部 reference_faces_ 同步保留——同一 compiler 实例的
+    // ResolveNodePorts/ReviewStaleEdges 消费同一现算口面）。
+    return reference_faces_;
+}
+
+void GraphCompiler::RunReferenceClosurePass(
+    const Dto::GraphDocumentDto& document,
+    bool                         include_artifacts)
 {
     reference_faces_.clear();
     reference_artifacts_.clear();
@@ -648,6 +658,14 @@ void GraphCompiler::RunReferenceClosurePass(
             continue;
         }
         reference_faces_.emplace(node.node_id, std::move(*faces));
+
+        // 口面半段止于此（CollectReferenceFaces 载体）：Apply 端点解析
+        // 只需口面知识，产物半段（会话 Compile → executionInput 广播绑
+        // 定）不涉——不触发被引条目的编译副作用。
+        if (!include_artifacts)
+        {
+            continue;
+        }
 
         // 晚段：同一会话 Compile → 产物直写广播绑定（compile 段
         // executionInput 原文；产物永不落盘、不写仓库）。

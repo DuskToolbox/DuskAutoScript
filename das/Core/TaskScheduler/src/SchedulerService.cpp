@@ -2927,6 +2927,121 @@ namespace Das::Core::TaskScheduler
                 Das::ExportInterface::IDasJson*                  p_context_json,
                 Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
             {
+                auto context = ReadJsonInterface(p_context_json);
+
+                // 条目绑定键（repositoryEntryId）在场：按条目权威解析——
+                // 与仓库条目 Get 管线同款 context 装配（actionCatalog + 组
+                // 件口面预备 pass）+ 会话缓存（revision 失效重建）。插件侧
+                // 投影取数与编译闭包 pass 都走本形状：被引图条目会话的 Get
+                // 响应因此携带根 ports section（边界投影/闭包口面的文档
+                // 源）。插件侧无法反查条目任务类型（节点组件 guid 只是同
+                // 值域猜测），本后端持注册表+条目存储，按条目自身的
+                // task type 权威定 capability。调用方 context 的附加键（如
+                // 编译闭包栈 closureEntryIds）逐键保留；repo 装配键
+                // （properties/revision/actionCatalog 等）以本侧现读为准。
+                // 任何失败返回错误码——插件侧走缺文档降级零注入，编译侧
+                // ReferenceSessionFailed 诊断（各自既有语义）。
+                auto ctx_obj = context.as_object();
+                if (ctx_obj.has_value()
+                    && ctx_obj->contains(std::string_view("repositoryEntryId")))
+                {
+                    const auto entry_id_value =
+                        (*ctx_obj)[std::string_view("repositoryEntryId")]
+                            .as_int();
+                    if (entry_id_value.has_value() && *entry_id_value > 0)
+                    {
+                        auto& settings = plugin_manager_.GetSettingsManager();
+                        auto  entry_json = settings.GetTaskRepositoryEntryJson(
+                            "0",
+                            *entry_id_value);
+                        if (entry_json.is_object())
+                        {
+                            try
+                            {
+                                const auto entry = yyjson::cast<
+                                    Repository::Dto::RepositoryEntryDto>(
+                                    entry_json);
+                                const auto entry_task_guid =
+                                    Das::Core::ForeignInterfaceHost::
+                                        MakeDasGuid(entry.task_type_guid);
+                                TaskAuthoringCapability entry_capability;
+                                {
+                                    const std::scoped_lock lock(mutex_);
+                                    auto*                  authoring =
+                                        capability_registry_.FindAuthoring(
+                                            entry_task_guid);
+                                    if (authoring == nullptr)
+                                    {
+                                        DAS_CORE_LOG_WARN(
+                                            "CreateAuthoringSession resolver: "
+                                            "entry {} task type declares no "
+                                            "authoring capability, result={}",
+                                            *entry_id_value,
+                                            DAS_E_NOT_FOUND);
+                                        return DAS_E_NOT_FOUND;
+                                    }
+                                    entry_capability = *authoring;
+                                }
+
+                                auto entry_context =
+                                    MakeRepositoryAuthoringContextJson(
+                                        plugin_manager_,
+                                        *entry_id_value,
+                                        entry.accepted_properties,
+                                        entry_json);
+                                if (auto merged_obj = entry_context.as_object())
+                                {
+                                    for (auto it = ctx_obj->begin();
+                                         it != ctx_obj->end();
+                                         ++it)
+                                    {
+                                        if (!merged_obj->contains(
+                                                std::string_view(it->first)))
+                                        {
+                                            (*merged_obj)[std::string_view(
+                                                it->first)] =
+                                                CloneJsonValue(it->second);
+                                        }
+                                    }
+                                }
+                                const int64_t faces_revision =
+                                    AppendComponentFacesContextKeys(
+                                        entry_context,
+                                        entry.accepted_properties,
+                                        *entry_id_value);
+                                auto session_entry =
+                                    GetOrCreateAuthoringSession(
+                                        repository_authoring_sessions_,
+                                        entry_capability,
+                                        *entry_id_value,
+                                        std::move(entry_context),
+                                        faces_revision,
+                                        /*enforce_fresh=*/true);
+                                if (!session_entry || !session_entry->session)
+                                {
+                                    return DAS_E_FAIL;
+                                }
+                                // 引用移交：out 参数带走一条新 ref，
+                                // shared_ptr 析构释放缓存持有的这份。
+                                (*pp_out_session = session_entry->session.Get())
+                                    ->AddRef();
+                                return DAS_S_OK;
+                            }
+                            catch (const std::exception& ex)
+                            {
+                                DAS_CORE_LOG_WARN(
+                                    "CreateAuthoringSession resolver: entry "
+                                    "{} resolution failed ({})",
+                                    *entry_id_value,
+                                    ex.what());
+                                return DAS_E_NOT_FOUND;
+                            }
+                        }
+                    }
+                }
+
+                // 非条目形状（或条目不可解析）回退：按调用方传入的任务类
+                // 型 guid 直接开会话（context 原样透传）。
                 TaskAuthoringCapability capability;
                 {
                     const std::scoped_lock lock(mutex_);
@@ -2942,53 +3057,6 @@ namespace Das::Core::TaskScheduler
                         return DAS_E_NOT_FOUND;
                     }
                     capability = *authoring;
-                }
-
-                // 条目绑定键预载（Discretion 裁定）：context 携带
-                // repositoryEntryId 而无 properties 时，由本后端解析条目
-                // 并注入其持久化 properties（被引条目文档随 properties 进
-                // 会话种子——GraphCompiler 注入 pass 的 context 形状）。
-                auto context = ReadJsonInterface(p_context_json);
-                {
-                    auto ctx_obj = context.as_object();
-                    if (ctx_obj.has_value()
-                        && ctx_obj->contains(
-                            std::string_view("repositoryEntryId"))
-                        && !ctx_obj->contains(std::string_view("properties")))
-                    {
-                        const auto& id_value =
-                            (*ctx_obj)[std::string_view("repositoryEntryId")];
-                        const auto entry_id = id_value.as_int();
-                        if (entry_id.has_value() && *entry_id > 0)
-                        {
-                            auto& settings =
-                                plugin_manager_.GetSettingsManager();
-                            auto entry_json =
-                                settings.GetTaskRepositoryEntryJson(
-                                    "0",
-                                    *entry_id);
-                            if (entry_json.is_object())
-                            {
-                                try
-                                {
-                                    const auto entry = yyjson::cast<
-                                        Repository::Dto::RepositoryEntryDto>(
-                                        entry_json);
-                                    (*ctx_obj)[std::string_view("properties")] =
-                                        CloneJsonValue(
-                                            entry.accepted_properties);
-                                }
-                                catch (const std::exception&)
-                                {
-                                    DAS_CORE_LOG_WARN(
-                                        "CreateAuthoringSession resolver: "
-                                        "entry {} properties preload "
-                                        "failed (unparsable entry)",
-                                        *entry_id);
-                                }
-                            }
-                        }
-                    }
                 }
 
                 DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
