@@ -8,7 +8,7 @@
 #include <das/Core/GraphRuntime/GraphRuntime.h>
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 #include <das/Core/GraphRuntime/PortFrame.h>
-#include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
+#include <das/Core/GraphRuntime/RepositoryInvokeDtos.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -2317,7 +2317,7 @@ TEST_F(E2EGraphFlowTest, RepositoryInvokeProjectsImageReferenceOntoParentEdge)
             std::move(child_boundary_output));
 
         namespace RepositoryInvokeDto =
-            Das::Core::TaskScheduler::RepositoryInvoke::Dto;
+            Das::Core::GraphRuntime::RepositoryInvoke::Dto;
         RepositoryInvokeDto::ChildExecutionSnapshotDto snapshot;
         snapshot.version = 1;
         snapshot.source_entry_id = 42;
@@ -2688,7 +2688,7 @@ TEST_F(E2EGraphFlowTest, RepositoryInvokeProjectsMultiValueTypedOutputs)
             std::move(string_boundary_output));
 
         namespace RepositoryInvokeDto =
-            Das::Core::TaskScheduler::RepositoryInvoke::Dto;
+            Das::Core::GraphRuntime::RepositoryInvoke::Dto;
         RepositoryInvokeDto::ChildExecutionSnapshotDto snapshot;
         snapshot.version = 1;
         snapshot.source_entry_id = 42;
