@@ -97,7 +97,7 @@ DAS_C_API DasResult CreateGraphAuthoringSession(
     GraphAuthoringSessionState**                    pp_out);
 
 /// 测试缝：会话 state 是否携带 creator 借用指针（生产面零消费——creator
-/// 携带通道的单测断言用；照 SetRepositoryEntryDocumentFetcherForTest 先例）。
+/// 携带通道的单测断言用；只读探测，无注入面）。
 bool GraphAuthoringSessionHasCreatorForTest(
     const GraphAuthoringSessionState* p);
 

@@ -9,7 +9,6 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 
-#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -60,20 +59,6 @@ namespace Plugins::DasGraphTask
         // Get 投影递归在此断开。
         constexpr std::string_view ENTRY_DOCUMENT_REQUEST =
             R"({"boundaryPortProjection":false})";
-
-        // 条目文档获取缝（测试注入槽；生产取数已迁 creator 通道，槽不再
-        // 被生产消费）。互斥保护：注入与 Get 可能来自不同线程。
-        std::mutex& FetcherMutex()
-        {
-            static std::mutex mutex;
-            return mutex;
-        }
-
-        RepositoryEntryDocumentFetcher& FetcherSlot()
-        {
-            static RepositoryEntryDocumentFetcher fetcher;
-            return fetcher;
-        }
 
         // creator 通道版条目文档获取：开被引条目自己的 authoring 会话再
         // Get 文档（请求体携带投影关闭旗标）。creator 借用指针来自插件包
@@ -606,13 +591,6 @@ namespace Plugins::DasGraphTask
             return *serialized;
         }
     } // namespace
-
-    void SetRepositoryEntryDocumentFetcherForTest(
-        RepositoryEntryDocumentFetcher fetcher)
-    {
-        const std::scoped_lock lock(FetcherMutex());
-        FetcherSlot() = std::move(fetcher);
-    }
 
     DasGraphTaskAuthoringSession::DasGraphTaskAuthoringSession(
         std::string                                context_json,
