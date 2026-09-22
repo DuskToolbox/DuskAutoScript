@@ -344,6 +344,10 @@ struct GraphAuthoringSessionState
     // 物）。借用不拥有——插件包持有的 host_ 保证本尊长命于会话（与
     // CreateGraphRuntimeWithHost 的执行侧对称）；nullptr = 不携带。
     Das::PluginInterface::IDasTaskComponentCreator* creator = nullptr;
+    // 闭包栈（closureEntryIds context 键）：本会话作为被引条目的子层编
+    // 译时的祖先 entryId 链——会话编译路径恢复为注入 pass 的初始栈（环
+    // 检测跨编译层生效；空 = 顶层编译）。
+    std::vector<int64_t> closure_entry_ids;
 };
 
 namespace
@@ -755,6 +759,8 @@ namespace
         Das::Core::GraphRuntime::GraphCompiler::EntryFacesMap,
         std::vector<Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType>>>
     ParseEntryFaces(const yyjson::value& root);
+    std::optional<std::vector<int64_t>> ParseClosureEntryIds(
+        const yyjson::value& root);
 
     void SeedFromContext(GraphAuthoringSessionState& s, std::string_view json)
     {
@@ -820,6 +826,21 @@ namespace
             {
                 s.entry_faces = std::move(parsed->first);
                 s.entry_face_types = std::move(parsed->second);
+            }
+        }
+        // closureEntryIds 键（闭包栈）：本会话作为被引条目的子层编译时，
+        // 父层注入 pass 写入的祖先 entryId 链。会话编译路径经
+        // BindClosureEntryIds 恢复为注入 pass 的初始栈（子层只追加不重
+        // 写——栈单调；伪造/重写导致的栈上重现同样被环检测拒绝）。畸形
+        // 降级语义与 nodeFaces 同款（该键整体零栈 + WARNING + 会话继
+        // 续）；键缺席 = 顶层编译，零告警。
+        if (obj->contains(std::string_view("closureEntryIds")))
+        {
+            auto ids = ParseClosureEntryIds(
+                (*obj)[std::string_view("closureEntryIds")]);
+            if (ids.has_value())
+            {
+                s.closure_entry_ids = std::move(*ids);
             }
         }
 
@@ -1905,6 +1926,38 @@ namespace
         return std::make_pair(std::move(faces), std::move(types));
     }
 
+    // closureEntryIds context 键解析（fail-closed 整键；畸形→零栈 +
+    // WARNING + 会话继续——nodeFaces 同款降级）。条目形状：正整数数组
+    // （祖先 entryId 链，父层注入 pass 自产——按不可信输入防御解析）。
+    std::optional<std::vector<int64_t>> ParseClosureEntryIds(
+        const yyjson::value& root)
+    {
+        auto arr = root.as_array();
+        if (!arr.has_value())
+        {
+            DAS_CORE_LOG_WARN(
+                "context closureEntryIds key rejected: value is not an "
+                "array; the session continues with an empty closure stack");
+            return std::nullopt;
+        }
+        std::vector<int64_t> ids;
+        ids.reserve(arr->size());
+        for (const auto& id_value : *arr)
+        {
+            const auto id = id_value.as_int();
+            if (!id.has_value() || *id <= 0)
+            {
+                DAS_CORE_LOG_WARN(
+                    "context closureEntryIds key rejected: entries must be "
+                    "positive integers; the session continues with an empty "
+                    "closure stack");
+                return std::nullopt;
+            }
+            ids.push_back(*id);
+        }
+        return ids;
+    }
+
     // actionCatalog 数组的逐条 fail-closed 解析——SeedFromContext 的
     // context 键播种通道的唯一逻辑源。任何形状违规→nullopt（调用方降
     // 级为零 catalog+WARNING 且会话继续——fail-closed 不落半截结果）。
@@ -2482,9 +2535,11 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         // Apply 路径的编译期复核共用同一接线的单一来源）。creator 携带
         // （creator 携带通道）：绑条目节点经它走注入 pass（GetDocument 现算口面
         // + Compile 产物广播绑定）——编辑期不静默跳过（Pitfall 5）；未
-        // 携带（nullptr）时该 pass 对绑条目节点产出具名诊断。
+        // 携带（nullptr）时该 pass 对绑条目节点产出具名诊断。闭包栈恢复
+        // （本会话作为被引条目子层编译时的祖先链——环检测跨层生效）。
         BindSessionPortKnowledge(compiler, *p);
         compiler.BindCreator(p->creator);
+        compiler.BindClosureEntryIds(p->closure_entry_ids);
         // required 清单由会话 catalog 推导注入（compiler 无 catalog 访问）：
         // action_id 即 GraphTask 域的 componentGuid，config 字段的 required
         // 声明聚合成 component_guid → 字段名集，编译期对空值产出

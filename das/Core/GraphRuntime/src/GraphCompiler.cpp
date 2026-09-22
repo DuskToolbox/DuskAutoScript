@@ -115,6 +115,11 @@ void GraphCompiler::BindCreator(
     creator_ = p_creator;
 }
 
+void GraphCompiler::BindClosureEntryIds(std::vector<int64_t> entry_ids)
+{
+    closure_entry_ids_ = std::move(entry_ids);
+}
+
 void GraphCompiler::MergeFacesOntoSurface(
     ManifestPorts&                       ports,
     const std::string&                   node_id,
@@ -369,6 +374,7 @@ void GraphCompiler::RunReferenceClosurePass(
 {
     reference_faces_.clear();
     reference_artifacts_.clear();
+    reference_diagnostics_.clear();
     reference_pass_failed_ = false;
 
     // creator 解析次序：显式绑定 → factory manager host。
@@ -378,7 +384,9 @@ void GraphCompiler::RunReferenceClosurePass(
         creator = factory_manager_->GetTaskComponentCreator();
     }
 
-    std::vector<int64_t> entry_stack;
+    // 编译递归栈即环检测器：初始栈=继承的祖先链（子层编译经 context
+    // 闭包栈键恢复），本层逐节点压栈（子层只追加不重写——栈单调）。
+    std::vector<int64_t> entry_stack = closure_entry_ids_;
     for (const auto& node : document.nodes)
     {
         if (node.target.target_kind != "componentRef"
@@ -441,18 +449,28 @@ void GraphCompiler::RunReferenceClosurePass(
             continue;
         }
 
-        // entryId 栈环检测（单层栈深 1；递归栈随后续扩展）。
+        // entryId 栈环检测：栈上重现=引用环（祖先 entryId 被深层绑回，或
+        // 同文档重复引用）。栈深受条目总数天然约束——环检测保证栈上
+        // entryId 互异，无无界递归面。
         if (std::find(entry_stack.begin(), entry_stack.end(), *bound_entry_id)
             != entry_stack.end())
         {
             reference_pass_failed_ = true;
+            std::string cycle_path;
+            for (const auto stacked_id : entry_stack)
+            {
+                cycle_path += std::to_string(stacked_id);
+                cycle_path += " -> ";
+            }
+            cycle_path += std::to_string(*bound_entry_id);
             CompileEdgeDiagnostic diagnostic;
             diagnostic.kind = CompileDiagnosticKind::ReferenceCycleDetected;
             diagnostic.node_id = node.node_id;
             diagnostic.message = DAS_FMT_NS::format(
                 "repository entry {} appears again on the reference "
-                "closure stack (cycle)",
-                *bound_entry_id);
+                "closure stack (cycle): {}",
+                *bound_entry_id,
+                cycle_path);
             DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
             reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
             continue;
@@ -527,7 +545,10 @@ void GraphCompiler::RunReferenceClosurePass(
             continue;
         }
 
-        // context：条目绑定键由条目解析后端自行预载（Discretion 裁定）。
+        // context：条目绑定键由条目解析后端自行预载（Discretion 裁定）；
+        // 闭包栈键携带当前栈（含本层 entryId）——子会话编译路径经它恢复
+        // 祖先链继续压栈（栈单调，子层只追加不重写）。键只在编译期取数
+        // 链路出现，不进用户可见文档。
         yyjson::value context(Das::Utils::MakeYyjsonObject());
         {
             auto ctx_obj = context.as_object();
@@ -536,6 +557,18 @@ void GraphCompiler::RunReferenceClosurePass(
             {
                 (*ctx_obj)[std::string_view("properties")] =
                     Das::Utils::CloneYyjsonValue(properties);
+            }
+            if (!entry_stack.empty())
+            {
+                yyjson::value closure_ids(Das::Utils::MakeYyjsonArray());
+                auto          ids_arr = closure_ids.as_array();
+                for (const auto stacked_id : entry_stack)
+                {
+                    ids_arr->emplace_back(
+                        yyjson::value(static_cast<std::int64_t>(stacked_id)));
+                }
+                (*ctx_obj)[std::string_view("closureEntryIds")] =
+                    std::move(closure_ids);
             }
         }
         auto context_serialized = Das::Utils::SerializeYyjsonValue(

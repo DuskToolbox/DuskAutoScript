@@ -3,6 +3,7 @@
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
 #include <das/Core/Utils/DasJsonImpl.h>
+#include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSession.Implements.hpp>
 #include <gtest/gtest.h>
@@ -3155,6 +3156,8 @@ namespace
     {
         StubFactoryManager           mgr;
         GraphCompiler::EntryFacesMap empty_entry_faces;
+        // 会话工厂收到的 context 原文（闭包栈键经 context 传递的取证槽）。
+        std::vector<std::string> seen_contexts;
 
         ReferencePassFixture(
             std::string                           document_json,
@@ -3178,7 +3181,8 @@ namespace
                     }
                     return summary;
                 },
-                [document_json = std::move(document_json),
+                [this,
+                 document_json = std::move(document_json),
                  compile_json = std::move(compile_json),
                  session_result](
                     const DasGuid&                  task_guid,
@@ -3192,7 +3196,20 @@ namespace
                         return session_result;
                     }
                     std::ignore = task_guid;
-                    std::ignore = p_context_json;
+                    if (p_context_json != nullptr)
+                    {
+                        Das::DasPtr<IDasReadOnlyString> text;
+                        if (DAS::IsOk(p_context_json->ToString(0, text.Put()))
+                            && text.Get() != nullptr)
+                        {
+                            const char* utf8 = nullptr;
+                            if (DAS::IsOk(text->GetUtf8(&utf8))
+                                && utf8 != nullptr)
+                            {
+                                seen_contexts.emplace_back(utf8);
+                            }
+                        }
+                    }
                     auto* session = new FakeReferenceAuthoringSession(
                         document_json,
                         compile_json);
@@ -3391,4 +3408,93 @@ TEST(ReferenceClosureInjectionPassTest, RepeatedEntryIdYieldsCycleDiagnostic)
         plan,
         CompileDiagnosticKind::ReferenceCycleDetected));
     EXPECT_TRUE(plan.execution_order.empty());
+}
+
+TEST(
+    ReferenceClosureInjectionPassTest,
+    AncestorEntryIdOnClosureStackYieldsCycleWithPath)
+{
+    // 深层文档绑回祖先 entryId：编译器继承闭包栈（子会话编译路径经
+    // context 恢复的祖先链 [41, 42]），本文档节点再绑 42 → 栈上重现 =
+    // 具名环错，诊断含环路径序列（41 -> 42 -> 42）。
+    ReferencePassFixture fixture{
+        R"({"document":{"ports":[]}})",
+        R"({"compile":{"executionInput":"x"}})"};
+    auto compiler = fixture.MakeCompiler();
+    compiler.BindClosureEntryIds({41, 42});
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_ref_ancestor_cycle";
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound", "42"));
+
+    const auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(HasReferenceDiagnostic(
+        plan,
+        CompileDiagnosticKind::ReferenceCycleDetected));
+    EXPECT_TRUE(plan.execution_order.empty());
+
+    // 环路径进诊断 message：祖先链 + 重现 entryId 的完整序列。
+    bool path_seen = false;
+    for (const auto& diag : plan.diagnostics)
+    {
+        auto obj = diag.as_object();
+        if (!obj.has_value())
+        {
+            continue;
+        }
+        auto kind_value = (*obj)[std::string_view("kind")].as_string();
+        if (!kind_value.has_value()
+            || *kind_value
+                   != std::to_string(
+                       static_cast<int>(
+                           CompileDiagnosticKind::ReferenceCycleDetected)))
+        {
+            continue;
+        }
+        auto message = (*obj)[std::string_view("message")].as_string();
+        if (message.has_value()
+            && message->find("41 -> 42 -> 42") != std::string::npos)
+        {
+            path_seen = true;
+        }
+    }
+    EXPECT_TRUE(path_seen) << "cycle diagnostic must carry the path sequence";
+}
+
+TEST(
+    ReferenceClosureInjectionPassTest,
+    PassCarriesClosureStackIntoSessionContext)
+{
+    // 父 pass 开子会话时把当前栈（含本层 entryId）写进 CreateAuthoringSession
+    // 的 context（闭包栈键）——子会话编译路径从 context 恢复栈继续压栈。
+    ReferencePassFixture fixture{
+        R"({"document":{"ports":[]}})",
+        R"({"compile":{"executionInput":"x"}})"};
+    auto compiler = fixture.MakeCompiler();
+    compiler.BindClosureEntryIds({41});
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_ref_stack_context";
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound", "42"));
+
+    const auto plan = compiler.Compile(doc);
+    ASSERT_FALSE(plan.execution_order.empty());
+    ASSERT_FALSE(fixture.seen_contexts.empty());
+    // context = 继承栈 [41] + 本层 42；键名与数组形状锁死（结构化断言，
+    // 不依赖序列化空白形态）。
+    const auto& context = fixture.seen_contexts.back();
+    auto        parsed_context = yyjson::read(context);
+    auto        context_obj = parsed_context.as_object();
+    ASSERT_TRUE(context_obj.has_value()) << context;
+    ASSERT_TRUE(context_obj->contains(std::string_view("closureEntryIds")))
+        << context;
+    auto closure_ids =
+        (*context_obj)[std::string_view("closureEntryIds")].as_array();
+    ASSERT_TRUE(closure_ids.has_value()) << context;
+    ASSERT_EQ(closure_ids->size(), 2u) << context;
+    EXPECT_EQ((*closure_ids)[0].as_int().value_or(0), 41) << context;
+    EXPECT_EQ((*closure_ids)[1].as_int().value_or(0), 42) << context;
+    EXPECT_EQ(
+        (*context_obj)[std::string_view("repositoryEntryId")].as_int(),
+        42);
 }

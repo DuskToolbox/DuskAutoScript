@@ -10,6 +10,7 @@
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <set>
@@ -277,6 +278,13 @@ public:
     /// 同步 Compile 调用期间——与 BindNodeFaces 同款前提。
     void BindCreator(Das::PluginInterface::IDasTaskComponentCreator* p_creator);
 
+    /// Bind the inherited reference-closure stack（祖先链 entryId 集——
+    /// 本编译作为被引条目的子层时经 context 闭包栈键恢复的栈）。注入
+    /// pass 以它为初始栈继续压栈：子层只追加不重写（栈单调），祖先
+    /// entryId 在本文档重现即具名环错（诊断含环路径）。栈深天然受条目
+    /// 总数约束（每层压入不同 entryId——环检测保证）。
+    void BindClosureEntryIds(std::vector<int64_t> entry_ids);
+
     /// Bind the injected document type registry (the types[] array riding
     /// the entryFaces context key — the same registry source the graph-view
     /// projection exposes as its root types section). The registry extends
@@ -460,6 +468,10 @@ private:
     // Borrowed creator（TaskComponentCreator）——注入 pass 的会话工厂解析
     // 门（nullptr = 走 factory_manager_ 的 host 或 pass 不可达）。
     Das::PluginInterface::IDasTaskComponentCreator* creator_ = nullptr;
+
+    // 继承的引用闭包栈（祖先链 entryId 集——子层编译经 context 闭包栈键
+    // 恢复的初始栈；空 = 顶层编译）。
+    std::vector<int64_t> closure_entry_ids_;
 
     // 注入 pass（单次 Compile 生命周期）的产物：pass 现算的节点口面
     // （node_id → 文档根 ports 自述）与产物广播绑定文本（node_id →
