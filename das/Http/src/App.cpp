@@ -52,6 +52,51 @@ namespace Das::Http
         // 共一套）：过短会放大"日志请求→写日志→ 触发
         // tick→新日志请求"的反馈循环密度；150ms 在刷新体感与负载间取平衡。
         constexpr std::chrono::milliseconds LOG_POLL_INTERVAL(150);
+
+        // 调度器状态推送的 payload Holder：堆上对象，回调 user_data 指向
+        // 它，内含 hub 强引用——生命周期修复走 payload 持有（回调 ABI 保持
+        // {函数指针,user_data} C 对形状不动）：Holder 的 shared_ptr 经内部
+        // 注册通道（SetStateNotifyCallbackOwned）交进调度器回调快照的
+        // keeper 字，在飞调用期间 Holder（从而 hub）存活，关停竞态无 UAF
+        // 面；调度器重设回调/析构释放快照后 Holder 随最末引用归零析构，
+        // 不以泄漏换安全。
+        struct SchedulerStateNotifyPayload
+        {
+            std::shared_ptr<NotificationHub> hub;
+        };
+
+        // 调度器状态推送蹦床（ABI C 对形状的 func 侧）：广播体与 settings
+        // 通知邻段同款管线（parse → 注 "api" → serialize → Broadcast），
+        // payload 与既有 WS 推送逐字节一致；Broadcast 经 io_context
+        // dispatch 到 io 线程写出。
+        void SchedulerStateNotifyTrampoline(
+            const char* json_state,
+            void*       user_data)
+        {
+            auto* payload =
+                static_cast<SchedulerStateNotifyPayload*>(user_data);
+            const auto& hub = payload->hub;
+            if (!hub || !json_state)
+            {
+                return;
+            }
+            auto parsed = Das::Utils::ParseYyjsonFromString(json_state);
+            if (!parsed)
+            {
+                return;
+            }
+            auto obj_opt = parsed->as_object();
+            if (obj_opt)
+            {
+                obj_opt.value()[std::string_view("api")] =
+                    std::string_view("api/v1/scheduler/get");
+            }
+            auto serialized = Das::Utils::SerializeYyjsonValue(*parsed, false);
+            if (serialized)
+            {
+                hub->Broadcast(std::move(*serialized));
+            }
+        }
     }
 
     DAS_DEFINE_VARIABLE(g_server_condition){};
@@ -784,36 +829,22 @@ namespace Das::Http
                     }
                 },
                 hub.get());
-            // 调度器状态推送（直连具体类回调：std::function 形状，不再经
-            // COM {func,user_data} 对）。按值捕获 hub shared_ptr——回调在
-            // 调度器通知线程被调，hub 生命周期由 shared_ptr 保证（旧裸
+            // 调度器状态推送（ABI C 对形状 + payload 持有）：user_data
+            // 指向堆上 Holder（内含 hub 强引用），Holder 的 shared_ptr 经
+            // 内部注册通道随回调一并交进调度器发布快照（keeper 字）——
+            // 回调在调度器通知线程被调，hub 生命周期由快照链保证（裸
             // user_data 在关停竞态下有 UAF 面），Broadcast 经 io_context
-            // dispatch 到 io 线程写出，广播语义逐字节保持。
-            components.scheduler_service->SetStateNotifyCallback(
-                [hub](const char* json_state)
-                {
-                    if (!hub || !json_state)
-                    {
-                        return;
-                    }
-                    auto parsed = Das::Utils::ParseYyjsonFromString(json_state);
-                    if (!parsed)
-                    {
-                        return;
-                    }
-                    auto obj_opt = parsed->as_object();
-                    if (obj_opt)
-                    {
-                        obj_opt.value()[std::string_view("api")] =
-                            std::string_view("api/v1/scheduler/get");
-                    }
-                    auto serialized =
-                        Das::Utils::SerializeYyjsonValue(*parsed, false);
-                    if (serialized)
-                    {
-                        hub->Broadcast(std::move(*serialized));
-                    }
-                });
+            // dispatch 到 io 线程写出，广播 payload 与语义逐字节保持。
+            // user_data 裸指针先取局部再 move keeper——规避参数求值顺序
+            // 不确定导致 move 后取到空指针。
+            auto scheduler_state_payload =
+                std::make_shared<SchedulerStateNotifyPayload>(
+                    SchedulerStateNotifyPayload{hub});
+            void* scheduler_state_user_data = scheduler_state_payload.get();
+            components.scheduler_service->SetStateNotifyCallbackOwned(
+                &SchedulerStateNotifyTrampoline,
+                scheduler_state_user_data,
+                std::move(scheduler_state_payload));
 
             // 日志增量统一通知（focus + debug 共一套机制）：Http 150ms 定时器挂
             // 在 server 的 io_context（非 IPC BusinessThread——Consume 不得占

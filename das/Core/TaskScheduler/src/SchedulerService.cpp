@@ -6991,11 +6991,12 @@ namespace Das::Core::TaskScheduler
     // ----------------------------------------------------------------
 
     void SchedulerService::SetStateNotifyCallback(
-        SchedulerStateNotifyHandler handler)
+        SchedulerNotifyFunc func,
+        void*               user_data)
     {
         const std::scoped_lock lock(state_notify_mutex_);
-        state_notify_ =
-            std::make_shared<StateNotify>(StateNotify{std::move(handler)});
+        state_notify_ = std::make_shared<StateNotify>(
+            StateNotify{func, user_data, nullptr});
     }
 
     void SchedulerService::PostPersistEvent(int64_t task_id, int64_t next_time)

@@ -27,7 +27,6 @@
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <filesystem>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -51,6 +50,18 @@ DAS_DISABLE_WARNING_END
 
 namespace Das::Core::TaskScheduler
 {
+
+    /// 状态通知回调的 ABI 形状（原接口头 IDasSchedulerService.h 的全局
+    /// typedef，接口退役后挪家进本命名空间，签名原样）：{函数指针,
+    /// user_data} C 对——有意保持 ABI 兼容设计，不得改成 std::function
+    /// 等携带所有权/胖指针的形状。回调收到序列化的调度器状态 JSON
+    /// （{"code","msg","data"} 封套，与 GET 端点同 payload 约定）。
+    /// 线程契约：在调度器通知路径被调（调用点不持有本类任何锁），
+    /// 消费方负责自身线程安全；user_data 生命周期由注册方持有——主进程
+    /// 装配线经内部注册通道（SetStateNotifyCallbackOwned）附加 payload
+    /// keeper 保活，纯 C 对注册（ABI 面）的 user_data 存活期由注册方
+    /// 自负。
+    using SchedulerNotifyFunc = void (*)(const char* json, void* user_data);
 
     /// Describes an available task type discovered from loaded manifests.
     struct TaskTypeRecord
@@ -279,16 +290,30 @@ namespace Das::Core::TaskScheduler
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }
 
-        /// Scheduler 状态推送回调形状（具体类友形：std::function，不再受
-        /// 接口面 {裸函数指针,user_data} 对的 marshal 约束）。回调收到
-        /// 序列化的调度器状态 JSON（{"code","msg","data"} 封套，与 GET
-        /// 端点同 payload 约定）。线程契约：在调度器通知路径被调（调用
-        /// 点不持有本类任何锁），消费方负责自身线程安全。
-        using SchedulerStateNotifyHandler = std::function<void(const char*)>;
-
         /// Register a callback to be invoked when scheduler state changes.
+        /// 导出面保持 {函数指针,user_data} C 对 ABI 兼容形状（无所有权
+        /// 语义——本重载发布不带 keeper 的快照，user_data 存活期由注册
+        /// 方自负）。
         DAS_API void SetStateNotifyCallback(
-            SchedulerStateNotifyHandler handler);
+            SchedulerNotifyFunc func,
+            void*               user_data);
+
+        /// 内部注册通道（主进程装配线专用，非 DAS_API 导出——inline
+        /// 落在消费方 TU 内编译，不进 DLL 导出面、不构成跨 DLL ABI）：
+        /// 与 C 对注册同型，额外携带 payload keeper——与 {func,user_data}
+        /// 一并整体发布进回调快照，在飞调用拷贝快照即持有 keeper，保证
+        /// user_data 指向的堆上 Holder（内含消费方强引用，如 Http 侧
+        /// WsHub）在调用期间存活。生命周期修复走 payload 持有，导出面
+        /// 签名不动。
+        void SetStateNotifyCallbackOwned(
+            SchedulerNotifyFunc   func,
+            void*                 user_data,
+            std::shared_ptr<void> keeper)
+        {
+            const std::scoped_lock lock(state_notify_mutex_);
+            state_notify_ = std::make_shared<StateNotify>(
+                StateNotify{func, user_data, std::move(keeper)});
+        }
 
         /// Drop every cached authoring session (task + repository). Called when
         /// the plugin runtime is invalidated (e.g. plugin unload/reload) so the
@@ -615,23 +640,23 @@ namespace Das::Core::TaskScheduler
 
         struct StateNotify
         {
-            SchedulerStateNotifyHandler func;
+            SchedulerNotifyFunc func = nullptr;
+            void*               user_data = nullptr;
+            // payload 持有通道的保活字（内部注册通道注入；纯 C 对 ABI
+            // 注册为空）：随 {func,user_data} 同快照整体发布，在飞调用
+            // 拷贝快照即持有，user_data 指向的 Holder 在调用期间存活。
+            std::shared_ptr<void> keeper;
 
-            void operator()(const char* json) const
-            {
-                if (func)
-                {
-                    func(json);
-                }
-            }
-            explicit operator bool() const { return static_cast<bool>(func); }
+            void operator()(const char* json) const { func(json, user_data); }
+            explicit operator bool() const { return func != nullptr; }
         };
 
-        // 回调的发布快照（std::atomic<std::shared_ptr> 在本工具链 libc++
-        // 未实现，用专用小锁 + shared_ptr 等价落地）：写侧锁内整体发布，
-        // 读侧锁内拷贝快照后锁外调用，消除运行期重设回调时读到半发布
-        // 状态的窗口（直连后回调为单对象 std::function，整体发布即无撕
-        // 裂面）。
+        // {func,user_data} 双字回调的发布快照（std::atomic<std::shared_ptr>
+        // 在本工具链 libc++ 未实现，用专用小锁 + shared_ptr 等价落地）：
+        // 写侧锁内整体发布，读侧锁内拷贝快照后锁外调用，消除运行期重设
+        // 回调时撕裂读（新 func + 旧 user_data 或半写指针）的窗口。
+        // keeper（payload 持有通道）随快照同发布，在飞调用期间保活
+        // user_data 指向的 Holder。
         mutable std::mutex           state_notify_mutex_;
         std::shared_ptr<StateNotify> state_notify_;
     };
