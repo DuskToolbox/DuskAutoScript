@@ -6,6 +6,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasApi.h>
 #include <das/DasRef.hpp>
 #include <das/Utils/DasJsonCore.h>
@@ -16,6 +17,7 @@
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasErrorLens.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSession.Implements.hpp>
 #include <gtest/gtest.h>
 #include <spdlog/details/log_msg.h>
 #include <spdlog/sinks/base_sink.h>
@@ -36,6 +38,7 @@ DAS_DISABLE_WARNING_END
 #include <mutex>
 #include <optional>
 #include <random>
+#include <string>
 #include <thread>
 
 #include <boost/asio/io_context.hpp>
@@ -3241,4 +3244,221 @@ TEST_F(
     EXPECT_EQ(
         remote_package->received_host,
         pm_->GetTaskComponentFactoryManager().GetTaskComponentCreator());
+}
+
+namespace
+{
+    // CreateAuthoringSession 契约断言用的最小会话替身：GetDocument 回显
+    // 固定文档文本（[out] 会话指针跨面可达性的观测面）。手写实现（照
+    // TaskComponentFactoryManagerTest 的 MockAuthoringSession 先例）——
+    // autogen Implements 基类的 GetGuid 需要 DasIidOf<TImpl>，匿名命名
+    // 空间测试类无对应 IID 符号。
+    class ContractProbeAuthoringSession final : public IDasTaskAuthoringSession
+    {
+    public:
+        static constexpr const char kDocumentText[] =
+            R"({"document":{"viewKind":"graph","ports":[]},"diagnostics":[]})";
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTaskAuthoringSession>())
+            {
+                *pp_out = static_cast<IDasTaskAuthoringSession*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult GetGuid(DasGuid* p_out_guid) override
+        {
+            if (p_out_guid == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_guid = MakeDasGuid("00000000-0000-0000-0000-000000790401");
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "ContractProbeAuthoringSession",
+                pp_out_name);
+        }
+
+        DasResult GetDocument(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_document_json) override
+        {
+            if (pp_out_document_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_document_json =
+                new Das::Core::Utils::IDasJsonImpl(kDocumentText);
+            (*pp_out_document_json)->AddRef();
+            return DAS_S_OK;
+        }
+
+        DasResult ApplyChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult Compile(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_result_json =
+                new Das::Core::Utils::IDasJsonImpl(kDocumentText);
+            (*pp_out_result_json)->AddRef();
+            return DAS_S_OK;
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{0};
+    };
+} // namespace
+
+// IPC 加载形态下 creator 新方法 CreateAuthoringSession 的跨面契约：
+// 包侧收到的 creator（生产中=主进程本尊经代理送达的远端引用）调用
+// CreateAuthoringSession 时，行为完全由主进程侧的后端注入状态决定——
+// 缺后端注入返具名 DAS_E_AUTHORING_SESSION_RESOLVER_MISSING（遇缺即错
+// 不静默，D-03 统一方法面语义）；注入 fake 会话解析器后 [out] 会话指针
+// 可达且 GetDocument 可调（[out] 接口指针自动编队与 CreateTaskComponent
+// 同型）。
+TEST_F(
+    PluginManagerHostInjectionTest,
+    LoadPluginOverIpcChannelCreateAuthoringSessionTracksBackendState)
+{
+    const auto manifest_path =
+        test_dir_ / DAS_PATH_LITERAL("IpcAuthoringContractPlugin.json");
+    {
+        std::ofstream ofs(manifest_path);
+        ofs << R"({
+            "guid": "00000000-0000-0000-0000-000000790401",
+            "name": "IpcAuthoringContractPlugin",
+            "language": "Cpp",
+            "loadMode": "ipc",
+            "description": "test",
+            "author": "test",
+            "version": "1.0",
+            "supportedSystem": "win",
+            "pluginFilenameExtension": "dll",
+            "settings": []
+        })";
+    }
+
+    RecordingPluginPackage* remote_package = nullptr;
+    pm_->SetRemotePluginHostFactoryForTest(
+        [&remote_package]()
+        {
+            return std::make_unique<RecordingRemotePluginHost>(remote_package);
+        });
+    pm_->SetHostExePath("DasHostX.exe");
+
+    ASSERT_EQ(pm_->LoadPlugin(manifest_path), DAS_S_OK);
+    ASSERT_NE(remote_package, nullptr);
+
+    // 包持有的 creator 即主进程本尊（生产中该引用经代理编组送达，worker
+    // 侧组件的实例化与会话解析全部回流主进程 manager）。
+    auto* creator = remote_package->received_host;
+    ASSERT_NE(creator, nullptr);
+    EXPECT_EQ(
+        creator,
+        pm_->GetTaskComponentFactoryManager().GetTaskComponentCreator());
+
+    const auto task_guid = MakeDasGuid("00000000-0000-0000-0000-000000790401");
+
+    // ① 无后端注入：具名错 + [out] 会话指针不被置位（遇缺即错，D-03）。
+    {
+        DasPtr<IDasTaskAuthoringSession> session;
+        EXPECT_EQ(
+            creator->CreateAuthoringSession(task_guid, nullptr, session.Put()),
+            DAS_E_AUTHORING_SESSION_RESOLVER_MISSING);
+        EXPECT_FALSE(session);
+    }
+
+    // ② 注入 fake 会话解析器：同一包侧 creator 调用返回会话且 GetDocument
+    // 可调——后端注入状态由主进程侧决定的语义面（同一 creator 调用随主进程
+    // 侧注入状态变化，无 worker 侧本地状态）。
+    {
+        auto* probe_impl = new ContractProbeAuthoringSession();
+        probe_impl->AddRef();
+        auto probe = DasPtr<IDasTaskAuthoringSession>::Attach(
+            static_cast<IDasTaskAuthoringSession*>(probe_impl));
+        int resolver_calls = 0;
+        pm_->GetTaskComponentFactoryManager().SetBackendResolvers(
+            {},
+            [&probe, &resolver_calls](
+                const DasGuid&,
+                Das::ExportInterface::IDasJson*,
+                IDasTaskAuthoringSession** pp_out_session) -> DasResult
+            {
+                ++resolver_calls;
+                if (pp_out_session == nullptr)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                *pp_out_session = probe.Get();
+                probe->AddRef();
+                return DAS_S_OK;
+            });
+
+        DasPtr<IDasTaskAuthoringSession> session;
+        EXPECT_EQ(
+            creator->CreateAuthoringSession(task_guid, nullptr, session.Put()),
+            DAS_S_OK);
+        EXPECT_EQ(resolver_calls, 1);
+        ASSERT_TRUE(session);
+
+        Das::DasPtr<Das::ExportInterface::IDasJson> document;
+        EXPECT_EQ(session->GetDocument(nullptr, document.Put()), DAS_S_OK);
+        ASSERT_TRUE(document);
+        Das::DasPtr<IDasReadOnlyString> document_text;
+        ASSERT_EQ(document->ToString(0, document_text.Put()), DAS_S_OK);
+        ASSERT_NE(document_text.Get(), nullptr);
+        const char* document_utf8 = nullptr;
+        ASSERT_EQ(document_text->GetUtf8(&document_utf8), DAS_S_OK);
+        ASSERT_NE(document_utf8, nullptr);
+        EXPECT_NE(
+            std::string(document_utf8).find("viewKind"),
+            std::string::npos);
+    }
 }
