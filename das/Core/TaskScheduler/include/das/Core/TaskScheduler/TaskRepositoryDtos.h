@@ -16,10 +16,11 @@ namespace Das::Core::TaskScheduler::Repository::Dto
     {
         int64_t                    revision = 0;
         std::optional<std::string> last_change_kind;
-        // Legacy source-fingerprint used by RepositoryInvokeCompiler for entry
-        // identity verification. Phase 84 removed it from the public Apply
-        // wire; the RepositoryInvokeCompiler still consumes any value the
-        // persisted entry happens to carry, treating it as best-effort.
+        // Legacy source-fingerprint with no active value consumer: the
+        // repository-invoke compiler (retired) was its last reader. The
+        // persisted metadata still forwards any existing value best-effort
+        // (and seeds an empty string when absent) so older entries and DTO
+        // round-trips keep a stable wire shape.
         std::string source_fingerprint;
     };
 

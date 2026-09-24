@@ -48,10 +48,11 @@ TEST(
     ASSERT_TRUE(authoring_metadata.has_value());
     EXPECT_TRUE(
         authoring_metadata->contains(std::string_view("lastChangeKind")));
-    // Phase 84 D-84-02/04: kind/migrationState are removed from the public
-    // Apply wire. sourceFingerprint remains on the persisted metadata because
-    // the RepositoryInvokeCompiler still consumes it as an entry-identity
-    // guard.
+    // kind/migrationState are removed from the public Apply wire.
+    // sourceFingerprint has no active value consumer since the
+    // repository-invoke compiler retired; it remains on the persisted
+    // metadata as legacy wire compatibility (best-effort forwarding, empty
+    // when absent).
     EXPECT_TRUE(
         authoring_metadata->contains(std::string_view("sourceFingerprint")));
     EXPECT_FALSE(authoring_metadata->contains(std::string_view("kind")));
