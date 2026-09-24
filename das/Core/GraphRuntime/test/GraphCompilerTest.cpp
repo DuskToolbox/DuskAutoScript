@@ -3410,6 +3410,49 @@ TEST(ReferenceClosureInjectionPassTest, RepeatedEntryIdYieldsCycleDiagnostic)
 
 TEST(
     ReferenceClosureInjectionPassTest,
+    FailedNodeLeavesNoStackResidueForSiblingDiagnostics)
+{
+    // 失败节点的 entryId 不残留编译栈：creator 缺失的失败分支先于压栈，
+    // 同文档后续兄弟节点绑同一条目得到真根因诊断（creator 缺失）而非
+    // 误导性环错。
+    ReferencePassFixture fixture{
+        R"({"document":{"ports":[]}})",
+        R"({"compile":{"executionInput":"x"}})"};
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_ref_no_residue";
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound_a", "42"));
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound_b", "42"));
+
+    // 无 creator 装配（既无显式绑定又无 factory manager host）。
+    GraphCompiler compiler;
+    compiler.BindRepositoryFields(
+        {{std::string{BOUND_GRAPH_TASK_GUID}, {"repositoryRef"}}});
+
+    const auto plan = compiler.Compile(doc);
+    EXPECT_FALSE(HasReferenceDiagnostic(
+        plan,
+        CompileDiagnosticKind::ReferenceCycleDetected));
+    // 两个节点各自得到真根因诊断（creator 缺失），后者不被前者的失败
+    // 污染为环错。
+    int        creator_missing_count = 0;
+    const auto kind_text = std::to_string(
+        static_cast<int>(CompileDiagnosticKind::ReferenceCreatorMissing));
+    for (const auto& diag : plan.diagnostics)
+    {
+        auto obj = diag.as_object();
+        if (obj.has_value()
+            && (*obj)[std::string_view("kind")].as_string() == kind_text)
+        {
+            ++creator_missing_count;
+        }
+    }
+    EXPECT_EQ(creator_missing_count, 2);
+    EXPECT_TRUE(plan.execution_order.empty());
+}
+
+TEST(
+    ReferenceClosureInjectionPassTest,
     AncestorEntryIdOnClosureStackYieldsCycleWithPath)
 {
     // 深层文档绑回祖先 entryId：编译器继承闭包栈（子会话编译路径经

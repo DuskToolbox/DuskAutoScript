@@ -482,7 +482,6 @@ void GraphCompiler::RunReferenceClosurePass(
             reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
             continue;
         }
-        entry_stack.push_back(*bound_entry_id);
 
         if (creator == nullptr)
         {
@@ -551,6 +550,11 @@ void GraphCompiler::RunReferenceClosurePass(
             reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
             continue;
         }
+
+        // 压栈单点：位于全部失败检查（creator 可达、条目解析、guid 解
+        // 析）之后、子编译开始之前——失败分支在压栈前 continue，栈上零
+        // 残留；环只可能经成功子编译链形成。
+        entry_stack.push_back(*bound_entry_id);
 
         // context：条目绑定键由条目解析后端自行预载（Discretion 裁定）；
         // 闭包栈键携带当前栈（含本层 entryId）——子会话编译路径经它恢复
