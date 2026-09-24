@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -3480,6 +3481,104 @@ TEST(
     }
     EXPECT_EQ(creator_missing_count, 2);
     EXPECT_TRUE(plan.execution_order.empty());
+}
+
+TEST(
+    ReferenceClosureInjectionPassTest,
+    ContextEncodeFailureYieldsNamedDiagnostic)
+{
+    // context 序列化失败 → 具名诊断：条目 summary 携带非 finite 实数
+    // （JSON 文本不可能表达的值形态），clone 后进入 context，编码器在
+    // NoFlag 写出时拒绝——ReferenceContextEncodeFailed + 失败出口语义。
+    // 同族 ReferenceContextWrapFailed（IDasJson 包装构造抛异常）不可经
+    // 数据面强制触发：包装构造只做值拷贝与分配，可抛面仅剩内存耗尽，
+    // 不造假测试（该分支与既有会话失败分支模板同构）。
+    RepositoryEntrySummary poisoned;
+    poisoned.task_type_guid = std::string{BOUND_ENTRY_TASK_TYPE_GUID};
+    poisoned.accepted_properties =
+        yyjson::value(std::numeric_limits<double>::quiet_NaN());
+    ReferencePassFixture fixture{
+        R"({"document":{"ports":[]}})",
+        R"({"compile":{"executionInput":"x"}})",
+        DAS_S_OK,
+        poisoned};
+    auto compiler = fixture.MakeCompiler();
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_ref_ctx_encode_fail";
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound", "42"));
+
+    const auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(HasReferenceDiagnostic(
+        plan,
+        CompileDiagnosticKind::ReferenceContextEncodeFailed));
+    EXPECT_TRUE(plan.execution_order.empty());
+    EXPECT_EQ(FindBroadcastBinding(plan, "n_bound"), nullptr);
+}
+
+TEST(
+    ReferenceClosureInjectionPassTest,
+    FailedPassKeepsBindingPlanIdenticalToNoInjectionBaseline)
+{
+    // 硬不变量：pass 失败 ⇒ binding_plan 与无注入 pass 完全一致——零
+    // referenceArtifact 绑定注入、零派生广播删除。用可强制的失败（fake
+    // creator 会话开启失败）驱动；节点声明 executionInput 输入口使基线
+    // 携带派生悬空广播（失败态必须原样保留）。
+    ReferencePassFixture fixture{
+        R"({"document":{"ports":[]}})",
+        R"({"compile":{"executionInput":"x"}})",
+        DAS_E_FAIL};
+    fixture.mgr.AddDefinition(
+        std::string{BOUND_GRAPH_TASK_GUID},
+        MakeDefinition({{"executionInput", "string"}}, {}));
+    auto compiler = fixture.MakeCompiler();
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_ref_failed_zero_injection";
+    doc.nodes.push_back(fixture.MakeBoundNode("n_bound", "42"));
+
+    const auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(HasReferenceDiagnostic(
+        plan,
+        CompileDiagnosticKind::ReferenceSessionFailed));
+    EXPECT_TRUE(plan.execution_order.empty());
+
+    // 零产物绑定注入。
+    int artifact_binding_count = 0;
+    for (const auto& binding : plan.binding_plan.bindings)
+    {
+        if (binding.source_port_id == "referenceArtifact")
+        {
+            ++artifact_binding_count;
+        }
+    }
+    EXPECT_EQ(artifact_binding_count, 0);
+
+    // 基线：同一编译器装配但不声明仓库字段（pass 对本文档无绑条目节点
+    // 可见，等价无注入 pass）；派生悬空广播在场，失败态原样保留。
+    GraphCompiler baseline;
+    baseline.SetFactoryManager(&fixture.mgr);
+    const auto baseline_plan = baseline.Compile(doc);
+    ASSERT_NE(FindBroadcastBinding(baseline_plan, "n_bound"), nullptr)
+        << "baseline must carry the derived dangling-input broadcast";
+
+    ASSERT_EQ(
+        plan.binding_plan.bindings.size(),
+        baseline_plan.binding_plan.bindings.size());
+    for (std::size_t i = 0; i < plan.binding_plan.bindings.size(); ++i)
+    {
+        const auto& actual = plan.binding_plan.bindings[i];
+        const auto& expected = baseline_plan.binding_plan.bindings[i];
+        EXPECT_EQ(actual.source_node_id, expected.source_node_id);
+        EXPECT_EQ(actual.source_port_id, expected.source_port_id);
+        EXPECT_EQ(actual.target_node_id, expected.target_node_id);
+        EXPECT_EQ(actual.target_port_id, expected.target_port_id);
+        EXPECT_EQ(actual.expected_type, expected.expected_type);
+        EXPECT_EQ(actual.target_type, expected.target_type);
+        EXPECT_EQ(actual.default_value.write(), expected.default_value.write());
+    }
+    EXPECT_NE(FindBroadcastBinding(plan, "n_bound"), nullptr)
+        << "failed pass must keep the derived broadcast (no erasure)";
 }
 
 TEST(

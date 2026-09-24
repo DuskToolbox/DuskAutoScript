@@ -75,7 +75,12 @@ enum class CompileDiagnosticKind
     // 被引条目 Compile 失败或产物缺 executionInput 段。
     ReferenceCompileFailed,
     // entryId 栈重现——引用环。
-    ReferenceCycleDetected
+    ReferenceCycleDetected,
+    // 会话 context 序列化失败（闭包栈键装配后的 JSON 编码阶段——非
+    // finite 实数等编码器拒绝面）。
+    ReferenceContextEncodeFailed,
+    // 会话 context 的 IDasJson 包装构造抛异常。
+    ReferenceContextWrapFailed
 };
 
 struct CompileEdgeDiagnostic

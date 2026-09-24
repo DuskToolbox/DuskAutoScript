@@ -602,6 +602,17 @@ void GraphCompiler::RunReferenceClosurePass(
         if (!context_serialized.has_value())
         {
             reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind =
+                CompileDiagnosticKind::ReferenceContextEncodeFailed;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "context serialization failed for repository entry {} "
+                "(task type {})",
+                *bound_entry_id,
+                task_type_guid);
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
             continue;
         }
 
@@ -612,9 +623,20 @@ void GraphCompiler::RunReferenceClosurePass(
             context_json = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
                 Das::Utils::CloneYyjsonValue(context));
         }
-        catch (const std::exception&)
+        catch (const std::exception& error)
         {
             reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::ReferenceContextWrapFailed;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "context JSON wrapper construction failed for repository "
+                "entry {} (task type {}): {}",
+                *bound_entry_id,
+                task_type_guid,
+                error.what());
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
             continue;
         }
 
@@ -3083,39 +3105,46 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     // Port binding plan
     plan.binding_plan = GeneratePortBindingPlan(document);
 
+    // 注入 pass 失败门先行：失败编译的 binding_plan 与无注入 pass 完全
+    // 一致（零产物绑定注入、零派生广播删除）——失败态不携带半批注入
+    // 痕迹，具名诊断是唯一失败陈述。
+    if (reference_pass_failed_)
+    {
+        plan.execution_order.clear();
+    }
     // 注入 pass 晚段：产物直写广播绑定（$graph_input → executionInput，
     // default_value=compile 段原文）——运行期物化半边（DoAdapter 现成
     // 路径）零新机制。产物永不落盘、不写仓库。派生的悬
     // 空输入广播（无缺省值）让位——pass 产物绑定是该口唯一供值源。
-    for (auto& [node_id, artifact_text] : reference_artifacts_)
+    else
     {
-        auto& bindings = plan.binding_plan.bindings;
-        bindings.erase(
-            std::remove_if(
-                bindings.begin(),
-                bindings.end(),
-                [&node_id](const Dto::PortBindingDto& candidate)
-                {
-                    return candidate.source_node_id
-                               == std::string{GRAPH_INPUT_BROADCAST_SOURCE}
-                           && candidate.target_node_id == node_id
-                           && candidate.target_port_id == "executionInput";
-                }),
-            bindings.end());
+        for (auto& [node_id, artifact_text] : reference_artifacts_)
+        {
+            auto& bindings = plan.binding_plan.bindings;
+            bindings.erase(
+                std::remove_if(
+                    bindings.begin(),
+                    bindings.end(),
+                    [&node_id](const Dto::PortBindingDto& candidate)
+                    {
+                        return candidate.source_node_id
+                                   == std::string{GRAPH_INPUT_BROADCAST_SOURCE}
+                               && candidate.target_node_id == node_id
+                               && candidate.target_port_id == "executionInput";
+                    }),
+                bindings.end());
 
-        Dto::PortBindingDto reference_broadcast;
-        reference_broadcast.source_node_id =
-            std::string{GRAPH_INPUT_BROADCAST_SOURCE};
-        reference_broadcast.source_port_id = "referenceArtifact";
-        reference_broadcast.target_node_id = node_id;
-        reference_broadcast.target_port_id = "executionInput";
-        reference_broadcast.expected_type = "object";
-        reference_broadcast.default_value = yyjson::value(artifact_text);
-        plan.binding_plan.bindings.push_back(std::move(reference_broadcast));
-    }
-    if (reference_pass_failed_)
-    {
-        plan.execution_order.clear();
+            Dto::PortBindingDto reference_broadcast;
+            reference_broadcast.source_node_id =
+                std::string{GRAPH_INPUT_BROADCAST_SOURCE};
+            reference_broadcast.source_port_id = "referenceArtifact";
+            reference_broadcast.target_node_id = node_id;
+            reference_broadcast.target_port_id = "executionInput";
+            reference_broadcast.expected_type = "object";
+            reference_broadcast.default_value = yyjson::value(artifact_text);
+            plan.binding_plan.bindings.push_back(
+                std::move(reference_broadcast));
+        }
     }
 
     // loopCarried 通道记档与校验：成对口合成 data 型回边入 plan.back_edges
