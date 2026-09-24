@@ -364,6 +364,16 @@ namespace
         }
         return std::move(*serialized);
     }
+
+    /// 同层复用 DFS 弹栈守卫：本层压入的 entryId 在节点处理结束（成功、
+    /// 失败与异常路径同弹）后弹回——在途窗口=本节点子编译链期间，祖先
+    /// 链（继承的初始栈）永不受弹栈影响。
+    struct EntryStackPopGuard
+    {
+        std::vector<int64_t>& stack;
+
+        ~EntryStackPopGuard() { stack.pop_back(); }
+    };
 } // namespace
 
 GraphCompiler::NodeFacesMap GraphCompiler::CollectReferenceFaces(
@@ -392,7 +402,9 @@ void GraphCompiler::RunReferenceClosurePass(
     }
 
     // 编译递归栈即环检测器：初始栈=继承的祖先链（子层编译经 context
-    // 闭包栈键恢复），本层逐节点压栈（子层只追加不重写——栈单调）。
+    // 闭包栈键恢复），本层逐节点「压栈→子编译→弹栈」（DFS 同层复用语
+    // 义：兄弟节点绑同一条目各自独立编译；在途栈重现=真环——条目文档
+    // 直接/间接引用回自身或祖先）。
     std::vector<int64_t> entry_stack = closure_entry_ids_;
     for (const auto& node : document.nodes)
     {
@@ -456,9 +468,10 @@ void GraphCompiler::RunReferenceClosurePass(
             continue;
         }
 
-        // entryId 栈环检测：栈上重现=引用环（祖先 entryId 被深层绑回，或
-        // 同文档重复引用）。栈深受条目总数天然约束——环检测保证栈上
-        // entryId 互异，无无界递归面。
+        // entryId 在途栈环检测：栈上重现=引用环（本节点子编译链的在途
+        // 祖先 entryId 被深层绑回）。同层兄弟节点绑同一条目合法（前一节
+        // 点处理完已弹栈，复用形态不误报）。在途栈 entryId 互异，栈深受
+        // 条目总数天然约束，无无界递归面。
         if (std::find(entry_stack.begin(), entry_stack.end(), *bound_entry_id)
             != entry_stack.end())
         {
@@ -553,8 +566,10 @@ void GraphCompiler::RunReferenceClosurePass(
 
         // 压栈单点：位于全部失败检查（creator 可达、条目解析、guid 解
         // 析）之后、子编译开始之前——失败分支在压栈前 continue，栈上零
-        // 残留；环只可能经成功子编译链形成。
+        // 残留；环只可能经成功子编译链形成。压入的 entryId 由守卫在节
+        // 点处理结束时弹回（压栈→子编译→弹栈）。
         entry_stack.push_back(*bound_entry_id);
+        EntryStackPopGuard pop_guard{entry_stack};
 
         // context：条目绑定键由条目解析后端自行预载（Discretion 裁定）；
         // 闭包栈键携带当前栈（含本层 entryId）——子会话编译路径经它恢复

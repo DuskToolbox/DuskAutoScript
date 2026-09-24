@@ -3388,24 +3388,55 @@ TEST(
     EXPECT_TRUE(plan.execution_order.empty());
 }
 
-TEST(ReferenceClosureInjectionPassTest, RepeatedEntryIdYieldsCycleDiagnostic)
+TEST(
+    ReferenceClosureInjectionPassTest,
+    SameDocumentRepeatedEntryIdCompilesBothNodes)
 {
-    // entryId 重复（同一次 pass 内重现）→ 引用环具名错
+    // 同层复用 DFS 弹栈语义：同文档两节点绑同一条目是合法复用形态
+    // （非环）——前一节点处理完弹栈，两个节点各自独立编译，产物绑定
+    // 各自在位。
     ReferencePassFixture fixture{
         R"({"document":{"ports":[]}})",
         R"({"compile":{"executionInput":"x"}})"};
     auto compiler = fixture.MakeCompiler();
 
     GraphDocumentDto doc;
-    doc.document_id = "doc_ref_cycle";
+    doc.document_id = "doc_ref_same_entry_reuse";
     doc.nodes.push_back(fixture.MakeBoundNode("n_bound_a", "42"));
     doc.nodes.push_back(fixture.MakeBoundNode("n_bound_b", "42"));
 
     const auto plan = compiler.Compile(doc);
-    EXPECT_TRUE(HasReferenceDiagnostic(
+    EXPECT_FALSE(HasReferenceDiagnostic(
         plan,
         CompileDiagnosticKind::ReferenceCycleDetected));
-    EXPECT_TRUE(plan.execution_order.empty());
+    EXPECT_FALSE(plan.execution_order.empty());
+    ASSERT_NE(
+        std::find(
+            plan.execution_order.begin(),
+            plan.execution_order.end(),
+            "n_bound_a"),
+        plan.execution_order.end());
+    ASSERT_NE(
+        std::find(
+            plan.execution_order.begin(),
+            plan.execution_order.end(),
+            "n_bound_b"),
+        plan.execution_order.end());
+
+    // 两个节点的产物广播绑定各自在位，default_value 同为 compile 段原文。
+    const auto* broadcast_a = FindBroadcastBinding(plan, "n_bound_a");
+    ASSERT_NE(broadcast_a, nullptr);
+    const auto text_a = broadcast_a->default_value.as_string();
+    ASSERT_TRUE(text_a.has_value());
+    EXPECT_EQ(*text_a, "x");
+    const auto* broadcast_b = FindBroadcastBinding(plan, "n_bound_b");
+    ASSERT_NE(broadcast_b, nullptr);
+    const auto text_b = broadcast_b->default_value.as_string();
+    ASSERT_TRUE(text_b.has_value());
+    EXPECT_EQ(*text_b, "x");
+
+    // 两个节点各开一次子会话（同层复用各自独立走完整编译链）。
+    EXPECT_EQ(fixture.seen_contexts.size(), 2u);
 }
 
 TEST(
