@@ -1694,7 +1694,12 @@ namespace Das::Core::TaskScheduler
     // Get + Compile callers, which resolve the session before any pipeline)
     // and by the Apply pipeline, which must resolve the session AFTER its ③④
     // envelope/revision pre-checks (D-85-02c: an envelope failure must not
-    // create a session). `mutex` guards only find/emplace; session creation
+    // create a session). The creator-channel resolver (compile injection
+    // pass / projection fetcher) is deliberately NOT a consumer: it opens a
+    // clean private session via CreateAuthoringSessionWithContext and never
+    // touches these caches (pure-function session canon — the session handed
+    // to the compile chain is caller-private and disposable). `mutex` guards
+    // only find/emplace; session creation
     // happens outside the lock (v1.3 short-critical-section rule). Returns
     // null on create failure without inserting an empty entry.
     //
@@ -2929,9 +2934,17 @@ namespace Das::Core::TaskScheduler
             {
                 auto context = ReadJsonInterface(p_context_json);
 
+                // 条目分支的干净会话承载（工厂直开的新建私有实例；声明提
+                // 前到此仅为列宽——深嵌套分支内放不下单行类型名）。
+                DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>
+                    entry_session;
+
                 // 条目绑定键（repositoryEntryId）在场：按条目权威解析——
-                // 与仓库条目 Get 管线同款 context 装配（actionCatalog + 组
-                // 件口面预备 pass）+ 会话缓存（revision 失效重建）。插件侧
+                // context 装配与仓库条目 Get 管线同源（actionCatalog + 组
+                // 件口面预备 pass，全部从 store 权威读数现算）；会话按纯函
+                // 数会话 canon 干净新建（工厂直开，私有实例、用完即弃），
+                // 不经编辑工作流的共享会话缓存——那是连续 Get/Apply 的
+                // HTTP 会话状态机制，与编译链无关。插件侧
                 // 投影取数与编译闭包 pass 都走本形状：被引图条目会话的 Get
                 // 响应因此携带根 ports section（边界投影/闭包口面的文档
                 // 源）。插件侧无法反查条目任务类型（节点组件 guid 只是同
@@ -3004,26 +3017,35 @@ namespace Das::Core::TaskScheduler
                                         }
                                     }
                                 }
-                                const int64_t faces_revision =
-                                    AppendComponentFacesContextKeys(
-                                        entry_context,
-                                        entry.accepted_properties,
-                                        *entry_id_value);
-                                auto session_entry =
-                                    GetOrCreateAuthoringSession(
-                                        repository_authoring_sessions_,
+                                // 组件口面预备 pass：只取其对 context 的键
+                                // 注入（faces 现算播种）。返回的 revision 戳
+                                // 是会话缓存的失效键——本路径干净新建、无缓
+                                // 存语义，不再消费。
+                                AppendComponentFacesContextKeys(
+                                    entry_context,
+                                    entry.accepted_properties,
+                                    *entry_id_value);
+                                // 纯函数会话 canon：干净新建（工厂直开私有
+                                // 实例），全程不碰 repository_authoring_
+                                // sessions_——编译链（注入 pass/投影
+                                // fetcher）与编辑缓存隔离，会话归调用方私
+                                // 有、用完即弃，锁义务消除于设计。
+                                const auto entry_session_result =
+                                    CreateAuthoringSessionWithContext(
+                                        plugin_manager_,
                                         entry_capability,
-                                        *entry_id_value,
                                         std::move(entry_context),
-                                        faces_revision,
-                                        /*enforce_fresh=*/true);
-                                if (!session_entry || !session_entry->session)
+                                        entry_session);
+                                if (DAS::IsFailed(entry_session_result)
+                                    || !entry_session)
                                 {
-                                    return DAS_E_FAIL;
+                                    return DAS::IsFailed(entry_session_result)
+                                               ? entry_session_result
+                                               : DAS_E_FAIL;
                                 }
-                                // 引用移交：out 参数带走一条新 ref，
-                                // shared_ptr 析构释放缓存持有的这份。
-                                (*pp_out_session = session_entry->session.Get())
+                                // 引用移交：out 参数带走一条新 ref，DasPtr
+                                // 析构释放本地持有的这份。
+                                (*pp_out_session = entry_session.Get())
                                     ->AddRef();
                                 return DAS_S_OK;
                             }
@@ -3041,7 +3063,8 @@ namespace Das::Core::TaskScheduler
                 }
 
                 // 非条目形状（或条目不可解析）回退：按调用方传入的任务类
-                // 型 guid 直接开会话（context 原样透传）。
+                // 型 guid 干净开会话（工厂直开私有实例，context 原样透
+                // 传）——与条目分支同一纯函数会话 canon，两条分支零缓存。
                 TaskAuthoringCapability capability;
                 {
                     const std::scoped_lock lock(mutex_);

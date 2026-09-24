@@ -3661,6 +3661,81 @@ TEST_F(
     EXPECT_EQ(shared_state_->get_document_count, 1);
 }
 
+// creator 后端 resolver 的条目分支必须走干净会话创建（纯函数会话
+// canon）——编译链（注入 pass/投影 fetcher）拿到的会话是调
+// 用方私有、用完即弃的新建实例，禁止消费 HTTP 编辑工作流的共享缓存
+// repository_authoring_sessions_。预置一个缓存命中（先经仓库条目 Get 把
+// 会话灌进缓存），再经 creator 通道开同条目会话：干净创建必须新造工厂
+// 会话（authoring_session_count 1→2，context 从 store 权威读数现算），
+// 而非把缓存实例 AddRef 交出（计数停留 1）。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringCreatorSessionIsCleanNotCached)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+
+    // 条目 id 从 0 起分配，而 resolver 条目分支的入口判据是
+    // repositoryEntryId > 0——建两个条目、用 id=1 走真条目分支。
+    auto first_created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Creator clean session filler", 8));
+    ASSERT_EQ(
+        (*first_created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Creator clean session entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        1);
+
+    // 缓存预置：一次仓库条目 Get 经 HTTP 管线在 repository_authoring_
+    // sessions_ 建立共享会话（revision/locale 戳一致时后续复用）。
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto primed = scheduler_->GetRepositoryEntryAuthoringDocument(1, request);
+    ASSERT_TRUE(primed.as_object().has_value());
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        ASSERT_EQ(shared_state_->authoring_session_count, 1);
+    }
+
+    // creator 通道入参（编译闭包 pass 同款形状）：条目绑定键由调用方携
+    // 带，repo 装配键（properties/revision/actionCatalog 等）由后端从
+    // store 现读。
+    yyjson::value context(Das::Utils::MakeYyjsonObject());
+    (*context.as_object())[std::string_view("repositoryEntryId")] =
+        static_cast<std::int64_t>(1);
+    auto context_json = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+        Das::Utils::CloneYyjsonValue(context));
+
+    Das::DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+
+    // 经 creator 后端消费门开条目会话（resolver 委托终点，与插件侧
+    // creator->CreateAuthoringSession 同一入口）。
+    const auto session_result =
+        plugin_manager_->GetTaskComponentFactoryManager()
+            .CreateAuthoringSession(
+                FactoryTaskGuid,
+                context_json.Get(),
+                session.Put());
+    ASSERT_EQ(session_result, DAS_S_OK);
+    ASSERT_NE(session.Get(), nullptr);
+
+    // 干净会话语义：新造工厂会话（1→2），context 装配源自 store 权威读
+    // 数（revision=0——建条目后未 Apply）。
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->authoring_session_count, 2);
+        EXPECT_EQ(shared_state_->last_context_revision, 0);
+    }
+
+    // 新实例可用：GetDocument 走通（编译链早段同款消费面）。
+    Das::DasPtr<Das::ExportInterface::IDasJson> document_json;
+    ASSERT_EQ(session->GetDocument(nullptr, document_json.Put()), DAS_S_OK);
+}
+
 TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerRepositoryAuthoringApplyValidatesResultBeforePersisting)
