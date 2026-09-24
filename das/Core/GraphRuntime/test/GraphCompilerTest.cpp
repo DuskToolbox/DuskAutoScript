@@ -3317,12 +3317,16 @@ TEST(
     const auto plan = compiler.Compile(doc);
 
     // ① 产物广播绑定：$graph_input → n_bound.executionInput，
-    // default_value = compile 段 executionInput 原文（shell 串）
+    // default_value = compile 段 executionInput 原文（shell 串）；
+    // expected_type 与 default_value 实际 string 形态对齐（DoAdapter 物
+    // 化读法按标量 SetString）。
     const auto* broadcast = FindBroadcastBinding(plan, "n_bound");
     ASSERT_NE(broadcast, nullptr);
     const auto default_text = broadcast->default_value.as_string();
     ASSERT_TRUE(default_text.has_value());
     EXPECT_EQ(*default_text, shell_text);
+    EXPECT_EQ(broadcast->source_port_id, "referenceArtifact");
+    EXPECT_EQ(broadcast->expected_type, "string");
 
     // ② 节点口面 = 文档根 ports：doc_out 出口可供边校验（无 PortNotFound）
     EXPECT_FALSE(HasReferenceDiagnostic(

@@ -830,13 +830,9 @@ GraphCompiler::ManifestPorts GraphCompiler::ResolveNodePorts(
     // 绑条目调用节点口面：唯一源=注入 pass 编译期现算（被引条目文档根
     // ports 自述——文档自述消费，禁第二份推导）。
     const auto pass_face = reference_faces_.find(node.node_id);
-    if (pass_face != reference_faces_.end())
+    if (pass_face != reference_faces_.end() && !pass_face->second.empty())
     {
-        if (!pass_face->second.empty())
-        {
-            MergeFacesOntoSurface(ports, node.node_id, pass_face->second);
-        }
-        return ports;
+        MergeFacesOntoSurface(ports, node.node_id, pass_face->second);
     }
     return ports;
 }
@@ -3140,7 +3136,7 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
             reference_broadcast.source_port_id = "referenceArtifact";
             reference_broadcast.target_node_id = node_id;
             reference_broadcast.target_port_id = "executionInput";
-            reference_broadcast.expected_type = "object";
+            reference_broadcast.expected_type = "string";
             reference_broadcast.default_value = yyjson::value(artifact_text);
             plan.binding_plan.bindings.push_back(
                 std::move(reference_broadcast));
