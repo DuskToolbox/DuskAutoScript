@@ -709,10 +709,36 @@ void GraphCompiler::RunReferenceClosurePass(
         }
 
         // 晚段：同一会话 Compile → 产物直写广播绑定（compile 段
-        // executionInput 原文；产物永不落盘、不写仓库）。
+        // executionInput 原文；产物永不落盘、不写仓库）。请求体声明
+        // purpose=execution——注入链消费的是执行产物（provider 按
+        // purpose 门控 executionInput 段：MaaPi preview 不携带，缺省
+        // 请求按 preview 解读会误报产物缺失）；Core 会话型 provider
+        // （GraphTask 壳）对请求体不敏感，行为不变。
+        yyjson::value compile_request(Das::Utils::MakeYyjsonObject());
+        (*compile_request.as_object())[std::string_view("purpose")] =
+            std::make_pair(std::string_view("execution"), yyjson::copy_string);
+        Das::DasPtr<Das::Core::Utils::IDasJsonImpl> request_wrapper;
+        try
+        {
+            request_wrapper = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+                Das::Utils::CloneYyjsonValue(compile_request));
+        }
+        catch (const std::exception&)
+        {
+            reference_pass_failed_ = true;
+            CompileEdgeDiagnostic diagnostic;
+            diagnostic.kind = CompileDiagnosticKind::ReferenceCompileFailed;
+            diagnostic.node_id = node.node_id;
+            diagnostic.message = DAS_FMT_NS::format(
+                "compile request construction failed for referenced entry {}",
+                *bound_entry_id);
+            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
+            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
+            continue;
+        }
         Das::DasPtr<Das::ExportInterface::IDasJson> compile_json;
         const auto                                  compile_result =
-            session->Compile(nullptr, compile_json.Put());
+            session->Compile(request_wrapper.Get(), compile_json.Put());
         auto compile_value = JsonToYyjson(compile_json.Get());
         if (DAS::IsFailed(compile_result) || !compile_value.has_value())
         {

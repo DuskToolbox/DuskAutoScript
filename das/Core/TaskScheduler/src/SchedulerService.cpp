@@ -2996,12 +2996,21 @@ namespace Das::Core::TaskScheduler
                                     entry_capability = *authoring;
                                 }
 
+                                // 组件语境标记恒真：本通道开的会话服务图
+                                // 内节点（编译闭包 pass 现算口面/产物、插件
+                                // 侧投影取数）——与图内节点下钻编辑同一
+                                // IDasTaskComponent 语境。Provider 在该语境
+                                // 投影节点朝向的文档面（MaaPi 的根 ports
+                                // 自述、暴露输入伴生字段），context 键=注
+                                // 入通道（纯函数会话 canon：干净会话的一
+                                // 切经 context 自足）。
                                 auto entry_context =
                                     MakeRepositoryAuthoringContextJson(
                                         plugin_manager_,
                                         *entry_id_value,
                                         entry.accepted_properties,
-                                        entry_json);
+                                        entry_json,
+                                        /*component_context=*/true);
                                 if (auto merged_obj = entry_context.as_object())
                                 {
                                     for (auto it = ctx_obj->begin();

@@ -7510,7 +7510,8 @@ TEST(MaapiProjectionTest, ExposedToggleSetPersistsAndDrivesPortsSection)
             "retry");
     }
 
-    // 全部取消 → ports section 缺席（engaged-only）。
+    // 全部取消 → ports 清空（component 语境 section 保留空数组自述；
+    // 见 ComponentContextAlwaysSelfDescribesPortsSection）。
     apply_set(
         "input.retry_exposed",
         "false",
@@ -7685,6 +7686,58 @@ TEST(MaapiProjectionTest, PortsSectionShapeMatchesFacesWireContract)
     EXPECT_EQ(seen_ids.count("notify"), 1u);
 }
 
+// component 语境「文档自述」契约：引用闭包注入 pass 消费被引条目文档根
+// ports 自述口面——section 缺席即具名编译错（ReferenceDocumentMissing）。
+// 零暴露输入的条目也必须自述空口面（空数组），否则任何未配置暴露输入的
+// MaaPi 条目被图引用时整图编译被拒。standalone 语境行为不变（恒不投
+// 影）。
+TEST(MaapiProjectionTest, ComponentContextAlwaysSelfDescribesPortsSection)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakePiInputDomainMockCatalog();
+    AcceptedSettingsDto settings = MakePiInputDomainSettings();
+    // 零暴露输入——修复前 ports section 整节缺省。
+
+    auto document = ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0,
+        nullptr,
+        nullptr,
+        /*component_context=*/true);
+    {
+        auto validate =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                    << " message=" << validate.message;
+        auto doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj);
+        ASSERT_TRUE(doc_obj->contains(std::string_view("ports")))
+            << "component context must self-describe an (empty) root ports "
+               "section";
+        auto ports = (*doc_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports);
+        EXPECT_TRUE(ports->empty());
+    }
+
+    // standalone（同 settings 无标记）恒不投影——行为不变。
+    {
+        auto standalone = ProjectAuthoringDocument(
+            settings,
+            &catalog,
+            {},
+            0,
+            nullptr,
+            nullptr,
+            /*component_context=*/false);
+        auto standalone_obj = standalone.as_object();
+        ASSERT_TRUE(standalone_obj);
+        EXPECT_FALSE(standalone_obj->contains(std::string_view("ports")));
+    }
+}
+
 // 会话级钉：context 携带 pi.exposedInputs 重建会话 → 伴生 bool 行勾选态
 // + ports section 推导现算可见（状态持久于 acceptedProperties，纯投影无
 // 双写）。Apply 响应 document 同样携带 ports（严格 envelope 形状不变）。
@@ -7730,7 +7783,9 @@ TEST_F(MaapiAuthoringFixture, ExposedInputsFromContextDriveSessionDocument)
             "input");
     }
 
-    // Apply：取消勾选 → 响应 document 的 ports 无该条（同一文档投影通道）。
+    // Apply：取消勾选 → 响应 document 的 ports 无该条（同一文档投影通道；
+    // section 保留空数组——component 语境恒自述被调面，见
+    // ComponentContextAlwaysSelfDescribesPortsSection）。
     {
         auto change = ParseDasJson(
             "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
@@ -7746,7 +7801,12 @@ TEST_F(MaapiAuthoringFixture, ExposedInputsFromContextDriveSessionDocument)
         ASSERT_TRUE(result_obj->contains(std::string_view("document")));
         auto document = (*result_obj)[std::string_view("document")].as_object();
         ASSERT_TRUE(document);
-        EXPECT_FALSE(document->contains(std::string_view("ports")));
+        ASSERT_TRUE(document->contains(std::string_view("ports")));
+        {
+            auto ports = (*document)[std::string_view("ports")].as_array();
+            ASSERT_TRUE(ports);
+            EXPECT_TRUE(ports->empty());
+        }
         // acceptedProperties 持久化：键删除（不存 false）。
         ASSERT_TRUE(
             result_obj->contains(std::string_view("acceptedProperties")));

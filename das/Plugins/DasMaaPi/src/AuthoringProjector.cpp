@@ -3566,14 +3566,16 @@ namespace Das::Plugins::DasMaaPi
         (*obj)[std::string_view("fields")] = std::move(fields);
         (*obj)[std::string_view("fieldLayout")] = std::move(field_layout);
 
-        // 顶层 ports section 推导（仅 component 语境且勾选集非空 engaged）：
-        // 勾选字段 → {id=option key, type=九词映射端口类型, direction=input}。
-        // 纯投影——每次从 exposedInputs 现算，无双写零缓存；standalone 恒不
-        // 投影（伴生字段与 ports 同门）。types section：MaaPI 首期字段类型全
-        // 落九词（MapOptionPortType 只产九词），无自定义类型声明 → 不投影。
+        // 顶层 ports section 推导（component 语境恒投影——「文档自述」被调
+        // 面契约：引用闭包注入 pass 消费文档根 ports 自述口面，section 缺席
+        // 即具名编译错，零暴露输入也须自述空口面）：勾选字段 →
+        // {id=option key, type=九词映射端口类型, direction=input}。纯投影——
+        // 每次从 exposedInputs 现算，无双写零缓存；standalone 恒不投影（伴
+        // 生字段与 ports 同门）。types section：MaaPI 首期字段类型全落九词
+        // （MapOptionPortType 只产九词），无自定义类型声明 → 不投影。
         // 口 id 与 manifest 声明口重名时由 Core 编译合并侧去重（文档侧声明
         // 胜出 + DAS_LOG_WARN），本投影器不重复实现。
-        if (!exposed_ports.empty())
+        if (component_context)
         {
             yyjson::value ports(Array());
             for (const auto& [option_key, port_type] : exposed_ports)

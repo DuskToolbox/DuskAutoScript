@@ -3736,6 +3736,714 @@ TEST_F(
     ASSERT_EQ(session->GetDocument(nullptr, document_json.Put()), DAS_S_OK);
 }
 
+// ---------------------------------------------------------------------
+// 注入链回归：图任务引用 MaaPi form 条目的编译契约（实测缺陷锁定——
+// 修复前整图编译被「referenced entry 17 document carries no root ports
+// section」（ReferenceDocumentMissing）拒绝，execution_order 清空）。
+//
+// 边界场景形态（内联 fixture，与实测缺陷现场的文档逐字段同构）：父图
+// 五节点链 begin→launch→toast→maapi.run（n_2 绑 repositoryRef=17）+ 一条
+// 数据边；被引条目为 MaaPi form 条目（taskTypeGuid 69F20001、
+// graphDocument null、acceptedProperties 纯 form 值域——非图文档，faces
+// 预备扫描对其天然空表 fail-open）。两条用例各锁一半行为契约：
+//  - 绿色用例：条目补 adapter.interfacePath（唯一一处字段差异——无
+//    interfacePath 时 TryParseCatalog 恒 nullopt，MaaPi 编译 ok:false，
+//    注入链产物半段按 fail-closed 设计拒绝，编译产物物理不存在）→
+//    整图编译成功、executionOrder 非空、产物广播绑定携带 envelope。
+//  - 原样用例：条目保持无项目形态 → 编译按设计 fail-closed，但诊断必须
+//    命中真根因（编译产物缺失），而不是「无根 ports 节」（文档自述契约
+//    已由组件语境投影满足——零暴露输入的 form 条目也自述空口面）。
+// ---------------------------------------------------------------------
+
+// MaaPi form 条目最小形态：pi 零任务、无 adapter.interfacePath（「未配置
+// 项目」边界——编译产物不可构造），availability available。
+constexpr std::string_view kRealDataEntry17Json = R"json({
+  "entryId": 17,
+  "displayName": "Maa 执行",
+  "pluginGuid": "69F20000-0000-4000-8000-000000000001",
+  "taskTypeGuid": "69F20001-0000-4000-8000-000000000001",
+  "authoring": {
+    "revision": 2,
+    "lastChangeKind": "uiEvent",
+    "sourceFingerprint": ""
+  },
+  "acceptedProperties": {
+    "version": 1,
+    "adapter": {
+      "executionPolicy": {
+        "failFast": true
+      }
+    },
+    "pi": {
+      "globalOptions": [],
+      "resourceOptions": [],
+      "controllerOptions": [],
+      "tasks": [],
+      "orphanPaths": []
+    },
+    "ui": {
+      "values": {
+        "sectionExpand.project": true
+      }
+    }
+  },
+  "graphDocument": null,
+  "compiledArtifact": null,
+  "availability": {
+    "state": "available",
+    "reason": "",
+    "message": ""
+  }
+})json";
+
+// 父图任务（das.graph 类型）最小形态：单入口 begin 的五节点信号链 +
+// 一条数据边，n_2 = maapi.run 组件节点（settings.repositoryRef=17——闭包
+// pass 的绑定判据）。
+constexpr std::string_view kRealDataTask63Json = R"json({
+  "id": 63,
+  "taskGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3",
+  "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D",
+  "nextExecutionTime": -1,
+  "enabled": true,
+  "properties": {
+    "documentId": "",
+    "version": 23,
+    "fingerprint": "",
+    "nodes": [
+      {
+        "nodeId": "n_0",
+        "target": {
+          "targetKind": "componentRef",
+          "componentRef": {
+            "kind": "componentRef",
+            "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+          }
+        },
+        "settings": null,
+        "label": null
+      },
+      {
+        "nodeId": "n_1",
+        "target": {
+          "targetKind": "componentRef",
+          "componentRef": {
+            "kind": "componentRef",
+            "componentGuid": "95FD2FFA-88F2-4F85-A536-C708D25B641F",
+            "pluginGuid": ""
+          }
+        },
+        "settings": {
+          "exePath": "E:\\games\\HYPERGRYPH\\Endfield Game\\Endfield.exe",
+          "captureOutput": true
+        },
+        "label": null
+      },
+      {
+        "nodeId": "n_2",
+        "target": {
+          "targetKind": "componentRef",
+          "componentRef": {
+            "kind": "componentRef",
+            "componentGuid": "69F20008-0000-4000-8000-000000000001",
+            "pluginGuid": ""
+          }
+        },
+        "settings": {
+          "repositoryRef": 17
+        },
+        "label": null
+      },
+      {
+        "nodeId": "n_3",
+        "target": {
+          "targetKind": "componentRef",
+          "componentRef": {
+            "kind": "componentRef",
+            "componentGuid": "CFAF95AF-5ABC-422C-8CDB-0346F0526236",
+            "pluginGuid": ""
+          }
+        },
+        "settings": {
+          "error": false,
+          "warning": false
+        },
+        "label": null
+      },
+      {
+        "nodeId": "n_4",
+        "target": {
+          "targetKind": "componentRef",
+          "componentRef": {
+            "kind": "componentRef",
+            "componentGuid": "68F1000C-0000-4000-8000-00000000000C",
+            "pluginGuid": ""
+          }
+        },
+        "settings": {
+          "value": "测试"
+        },
+        "label": null
+      }
+    ],
+    "edges": [
+      {
+        "edgeId": "edge::n_0::signal_out::n_1::signal_in",
+        "sourceNodeId": "n_0",
+        "sourcePortId": "signal_out",
+        "targetNodeId": "n_1",
+        "targetPortId": "signal_in",
+        "edgeType": "signal"
+      },
+      {
+        "edgeId": "edge::n_1::signal_out::n_3::signal_in",
+        "sourceNodeId": "n_1",
+        "sourcePortId": "signal_out",
+        "targetNodeId": "n_3",
+        "targetPortId": "signal_in",
+        "edgeType": "signal"
+      },
+      {
+        "edgeId": "edge::n_3::signal_out::n_2::signal_in",
+        "sourceNodeId": "n_3",
+        "sourcePortId": "signal_out",
+        "targetNodeId": "n_2",
+        "targetPortId": "signal_in",
+        "edgeType": "signal"
+      },
+      {
+        "edgeId": "edge::n_4::value::n_3::message",
+        "sourceNodeId": "n_4",
+        "sourcePortId": "value",
+        "targetNodeId": "n_3",
+        "targetPortId": "message",
+        "edgeType": "data"
+      }
+    ],
+    "tags": [],
+    "viewData": {
+      "positions": {
+        "n_0": {
+          "x": 39.0,
+          "y": 166.0
+        },
+        "n_1": {
+          "x": 223.0,
+          "y": 184.0
+        },
+        "n_2": {
+          "x": 647.0,
+          "y": 112.0
+        },
+        "n_3": {
+          "x": 405.0,
+          "y": 142.0
+        },
+        "n_4": {
+          "x": 192.0,
+          "y": 303.0
+        }
+      }
+    }
+  },
+  "authoring": {
+    "revision": 23,
+    "lastChangeKind": "setValue",
+    "sourceFingerprint": ""
+  }
+})json";
+
+static std::optional<yyjson::value> ParseRealDataFixture(
+    std::string_view fixture_json)
+{
+    return Das::Utils::ParseYyjsonFromString(fixture_json);
+}
+
+// 从编译产物外壳（{"fingerprint","plan"}）取 plan 子树；解析失败返回
+// nullopt（executionInput 形态：对象直取，字符串先 parse——两条形态
+// ParseCompileExecutionInput 都接受）。
+static std::optional<yyjson::value> UnwrapCompiledPlanShell(
+    const yyjson::value& execution_input)
+{
+    yyjson::value shell = execution_input;
+    if (const auto text = execution_input.as_string())
+    {
+        auto parsed = Das::Utils::ParseYyjsonFromString(*text);
+        if (!parsed.has_value())
+        {
+            return std::nullopt;
+        }
+        shell = std::move(*parsed);
+    }
+    auto shell_obj = shell.as_object();
+    if (!shell_obj || !shell_obj->contains(std::string_view("plan")))
+    {
+        return std::nullopt;
+    }
+    return Das::Utils::CloneYyjsonValue((*shell_obj)[std::string_view("plan")]);
+}
+
+// 绿色场景：可编译形态（条目 17 补 fixture 项目路径，见上注释）→ 编译
+// 成功、executionOrder 非空、n_2 的 executionInput 广播绑定携带被引条目
+// 编译产物。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    RealDataTask63WithConfiguredEntry17CompilesInjectionChainGreen)
+{
+    // 部署真实三插件（DasGraphTask：das.graph 类型+begin/end+focus log；
+    // DasFlowControl：launch/value 组件；DasMaaPi：maapi.task 类型+run 组
+    // 件——整目录部署保 Maa* 运行库与插件同址）。
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+    DeployRealPluginArtifacts(
+        "libDasFlowControl.dll",
+        "DasFlowControl.json",
+        /*force_ipc=*/false,
+        "DasFlowControl");
+    {
+        namespace fs = std::filesystem;
+        const fs::path src =
+            IpcTestConfig::GetPluginDir() / DAS_PATH_LITERAL("DasMaaPi");
+        ASSERT_TRUE(fs::exists(src))
+            << "real DasMaaPi plugin dir not found at: "
+            << Das::Utils::PathToUtf8(src);
+        fs::copy(
+            src,
+            plugin_dir_ / DAS_PATH_LITERAL("DasMaaPi"),
+            fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+    }
+
+    auto entry17 = ParseRealDataFixture(kRealDataEntry17Json);
+    ASSERT_TRUE(entry17.has_value()) << "entry 17 fixture unparsable";
+    {
+        // 补 fixture PI 项目（形状照 DasMaaPi 既有 fixture
+        // interface_authoring.jsonc：controller/resource/默认勾选 task），
+        // 使 MaaPi 编译可产出 envelope（相对 kRealDataEntry17Json 的唯一
+        // 字段差异，见文件头注释）。
+        namespace fs = std::filesystem;
+        const fs::path project_dir = test_dir_ / DAS_PATH_LITERAL("pi_project");
+        std::error_code ec;
+        fs::create_directories(project_dir, ec);
+        ASSERT_FALSE(ec) << ec.message();
+        {
+            std::ofstream ofs(
+                project_dir / DAS_PATH_LITERAL("interface.json"),
+                std::ios::trunc);
+            ofs << R"json({
+                "interface_version": 2,
+                "name": "RealDataFixture",
+                "version": "1.0",
+                "controller": [{"name": "AdbCtl", "type": "Adb"}],
+                "resource": [{"name": "Official", "path": "resource"}],
+                "task": [{"name": "DefaultTask", "entry": "Run",
+                          "default_check": true}]
+            })json";
+        }
+        auto entry_obj = entry17->as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        auto accepted = Das::Utils::CloneYyjsonValue(
+            (*entry_obj)[std::string_view("acceptedProperties")]);
+        auto accepted_obj = accepted.as_object();
+        ASSERT_TRUE(accepted_obj.has_value());
+        auto adapter = Das::Utils::CloneYyjsonValue(
+            (*accepted_obj)[std::string_view("adapter")]);
+        auto adapter_obj = adapter.as_object();
+        ASSERT_TRUE(adapter_obj.has_value());
+        (*adapter_obj)[std::string_view("interfacePath")] = yyjson::value(
+            Das::Utils::PathToUtf8(
+                project_dir / DAS_PATH_LITERAL("interface.json")));
+        (*accepted_obj)[std::string_view("adapter")] = std::move(adapter);
+        (*entry_obj)[std::string_view("acceptedProperties")] =
+            std::move(accepted);
+    }
+    ASSERT_EQ(
+        settings_manager_->UpdateTaskRepositoryEntryJson("0", 17, *entry17),
+        DAS_S_OK);
+
+    auto task63 = ParseRealDataFixture(kRealDataTask63Json);
+    ASSERT_TRUE(task63.has_value()) << "task 63 fixture unparsable";
+    WriteSchedulerState(*settings_manager_, 64, {63}, {*task63});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    const auto          result = scheduler_->CompileTaskAuthoring(63, request);
+    auto                obj = result.as_object();
+    ASSERT_TRUE(obj.has_value())
+        << "task 63 compile failed: "
+        << Das::Utils::SerializeYyjsonValue(result).value_or("");
+    ASSERT_TRUE(obj->contains(std::string_view("compile")))
+        << Das::Utils::SerializeYyjsonValue(result).value_or("");
+    auto compile_obj = (*obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile_obj.has_value());
+    ASSERT_TRUE(compile_obj->contains(std::string_view("executionInput")))
+        << "task 63 compile carries no executionInput: "
+        << Das::Utils::SerializeYyjsonValue(result).value_or("");
+
+    const auto plan = UnwrapCompiledPlanShell(
+        (*compile_obj)[std::string_view("executionInput")]);
+    ASSERT_TRUE(plan.has_value());
+    auto plan_obj = plan->as_object();
+    ASSERT_TRUE(plan_obj.has_value());
+    ASSERT_TRUE(plan_obj->contains(std::string_view("executionOrder")))
+        << "compiled plan carries no executionOrder";
+    auto order = (*plan_obj)[std::string_view("executionOrder")].as_array();
+    ASSERT_TRUE(order.has_value());
+    EXPECT_FALSE(order->empty())
+        << "execution_order cleared — compile was rejected";
+
+    // 注入链产物广播绑定：$graph_input → n_2.executionInput，
+    // default_value=被引条目编译段 envelope 原文（MaaPi envelope 携 maapi
+    // 接口目录/控制器/资源快照）。
+    const bool has_broadcast_binding = [&]()
+    {
+        auto bindings =
+            (*plan_obj)[std::string_view("bindingPlan")].as_object();
+        if (!bindings || !bindings->contains(std::string_view("bindings")))
+        {
+            return false;
+        }
+        auto arr = (*bindings)[std::string_view("bindings")].as_array();
+        if (!arr.has_value())
+        {
+            return false;
+        }
+        for (const auto& binding : *arr)
+        {
+            auto b = binding.as_object();
+            if (!b
+                || (*b)[std::string_view("sourceNodeId")].as_string()
+                       != std::string_view("$graph_input")
+                || (*b)[std::string_view("targetNodeId")].as_string()
+                       != std::string_view("n_2")
+                || (*b)[std::string_view("targetPortId")].as_string()
+                       != std::string_view("executionInput"))
+            {
+                continue;
+            }
+            const auto envelope_text =
+                (*b)[std::string_view("defaultValue")].as_string();
+            if (!envelope_text.has_value())
+            {
+                return false;
+            }
+            // default_value 是被引条目 compile 段 envelope 原文（字符串形
+            // 态）——parse 后断言 maapi 执行内核段在场（接口目录/控制器/
+            // 资源快照的载体）。
+            auto envelope = Das::Utils::ParseYyjsonFromString(*envelope_text);
+            auto envelope_obj = envelope ? envelope->as_object() : std::nullopt;
+            return envelope_obj.has_value()
+                   && envelope_obj->contains(std::string_view("maapi"));
+        }
+        return false;
+    }();
+    const auto bindings_dump = [&]()
+    {
+        auto bindings =
+            (*plan_obj)[std::string_view("bindingPlan")].as_object();
+        if (!bindings || !bindings->contains(std::string_view("bindings")))
+        {
+            return std::string("<no bindingPlan.bindings>");
+        }
+        return Das::Utils::SerializeYyjsonValue(
+                   (*bindings)[std::string_view("bindings")])
+            .value_or(std::string("<unserializable>"));
+    }();
+    EXPECT_TRUE(has_broadcast_binding)
+        << "referenced entry compile artifact is not broadcast-bound to "
+           "n_2.executionInput; bindings: "
+        << bindings_dump;
+}
+
+// 原样场景（条目 17 fixture 零字段覆盖——保持未配置 PI 项目形态）：编译
+// 按 fail-closed 设计拒绝，但诊断必须命中真根因（被引条目编译产物缺
+// 失），而不是实测缺陷的「carries no root ports section」（文档自述契约
+// 已由组件语境投影满足）。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    RealDataTask63VerbatimEntry17FailsWithTrueRootCauseDiagnostic)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+    DeployRealPluginArtifacts(
+        "libDasFlowControl.dll",
+        "DasFlowControl.json",
+        /*force_ipc=*/false,
+        "DasFlowControl");
+    {
+        namespace fs = std::filesystem;
+        const fs::path src =
+            IpcTestConfig::GetPluginDir() / DAS_PATH_LITERAL("DasMaaPi");
+        ASSERT_TRUE(fs::exists(src))
+            << "real DasMaaPi plugin dir not found at: "
+            << Das::Utils::PathToUtf8(src);
+        fs::copy(
+            src,
+            plugin_dir_ / DAS_PATH_LITERAL("DasMaaPi"),
+            fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+    }
+
+    auto entry17 = ParseRealDataFixture(kRealDataEntry17Json);
+    ASSERT_TRUE(entry17.has_value()) << "entry 17 fixture unparsable";
+    ASSERT_EQ(
+        settings_manager_->UpdateTaskRepositoryEntryJson("0", 17, *entry17),
+        DAS_S_OK);
+    auto task63 = ParseRealDataFixture(kRealDataTask63Json);
+    ASSERT_TRUE(task63.has_value()) << "task 63 fixture unparsable";
+    WriteSchedulerState(*settings_manager_, 64, {63}, {*task63});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    const auto          result = scheduler_->CompileTaskAuthoring(63, request);
+    auto                obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE(obj->contains(std::string_view("compile")))
+        << "task 63 compile failed before the reference closure pass: "
+        << Das::Utils::SerializeYyjsonValue(result).value_or("");
+
+    const auto diagnostics_text = Das::Utils::SerializeYyjsonValue(
+                                      (*obj)[std::string_view("diagnostics")])
+                                      .value_or("");
+    EXPECT_NE(
+        diagnostics_text.find("compile result of referenced entry 17"),
+        std::string::npos)
+        << "expected the true root-cause diagnostic (referenced entry "
+           "compile product), got: "
+        << diagnostics_text;
+    EXPECT_EQ(
+        diagnostics_text.find("carries no root ports section"),
+        std::string::npos)
+        << "the ports self-description contract must already hold for the "
+           "referenced form entry: "
+        << diagnostics_text;
+
+    // 失败门：execution_order 清空（fail-closed）。
+    auto compile_obj = (*obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile_obj.has_value());
+    if (compile_obj->contains(std::string_view("executionInput")))
+    {
+        const auto plan = UnwrapCompiledPlanShell(
+            (*compile_obj)[std::string_view("executionInput")]);
+        if (plan.has_value())
+        {
+            auto plan_obj = plan->as_object();
+            ASSERT_TRUE(plan_obj.has_value());
+            if (plan_obj->contains(std::string_view("executionOrder")))
+            {
+                auto order =
+                    (*plan_obj)[std::string_view("executionOrder")].as_array();
+                if (order.has_value())
+                {
+                    EXPECT_TRUE(order->empty())
+                        << "compile with an unconfigurable referenced "
+                           "entry must fail closed";
+                }
+            }
+        }
+    }
+}
+
+// 图条目（GraphTask 类型，begin/end 带边界动态口）经 creator 通道 resolver
+// 干净开会话（编译闭包 pass 同款形状）→ GetDocument 根 ports section 自述
+// 边界口面：begin faces→direction=input、end faces→direction=output（投影
+// 与 DeriveBoundaryPorts 单一事实源）。context 自足性钉：干净会话不经编辑
+// 缓存，nodeFaces 全部经 context 键注入（条目图文档扫描——acceptedProperties
+// 即图文档）。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    GraphEntryCreatorResolverSessionSelfDescribesBoundaryPorts)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+    DeployRealPluginArtifacts(
+        "libDasFlowControl.dll",
+        "DasFlowControl.json",
+        /*force_ipc=*/false,
+        "DasFlowControl");
+
+    // 图条目（entry 7）：begin p1（string）/end q1（int）边界动态口——
+    // acceptedProperties 即图文档（图条目存储形状）。
+    {
+        yyjson::value entry(Das::Utils::MakeYyjsonObject());
+        (*entry.as_object())[std::string_view("entryId")] =
+            static_cast<int64_t>(7);
+        (*entry.as_object())[std::string_view("displayName")] =
+            "Resolver graph entry";
+        (*entry.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        (*entry.as_object())[std::string_view("taskTypeGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        {
+            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+            (*authoring.as_object())[std::string_view("revision")] = 5;
+            (*authoring.as_object())[std::string_view("lastChangeKind")] =
+                std::make_pair(
+                    std::string_view("setValue"),
+                    yyjson::copy_string);
+            (*authoring.as_object())[std::string_view("sourceFingerprint")] =
+                std::make_pair(
+                    std::string_view("resolver-seed"),
+                    yyjson::copy_string);
+            (*entry.as_object())[std::string_view("authoring")] =
+                std::move(authoring);
+        }
+        auto inner_properties = Das::Utils::ParseYyjsonFromString(R"json({
+            "documentId": "resolver-inner",
+            "version": 1,
+            "nodes": [
+                {
+                    "nodeId": "inner_begin",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {
+                        "boundaryPorts": [
+                            {"id": "p1", "type": "string"}
+                        ]
+                    }
+                },
+                {
+                    "nodeId": "inner_end",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D",
+                            "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D"
+                        }
+                    },
+                    "settings": {
+                        "boundaryPorts": [
+                            {"id": "q1", "type": "int"}
+                        ]
+                    }
+                }
+            ],
+            "edges": [],
+            "tags": []
+        })json");
+        ASSERT_TRUE(inner_properties.has_value());
+        (*entry.as_object())[std::string_view("acceptedProperties")] =
+            std::move(*inner_properties);
+        (*entry.as_object())[std::string_view("graphDocument")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        {
+            yyjson::value availability(Das::Utils::MakeYyjsonObject());
+            (*availability.as_object())[std::string_view("state")] =
+                "available";
+            (*entry.as_object())[std::string_view("availability")] =
+                std::move(availability);
+        }
+        ASSERT_EQ(
+            settings_manager_->UpdateTaskRepositoryEntryJson("0", 7, entry),
+            DAS_S_OK);
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // creator 通道入参（编译闭包 pass 同款形状）：条目绑定键在场，repo 装
+    // 配键（properties/revision/actionCatalog/nodeFaces）由后端从 store 现
+    // 读现算。
+    yyjson::value context(Das::Utils::MakeYyjsonObject());
+    (*context.as_object())[std::string_view("repositoryEntryId")] =
+        static_cast<std::int64_t>(7);
+    auto context_json = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+        Das::Utils::CloneYyjsonValue(context));
+
+    Das::DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+    const auto                                                  session_result =
+        plugin_manager_->GetTaskComponentFactoryManager()
+            .CreateAuthoringSession(
+                Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                    "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3"),
+                context_json.Get(),
+                session.Put());
+    ASSERT_EQ(session_result, DAS_S_OK);
+    ASSERT_NE(session.Get(), nullptr);
+
+    Das::DasPtr<Das::ExportInterface::IDasJson> document_json;
+    ASSERT_EQ(session->GetDocument(nullptr, document_json.Put()), DAS_S_OK);
+    // IDasJson → 文本 → yyjson（ToString 全文取回）。
+    yyjson::value document(Das::Utils::MakeYyjsonObject());
+    {
+        Das::DasPtr<IDasReadOnlyString> document_text;
+        ASSERT_EQ(document_json->ToString(0, document_text.Put()), DAS_S_OK);
+        ASSERT_TRUE(document_text);
+        const char* utf8 = nullptr;
+        ASSERT_EQ(document_text->GetUtf8(&utf8), DAS_S_OK);
+        ASSERT_NE(utf8, nullptr);
+        auto parsed = Das::Utils::ParseYyjsonFromString(utf8);
+        ASSERT_TRUE(parsed.has_value());
+        document = std::move(*parsed);
+    }
+    auto document_obj = document.as_object();
+    ASSERT_TRUE(document_obj.has_value());
+    ASSERT_TRUE(document_obj->contains(std::string_view("document")))
+        << "graph entry GetDocument carries no document envelope";
+    auto inner = (*document_obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(inner.has_value());
+    ASSERT_TRUE(inner->contains(std::string_view("ports")))
+        << "graph entry document carries no root ports section";
+    auto ports = (*inner)[std::string_view("ports")].as_array();
+    ASSERT_TRUE(ports.has_value());
+    ASSERT_EQ(ports->size(), 2u);
+    // begin faces→input、end faces→output（边界口对侧别由推导层裁定）。
+    auto first = (*ports)[0].as_object();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ((*first)[std::string_view("id")].as_string().value_or(""), "p1");
+    EXPECT_EQ(
+        (*first)[std::string_view("direction")].as_string().value_or(""),
+        "input");
+    EXPECT_EQ(
+        (*first)[std::string_view("type")].as_string().value_or(""),
+        "string");
+    auto second = (*ports)[1].as_object();
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ((*second)[std::string_view("id")].as_string().value_or(""), "q1");
+    EXPECT_EQ(
+        (*second)[std::string_view("direction")].as_string().value_or(""),
+        "output");
+    EXPECT_EQ(
+        (*second)[std::string_view("type")].as_string().value_or(""),
+        "int");
+}
+
 TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerRepositoryAuthoringApplyValidatesResultBeforePersisting)
