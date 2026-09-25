@@ -1039,16 +1039,14 @@ DasResult GraphRuntime::RunWithHost(
         return hr;
     }
 
-    // 带节点却无执行序的计划是编译期否决产物（无信号回路承载的数据环会
-    // 清空 execution_order）：放行会跑成「成功+零节点」，必须拒绝并把
-    // fatal 诊断透出到 last_error。
+    // 带节点却无执行序的计划是编译期否决产物（无信号回路承载的数据环、
+    // 引用闭包注入 pass 失败、组件解析失败等致命诊断都会清空
+    // execution_order）：放行会跑成「成功+零节点」，必须拒绝。诊断
+    // 全量透出到 last_error——运行期不按 kind 过滤，真根因由编译期
+    // 诊断陈述，每条以「[kind] message」形态拼接。
     if (plan.execution_order.empty() && !plan.node_snapshots.empty())
     {
         std::string fatal_messages;
-        const auto  unbacked_cycle_kind = std::to_string(
-            static_cast<int>(CompileDiagnosticKind::UnbackedDataCycle));
-        const auto cyclic_kind = std::to_string(
-            static_cast<int>(CompileDiagnosticKind::CyclicEdgeGraph));
         for (const auto& diagnostic : plan.diagnostics)
         {
             auto diagnostic_object = diagnostic.as_object();
@@ -1059,7 +1057,13 @@ DasResult GraphRuntime::RunWithHost(
             const auto kind = (*diagnostic_object)[std::string_view("kind")]
                                   .as_string()
                                   .value_or("");
-            if (kind != unbacked_cycle_kind && kind != cyclic_kind)
+            const auto message =
+                (*diagnostic_object)[std::string_view("message")]
+                    .as_string()
+                    .value_or("");
+            // 容错：缺 kind 或缺 message 的畸形条目不拼入（写侧契约
+            // 保证两者齐备，此分支只为防御非对象/缺字段的旧产物）。
+            if (kind.empty() || message.empty())
             {
                 continue;
             }
@@ -1067,9 +1071,10 @@ DasResult GraphRuntime::RunWithHost(
             {
                 fatal_messages += "; ";
             }
-            fatal_messages += (*diagnostic_object)[std::string_view("message")]
-                                  .as_string()
-                                  .value_or("");
+            fatal_messages += "[";
+            fatal_messages += kind;
+            fatal_messages += "] ";
+            fatal_messages += message;
         }
         SetError(
             DAS_E_FAIL,

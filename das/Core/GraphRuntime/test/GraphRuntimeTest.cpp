@@ -889,7 +889,8 @@ TEST(GraphRuntimeTest, RunWithHostEmptyGraph)
 
 // ===================================================================
 // 编译否决产物（带节点、无执行序、有数据回边）必须执行失败而非
-// 「成功+零节点」，且 fatal 诊断消息透出到 last_error。
+// 「成功+零节点」，且 fatal 诊断消息透出到 last_error——统一
+// 「[kind] message」形态，环类诊断不再特殊化。
 // ===================================================================
 TEST(GraphRuntimeTest, RunWithHostRejectedPlanFailsClosed)
 {
@@ -928,7 +929,44 @@ TEST(GraphRuntimeTest, RunWithHostRejectedPlanFailsClosed)
         std::string::npos);
     EXPECT_NE(
         rt.GetLastErrorMessage().find(
-            "Data cycle has no signal circuit to carry the loop"),
+            "[7] Data cycle has no signal circuit to carry the loop"),
+        std::string::npos);
+}
+
+// ===================================================================
+// 拒绝路径透出全部编译诊断：注入 pass 的 Reference* 族诊断（非环类
+// kind）也必须出现在 last_error——消息构造器不做环类过滤，真根因
+// （会话打开失败/条目解析失败等）直达用户。
+// ===================================================================
+TEST(GraphRuntimeTest, RunWithHostRejectedPlanCarriesReferenceDiagnostics)
+{
+    using namespace GraphRuntimeTestMock;
+
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_v1";
+    plan.node_snapshots.push_back(
+        MakeSnapshotWithPorts(NODE_A, {MakePortDef("out")}, COMP_A));
+
+    // ReferenceSessionFailed（kind=17）：注入 pass 失败清空
+    // execution_order 后 plan.diagnostics 携带的具名诊断。
+    auto diagnostic = Das::Utils::ParseYyjsonFromString(
+        R"({"kind":"17","node_id":")" + NODE_A
+        + R"(","message":"CreateAuthoringSession failed for entry 42"})");
+    ASSERT_TRUE(diagnostic.has_value());
+    plan.diagnostics.push_back(std::move(*diagnostic));
+
+    auto host = MockTaskComponentCreator::Make();
+
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
+    EXPECT_EQ(hr, DAS_E_FAIL);
+    const auto last_error = rt.GetLastErrorMessage();
+    EXPECT_NE(last_error.find("no executable order"), std::string::npos);
+    EXPECT_NE(
+        last_error.find("[17] CreateAuthoringSession failed for entry 42"),
         std::string::npos);
 }
 
