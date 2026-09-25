@@ -198,9 +198,11 @@ namespace
         {
         }
 
-        DasResult LoadPlugin(
+    protected:
+        auto InvokeBootstrapEntrypoint(
             const CSharpManifest&     manifest,
-            DasCSharpBootstrapArgsV1& bootstrap_args) override
+            DasCSharpBootstrapArgsV1& bootstrap_args)
+            -> DAS::Utils::Expected<DasResult> override
         {
             capture_.calls += 1;
             capture_.manifest_path = manifest.manifest_path;
@@ -218,7 +220,7 @@ namespace
 
             if (DAS::IsFailed(result_))
             {
-                return result_;
+                return DAS::Utils::MakeUnexpected(result_);
             }
 
             auto* package = new RoutingPluginPackage();

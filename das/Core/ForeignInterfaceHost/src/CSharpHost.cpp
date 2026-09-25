@@ -11,34 +11,83 @@
 #include <fstream>
 #include <iterator>
 #include <string>
-#include <tl/expected.hpp>
 #include <utility>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-namespace
+auto ICSharpRuntimeBackend::LoadPlugin(const CSharpManifest& manifest)
+    -> DAS::Utils::Expected<DasPtr<DAS::PluginInterface::IDasPluginPackage>>
 {
-    DasResult InvokeBackend(
-        ICSharpRuntimeBackend*    backend,
-        const CSharpManifest&     manifest,
-        DasCSharpBootstrapArgsV1& bootstrap_args)
+    if (manifest.entry_point.type_name.empty()
+        || manifest.entry_point.method_name.empty())
     {
-        if (backend == nullptr)
+        return DAS::Utils::MakeUnexpected(DAS_E_CSHARP_ENTRYPOINT_INVALID);
+    }
+
+    // string 存储必须是局部变量：bootstrap_args 只保留 c_str() 指针。
+    const auto manifest_path_storage =
+        DAS::Utils::PathToUtf8(manifest.manifest_path);
+    const auto plugin_root_storage =
+        DAS::Utils::PathToUtf8(manifest.package_root);
+    const auto plugin_binary_path_storage =
+        DAS::Utils::PathToUtf8(manifest.plugin_binary_path);
+
+    // 包所有权集中在此：任何失败路径由 DasPtr 析构自动 Release。
+    DasPtr<DAS::PluginInterface::IDasPluginPackage> package;
+    DasCSharpBootstrapArgsV1                        bootstrap_args{
+        .size = DAS_CSHARP_BOOTSTRAP_ARGS_V1_SIZE,
+        .abi_version = DAS_CSHARP_BOOTSTRAP_ABI_VERSION_V1,
+        .manifest_path = manifest_path_storage.c_str(),
+        .plugin_root = plugin_root_storage.c_str(),
+        .plugin_binary_path = plugin_binary_path_storage.c_str(),
+        .host_api = nullptr,
+        .pp_package = package.Put(),
+    };
+
+    const auto args_result = ValidateDasCSharpBootstrapArgsV1(&bootstrap_args);
+    if (DAS::IsFailed(args_result))
+    {
+        return DAS::Utils::MakeUnexpected(args_result);
+    }
+
+    try
+    {
+        const auto invoke_result =
+            InvokeBootstrapEntrypoint(manifest, bootstrap_args);
+        if (!invoke_result)
         {
-            return CSharpHost::BackendUnavailableError(
-                manifest.target_framework_family);
+            return DAS::Utils::MakeUnexpected(invoke_result.error());
         }
 
-        return backend->LoadPlugin(manifest, bootstrap_args);
+        if (DAS::IsFailed(invoke_result.value()))
+        {
+            DAS_CORE_LOG_ERROR(
+                "C# bootstrap entrypoint failed: result={}",
+                invoke_result.value());
+            return DAS::Utils::MakeUnexpected(DAS_E_CSHARP_PLUGIN_INIT_FAILED);
+        }
     }
-} // namespace
+    catch (...)
+    {
+        return DAS::Utils::MakeUnexpected(DAS_E_CSHARP_PLUGIN_INIT_FAILED);
+    }
+
+    if (!package)
+    {
+        return DAS::Utils::MakeUnexpected(DAS_E_CSHARP_PLUGIN_INIT_FAILED);
+    }
+
+    return std::move(package);
+}
 
 CSharpHost::CSharpHost()
 {
 #ifdef DAS_CSHARP_HOSTFXR_BACKEND
     backends_.modern_dotnet = std::make_unique<CSharpHostFxrBackend>();
 #endif
+#if defined(_WIN32) && defined(DAS_CSHARP_NETFX_BACKEND)
     backends_.netfx = std::make_unique<CSharpNetFxBackend>();
+#endif
 }
 
 CSharpHost::CSharpHost(CSharpRuntimeBackendSet backends)
@@ -52,7 +101,7 @@ auto CSharpHost::CreateForeignLanguageRuntime(
 {
     if (desc.language != ForeignInterfaceLanguage::CSharp)
     {
-        return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
+        return DAS::Utils::MakeUnexpected(DAS_E_INVALID_ARGUMENT);
     }
 
     return Das::MakeDasPtr<IForeignLanguageRuntime, CSharpHost>();
@@ -85,7 +134,7 @@ auto CSharpHost::LoadPlugin(const std::filesystem::path& manifest_path)
         DAS_CORE_LOG_ERROR(
             "Failed to open C# plugin manifest: {}",
             DAS::Utils::PathToUtf8(manifest_path));
-        return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
+        return DAS::Utils::MakeUnexpected(DAS_E_FILE_NOT_FOUND);
     }
 
     const std::string manifest_json(
@@ -95,31 +144,7 @@ auto CSharpHost::LoadPlugin(const std::filesystem::path& manifest_path)
     auto manifest = ParseCSharpManifest(manifest_path, manifest_json);
     if (!manifest)
     {
-        return tl::make_unexpected(manifest.error());
-    }
-
-    const auto manifest_path_storage =
-        DAS::Utils::PathToUtf8(manifest->manifest_path);
-    const auto plugin_root_storage =
-        DAS::Utils::PathToUtf8(manifest->package_root);
-    const auto plugin_binary_path_storage =
-        DAS::Utils::PathToUtf8(manifest->plugin_binary_path);
-
-    DasPtr<Das::PluginInterface::IDasPluginPackage> package;
-    DasCSharpBootstrapArgsV1                        bootstrap_args{
-        .size = DAS_CSHARP_BOOTSTRAP_ARGS_V1_SIZE,
-        .abi_version = DAS_CSHARP_BOOTSTRAP_ABI_VERSION_V1,
-        .manifest_path = manifest_path_storage.c_str(),
-        .plugin_root = plugin_root_storage.c_str(),
-        .plugin_binary_path = plugin_binary_path_storage.c_str(),
-        .host_api = nullptr,
-        .pp_package = package.Put(),
-    };
-
-    const auto args_result = ValidateDasCSharpBootstrapArgsV1(&bootstrap_args);
-    if (DAS::IsFailed(args_result))
-    {
-        return tl::make_unexpected(args_result);
+        return DAS::Utils::MakeUnexpected(manifest.error());
     }
 
     ICSharpRuntimeBackend* backend = nullptr;
@@ -132,26 +157,27 @@ auto CSharpHost::LoadPlugin(const std::filesystem::path& manifest_path)
         backend = backends_.netfx.get();
         break;
     default:
-        return tl::make_unexpected(DAS_E_CSHARP_UNSUPPORTED_TFM);
+        return DAS::Utils::MakeUnexpected(DAS_E_CSHARP_UNSUPPORTED_TFM);
     }
 
-    const auto backend_result =
-        InvokeBackend(backend, manifest.value(), bootstrap_args);
-    if (DAS::IsFailed(backend_result))
+    if (backend == nullptr)
     {
-        return tl::make_unexpected(backend_result);
+        return DAS::Utils::MakeUnexpected(
+            CSharpHost::BackendUnavailableError(
+                manifest->target_framework_family));
     }
 
+    auto package = backend->LoadPlugin(manifest.value());
     if (!package)
     {
-        return tl::make_unexpected(DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED);
+        return DAS::Utils::MakeUnexpected(package.error());
     }
 
     DasPtr<IDasBase> result;
-    const auto       qi_result = package.As(result);
+    const auto       qi_result = package.value().As(result);
     if (DAS::IsFailed(qi_result))
     {
-        return tl::make_unexpected(qi_result);
+        return DAS::Utils::MakeUnexpected(qi_result);
     }
 
     return result;

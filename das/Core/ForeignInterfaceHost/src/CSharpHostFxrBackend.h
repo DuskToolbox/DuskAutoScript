@@ -5,31 +5,32 @@
 
 #include "CSharpHost.h"
 
+#include <das/IDasBase.h>
+#include <das/Utils/Expected.h>
+
+#include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <string_view>
+#include <type_traits>
+#include <utility>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-class ICSharpHostFxrAssemblyResolver
-{
-public:
-    virtual ~ICSharpHostFxrAssemblyResolver() = default;
-
-    virtual int LoadAssemblyAndGetFunctionPointer(
-        const std::filesystem::path& assembly_path,
-        std::string_view             type_name,
-        std::string_view             method_name,
-        void**                       entrypoint) = 0;
-};
+// hostfxr load_assembly_and_get_function_pointer 落点的组件入口签名：
+// ComponentEntryPoint(void* args, int32_t sizeBytes)。
+using CSharpComponentEntrypointFn =
+    std::add_pointer_t<int DAS_STD_CALL(void* args, std::int32_t size_bytes)>;
 
 class ICSharpHostFxrRuntime
 {
 public:
     virtual ~ICSharpHostFxrRuntime() = default;
 
-    virtual int GetAssemblyResolver(
-        std::unique_ptr<ICSharpHostFxrAssemblyResolver>* resolver) = 0;
+    virtual auto LoadAssemblyAndGetFunctionPointer(
+        const std::filesystem::path& assembly_path,
+        std::string_view             type_name,
+        std::string_view             method_name) const
+        -> DAS::Utils::Expected<CSharpComponentEntrypointFn> = 0;
 };
 
 class ICSharpHostFxrRuntimeLoader
@@ -37,9 +38,9 @@ class ICSharpHostFxrRuntimeLoader
 public:
     virtual ~ICSharpHostFxrRuntimeLoader() = default;
 
-    virtual int InitializeForRuntimeConfig(
-        const std::filesystem::path&            runtime_config_path,
-        std::unique_ptr<ICSharpHostFxrRuntime>* runtime) = 0;
+    virtual auto InitializeForRuntimeConfig(
+        const std::filesystem::path& runtime_config_path) const
+        -> DAS::Utils::Expected<std::unique_ptr<ICSharpHostFxrRuntime>> = 0;
 };
 
 class CSharpHostFxrBackend final : public ICSharpRuntimeBackend
@@ -49,9 +50,11 @@ public:
     explicit CSharpHostFxrBackend(
         std::shared_ptr<ICSharpHostFxrRuntimeLoader> runtime_loader);
 
-    DasResult LoadPlugin(
+protected:
+    auto InvokeBootstrapEntrypoint(
         const CSharpManifest&     manifest,
-        DasCSharpBootstrapArgsV1& bootstrap_args) override;
+        DasCSharpBootstrapArgsV1& bootstrap_args)
+        -> DAS::Utils::Expected<DasResult> override;
 
 private:
     std::shared_ptr<ICSharpHostFxrRuntimeLoader> runtime_loader_;

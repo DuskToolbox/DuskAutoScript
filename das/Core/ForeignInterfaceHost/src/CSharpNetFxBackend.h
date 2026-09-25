@@ -5,9 +5,12 @@
 
 #include "CSharpHost.h"
 
+#include <das/Utils/Expected.h>
+
 #include <filesystem>
 #include <memory>
 #include <string_view>
+#include <utility>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -16,12 +19,13 @@ class ICSharpNetFxRuntimeHost
 public:
     virtual ~ICSharpNetFxRuntimeHost() = default;
 
-    virtual int ExecuteInDefaultAppDomain(
+    // 成功时返回值即托管入口（static int Method(string)）的返回码。
+    virtual auto ExecuteInDefaultAppDomain(
         const std::filesystem::path& assembly_path,
         std::string_view             type_name,
         std::string_view             method_name,
-        std::string_view             bootstrap_cookie,
-        unsigned long*               return_value) = 0;
+        std::string_view             bootstrap_cookie) const
+        -> DAS::Utils::Expected<DasResult> = 0;
 };
 
 class ICSharpNetFxRuntimeLoader
@@ -29,8 +33,8 @@ class ICSharpNetFxRuntimeLoader
 public:
     virtual ~ICSharpNetFxRuntimeLoader() = default;
 
-    virtual int StartRuntime(
-        std::unique_ptr<ICSharpNetFxRuntimeHost>* runtime_host) = 0;
+    virtual auto StartRuntime() const
+        -> DAS::Utils::Expected<std::unique_ptr<ICSharpNetFxRuntimeHost>> = 0;
 };
 
 class CSharpNetFxBackend final : public ICSharpRuntimeBackend
@@ -40,9 +44,11 @@ public:
     explicit CSharpNetFxBackend(
         std::shared_ptr<ICSharpNetFxRuntimeLoader> runtime_loader);
 
-    DasResult LoadPlugin(
+protected:
+    auto InvokeBootstrapEntrypoint(
         const CSharpManifest&     manifest,
-        DasCSharpBootstrapArgsV1& bootstrap_args) override;
+        DasCSharpBootstrapArgsV1& bootstrap_args)
+        -> DAS::Utils::Expected<DasResult> override;
 
 private:
     std::shared_ptr<ICSharpNetFxRuntimeLoader> runtime_loader_;

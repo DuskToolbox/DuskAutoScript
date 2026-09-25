@@ -217,35 +217,6 @@ namespace
         return g_fake_state->entrypoint_result;
     }
 
-    class FakeHostFxrAssemblyResolver final
-        : public ICSharpHostFxrAssemblyResolver
-    {
-    public:
-        explicit FakeHostFxrAssemblyResolver(FakeHostFxrState& state)
-            : state_{state}
-        {
-        }
-
-        int LoadAssemblyAndGetFunctionPointer(
-            const std::filesystem::path& assembly_path,
-            std::string_view             type_name,
-            std::string_view             method_name,
-            void**                       entrypoint) override
-        {
-            state_.assembly_path = assembly_path;
-            state_.type_name = std::string{type_name};
-            state_.method_name = std::string{method_name};
-            if (entrypoint != nullptr)
-            {
-                *entrypoint = state_.entrypoint;
-            }
-            return state_.entrypoint_lookup_result;
-        }
-
-    private:
-        FakeHostFxrState& state_;
-    };
-
     class FakeHostFxrRuntime final : public ICSharpHostFxrRuntime
     {
     public:
@@ -253,23 +224,32 @@ namespace
 
         ~FakeHostFxrRuntime() override { state_.close_calls += 1; }
 
-        int GetAssemblyResolver(
-            std::unique_ptr<ICSharpHostFxrAssemblyResolver>* resolver) override
+        auto LoadAssemblyAndGetFunctionPointer(
+            const std::filesystem::path& assembly_path,
+            std::string_view             type_name,
+            std::string_view             method_name) const
+            -> DAS::Utils::Expected<CSharpComponentEntrypointFn> override
         {
-            if (resolver == nullptr)
-            {
-                return -1;
-            }
-
             state_.delegate_calls += 1;
-            *resolver = nullptr;
+            state_.assembly_path = assembly_path;
+            state_.type_name = std::string{type_name};
+            state_.method_name = std::string{method_name};
+
             if (state_.delegate_result != 0)
             {
-                return state_.delegate_result;
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_HOSTFXR_INIT_FAILED);
             }
 
-            *resolver = std::make_unique<FakeHostFxrAssemblyResolver>(state_);
-            return 0;
+            if (state_.entrypoint == nullptr
+                || state_.entrypoint_lookup_result != 0)
+            {
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_ENTRYPOINT_MISSING);
+            }
+
+            return reinterpret_cast<CSharpComponentEntrypointFn>(
+                state_.entrypoint);
         }
 
     private:
@@ -286,25 +266,20 @@ namespace
             g_fake_state = &state_;
         }
 
-        int InitializeForRuntimeConfig(
-            const std::filesystem::path&            runtime_config_path,
-            std::unique_ptr<ICSharpHostFxrRuntime>* runtime) override
+        auto InitializeForRuntimeConfig(
+            const std::filesystem::path& runtime_config_path) const
+            -> DAS::Utils::Expected<
+                std::unique_ptr<ICSharpHostFxrRuntime>> override
         {
-            if (runtime == nullptr)
-            {
-                return -1;
-            }
-
             state_.init_calls += 1;
             state_.runtime_config = runtime_config_path;
-            *runtime = nullptr;
             if (state_.init_result < 0)
             {
-                return state_.init_result;
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_HOSTFXR_INIT_FAILED);
             }
 
-            *runtime = std::make_unique<FakeHostFxrRuntime>(state_);
-            return state_.init_result;
+            return std::make_unique<FakeHostFxrRuntime>(state_);
         }
 
     private:
@@ -324,24 +299,18 @@ namespace
 
         ~FakeNetFxRuntimeHost() override { state_.release_calls += 1; }
 
-        int ExecuteInDefaultAppDomain(
+        auto ExecuteInDefaultAppDomain(
             const std::filesystem::path& assembly_path,
             std::string_view             type_name,
             std::string_view             method_name,
-            std::string_view             bootstrap_cookie,
-            unsigned long*               return_value) override
+            std::string_view             bootstrap_cookie) const
+            -> DAS::Utils::Expected<DasResult> override
         {
-            if (return_value == nullptr)
-            {
-                return -1;
-            }
-
             state_.execute_calls += 1;
             state_.assembly_path = assembly_path;
             state_.type_name = std::string{type_name};
             state_.method_name = std::string{method_name};
             state_.bootstrap_cookie = std::string{bootstrap_cookie};
-            *return_value = state_.managed_return;
 
             if (state_.set_package)
             {
@@ -353,7 +322,13 @@ namespace
                 *bootstrap_args->pp_package = package;
             }
 
-            return state_.execute_result;
+            if (state_.execute_result < 0)
+            {
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_ENTRYPOINT_MISSING);
+            }
+
+            return static_cast<DasResult>(state_.managed_return);
         }
 
     private:
@@ -367,23 +342,17 @@ namespace
         {
         }
 
-        int StartRuntime(
-            std::unique_ptr<ICSharpNetFxRuntimeHost>* runtime_host) override
+        auto StartRuntime() const -> DAS::Utils::Expected<
+            std::unique_ptr<ICSharpNetFxRuntimeHost>> override
         {
-            if (runtime_host == nullptr)
-            {
-                return -1;
-            }
-
             state_.start_calls += 1;
-            *runtime_host = nullptr;
             if (state_.start_result < 0)
             {
-                return state_.start_result;
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_COM_CLR_INIT_FAILED);
             }
 
-            *runtime_host = std::make_unique<FakeNetFxRuntimeHost>(state_);
-            return state_.start_result;
+            return std::make_unique<FakeNetFxRuntimeHost>(state_);
         }
 
     private:
@@ -397,61 +366,13 @@ namespace
     }
 
     DasResult InvokeBackend(
-        CSharpHostFxrBackend& backend,
-        const CSharpManifest& manifest)
+        ICSharpRuntimeBackend& backend,
+        const CSharpManifest&  manifest)
     {
-        Das::PluginInterface::IDasPluginPackage* package = nullptr;
-        const auto                               manifest_path_storage =
-            Das::Utils::PathToUtf8(manifest.manifest_path);
-        const auto plugin_root_storage =
-            Das::Utils::PathToUtf8(manifest.package_root);
-        const auto plugin_binary_path_storage =
-            Das::Utils::PathToUtf8(manifest.plugin_binary_path);
-        DasCSharpBootstrapArgsV1 args{
-            .size = DAS_CSHARP_BOOTSTRAP_ARGS_V1_SIZE,
-            .abi_version = DAS_CSHARP_BOOTSTRAP_ABI_VERSION_V1,
-            .manifest_path = manifest_path_storage.c_str(),
-            .plugin_root = plugin_root_storage.c_str(),
-            .plugin_binary_path = plugin_binary_path_storage.c_str(),
-            .host_api = nullptr,
-            .pp_package = &package,
-        };
-
-        const auto result = backend.LoadPlugin(manifest, args);
-        if (package != nullptr)
-        {
-            package->Release();
-        }
-        return result;
-    }
-
-    DasResult InvokeBackend(
-        CSharpNetFxBackend&   backend,
-        const CSharpManifest& manifest)
-    {
-        Das::PluginInterface::IDasPluginPackage* package = nullptr;
-        const auto                               manifest_path_storage =
-            Das::Utils::PathToUtf8(manifest.manifest_path);
-        const auto plugin_root_storage =
-            Das::Utils::PathToUtf8(manifest.package_root);
-        const auto plugin_binary_path_storage =
-            Das::Utils::PathToUtf8(manifest.plugin_binary_path);
-        DasCSharpBootstrapArgsV1 args{
-            .size = DAS_CSHARP_BOOTSTRAP_ARGS_V1_SIZE,
-            .abi_version = DAS_CSHARP_BOOTSTRAP_ABI_VERSION_V1,
-            .manifest_path = manifest_path_storage.c_str(),
-            .plugin_root = plugin_root_storage.c_str(),
-            .plugin_binary_path = plugin_binary_path_storage.c_str(),
-            .host_api = nullptr,
-            .pp_package = &package,
-        };
-
-        const auto result = backend.LoadPlugin(manifest, args);
-        if (package != nullptr)
-        {
-            package->Release();
-        }
-        return result;
+        // 基类 LoadPlugin 组装 bootstrap args 并持有包所有权；
+        // 返回的 DasPtr 在此析构，自动平衡 Fake 入口写入的引用。
+        const auto result = backend.LoadPlugin(manifest);
+        return DAS::Utils::GetResult(result);
     }
 } // namespace
 
@@ -822,7 +743,7 @@ TEST(
         host_fxr_header.find("ICSharpHostFxrRuntimeLoader"),
         std::string::npos);
     EXPECT_NE(host_fxr_header.find("ICSharpHostFxrRuntime"), std::string::npos);
-    EXPECT_NE(
+    EXPECT_EQ(
         host_fxr_header.find("ICSharpHostFxrAssemblyResolver"),
         std::string::npos);
     EXPECT_NE(net_fx_header.find("ICSharpNetFxRuntimeHost"), std::string::npos);

@@ -2,6 +2,7 @@
 
 #include "CSharpHostFxrBackend.h"
 
+#include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/PathText.h>
 
@@ -26,14 +27,6 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 namespace
 {
-#ifdef _WIN32
-    using CSharpComponentEntrypointFn =
-        int(__stdcall*)(void* args, std::int32_t size_bytes);
-#else
-    using CSharpComponentEntrypointFn =
-        int (*)(void* args, std::int32_t size_bytes);
-#endif
-
     bool FileExists(const std::filesystem::path& path) noexcept
     {
         std::error_code ec;
@@ -44,20 +37,6 @@ namespace
     {
         return manifest.entry_point.type_name + ", "
                + Das::Utils::PathToUtf8(manifest.plugin_binary_path.stem());
-    }
-
-    void ReleaseFailedPackage(DasCSharpBootstrapArgsV1& bootstrap_args)
-    {
-        if (bootstrap_args.pp_package == nullptr)
-        {
-            return;
-        }
-
-        if (*bootstrap_args.pp_package != nullptr)
-        {
-            (*bootstrap_args.pp_package)->Release();
-            *bootstrap_args.pp_package = nullptr;
-        }
     }
 
 #ifdef DAS_CSHARP_HOSTFXR_BACKEND
@@ -203,45 +182,6 @@ namespace
 #endif
     }
 
-    class DynamicHostFxrAssemblyResolver final
-        : public ICSharpHostFxrAssemblyResolver
-    {
-    public:
-        explicit DynamicHostFxrAssemblyResolver(void* runtime_delegate)
-            : runtime_delegate_{runtime_delegate}
-        {
-        }
-
-        int LoadAssemblyAndGetFunctionPointer(
-            const std::filesystem::path& assembly_path,
-            std::string_view             type_name,
-            std::string_view             method_name,
-            void**                       entrypoint) override
-        {
-            auto load_assembly =
-                reinterpret_cast<load_assembly_and_get_function_pointer_fn>(
-                    runtime_delegate_);
-            if (load_assembly == nullptr)
-            {
-                return -1;
-            }
-
-            auto host_assembly_path = ToHostString(assembly_path);
-            auto host_type_name = ToHostString(type_name);
-            auto host_method_name = ToHostString(method_name);
-            return load_assembly(
-                host_assembly_path.c_str(),
-                host_type_name.c_str(),
-                host_method_name.c_str(),
-                nullptr,
-                nullptr,
-                entrypoint);
-        }
-
-    private:
-        void* runtime_delegate_ = nullptr;
-    };
-
     class DynamicHostFxrRuntime final : public ICSharpHostFxrRuntime
     {
     public:
@@ -266,29 +206,65 @@ namespace
             }
         }
 
-        int GetAssemblyResolver(
-            std::unique_ptr<ICSharpHostFxrAssemblyResolver>* resolver) override
+        auto LoadAssemblyAndGetFunctionPointer(
+            const std::filesystem::path& assembly_path,
+            std::string_view             type_name,
+            std::string_view             method_name) const
+            -> DAS::Utils::Expected<CSharpComponentEntrypointFn> override
         {
-            if (resolver == nullptr || get_runtime_delegate_ == nullptr
-                || handle_ == nullptr)
+            if (get_runtime_delegate_ == nullptr || handle_ == nullptr)
             {
-                return -1;
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_HOSTFXR_INIT_FAILED);
             }
 
-            *resolver = nullptr;
             void*      runtime_delegate = nullptr;
-            const auto result = get_runtime_delegate_(
+            const auto delegate_result = get_runtime_delegate_(
                 handle_,
                 hdt_load_assembly_and_get_function_pointer,
                 &runtime_delegate);
-            if (result != 0 || runtime_delegate == nullptr)
+            if (delegate_result != 0)
             {
-                return result;
+                DAS_CORE_LOG_ERROR(
+                    "hostfxr_get_runtime_delegate failed: result={}",
+                    delegate_result);
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_HOSTFXR_INIT_FAILED);
             }
 
-            *resolver = std::make_unique<DynamicHostFxrAssemblyResolver>(
-                runtime_delegate);
-            return result;
+            auto load_assembly =
+                reinterpret_cast<load_assembly_and_get_function_pointer_fn>(
+                    runtime_delegate);
+            if (load_assembly == nullptr)
+            {
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_HOSTFXR_INIT_FAILED);
+            }
+
+            auto       host_assembly_path = ToHostString(assembly_path);
+            auto       host_type_name = ToHostString(type_name);
+            auto       host_method_name = ToHostString(method_name);
+            void*      entrypoint = nullptr;
+            const auto load_result = load_assembly(
+                host_assembly_path.c_str(),
+                host_type_name.c_str(),
+                host_method_name.c_str(),
+                nullptr,
+                nullptr,
+                &entrypoint);
+            const auto entrypoint_fn =
+                reinterpret_cast<CSharpComponentEntrypointFn>(entrypoint);
+            if (load_result != 0 || entrypoint_fn == nullptr)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "hostfxr load_assembly_and_get_function_pointer failed: "
+                    "result={}",
+                    load_result);
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_ENTRYPOINT_MISSING);
+            }
+
+            return entrypoint_fn;
         }
 
     private:
@@ -333,16 +309,17 @@ namespace
                    && get_runtime_delegate_ != nullptr && close_ != nullptr;
         }
 
-        int InitializeForRuntimeConfig(
-            const std::filesystem::path&            runtime_config_path,
-            std::unique_ptr<ICSharpHostFxrRuntime>* runtime) override
+        auto InitializeForRuntimeConfig(
+            const std::filesystem::path& runtime_config_path) const
+            -> DAS::Utils::Expected<
+                std::unique_ptr<ICSharpHostFxrRuntime>> override
         {
-            if (runtime == nullptr || !IsReady())
+            if (!IsReady())
             {
-                return -1;
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_HOSTFXR_INIT_FAILED);
             }
 
-            *runtime = nullptr;
             auto           runtime_config = ToHostString(runtime_config_path);
             hostfxr_handle host_context = nullptr;
             const auto     result = initialize_for_runtime_config_(
@@ -351,18 +328,21 @@ namespace
                 &host_context);
             if (result < 0 || host_context == nullptr)
             {
+                DAS_CORE_LOG_ERROR(
+                    "hostfxr_initialize_for_runtime_config failed: result={}",
+                    result);
                 if (host_context != nullptr)
                 {
                     close_(host_context);
                 }
-                return result;
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_HOSTFXR_INIT_FAILED);
             }
 
-            *runtime = std::make_unique<DynamicHostFxrRuntime>(
+            return std::make_unique<DynamicHostFxrRuntime>(
                 host_context,
                 get_runtime_delegate_,
                 close_);
-            return result;
         }
 
     private:
@@ -408,91 +388,41 @@ CSharpHostFxrBackend::CSharpHostFxrBackend(
 {
 }
 
-DasResult CSharpHostFxrBackend::LoadPlugin(
+auto CSharpHostFxrBackend::InvokeBootstrapEntrypoint(
     const CSharpManifest&     manifest,
-    DasCSharpBootstrapArgsV1& bootstrap_args)
+    DasCSharpBootstrapArgsV1& bootstrap_args) -> DAS::Utils::Expected<DasResult>
 {
-    try
+    if (!manifest.runtime_config_path
+        || !FileExists(*manifest.runtime_config_path))
     {
-        if (!manifest.runtime_config_path
-            || !FileExists(*manifest.runtime_config_path))
-        {
-            return DAS_E_CSHARP_MISSING_RUNTIMECONFIG;
-        }
-
-        if (manifest.entry_point.type_name.empty()
-            || manifest.entry_point.method_name.empty())
-        {
-            return DAS_E_CSHARP_ENTRYPOINT_INVALID;
-        }
-
-        const auto bootstrap_result =
-            ValidateDasCSharpBootstrapArgsV1(&bootstrap_args);
-        if (DAS::IsFailed(bootstrap_result))
-        {
-            return bootstrap_result;
-        }
-
-        if (runtime_loader_ == nullptr)
-        {
-            return DAS_E_CSHARP_HOSTFXR_INIT_FAILED;
-        }
-
-        *bootstrap_args.pp_package = nullptr;
-
-        std::unique_ptr<ICSharpHostFxrRuntime> runtime;
-        const auto init_result = runtime_loader_->InitializeForRuntimeConfig(
-            *manifest.runtime_config_path,
-            &runtime);
-        if (init_result < 0 || runtime == nullptr)
-        {
-            return DAS_E_CSHARP_HOSTFXR_INIT_FAILED;
-        }
-
-        std::unique_ptr<ICSharpHostFxrAssemblyResolver> assembly_resolver;
-        const auto                                      delegate_result =
-            runtime->GetAssemblyResolver(&assembly_resolver);
-        if (delegate_result != 0 || assembly_resolver == nullptr)
-        {
-            return DAS_E_CSHARP_HOSTFXR_INIT_FAILED;
-        }
-
-        void*      entrypoint = nullptr;
-        const auto type_name = BuildAssemblyQualifiedTypeName(manifest);
-        const auto entrypoint_result =
-            assembly_resolver->LoadAssemblyAndGetFunctionPointer(
-                manifest.plugin_binary_path,
-                type_name,
-                manifest.entry_point.method_name,
-                &entrypoint);
-        if (entrypoint_result != 0 || entrypoint == nullptr)
-        {
-            return DAS_E_CSHARP_ENTRYPOINT_MISSING;
-        }
-
-        const auto component_entrypoint =
-            reinterpret_cast<CSharpComponentEntrypointFn>(entrypoint);
-        const auto plugin_result = static_cast<DasResult>(component_entrypoint(
-            &bootstrap_args,
-            static_cast<std::int32_t>(sizeof(DasCSharpBootstrapArgsV1))));
-        if (DAS::IsFailed(plugin_result))
-        {
-            ReleaseFailedPackage(bootstrap_args);
-            return DAS_E_CSHARP_PLUGIN_INIT_FAILED;
-        }
-
-        if (*bootstrap_args.pp_package == nullptr)
-        {
-            return DAS_E_CSHARP_PLUGIN_INIT_FAILED;
-        }
-
-        return DAS_S_OK;
+        return DAS::Utils::MakeUnexpected(DAS_E_CSHARP_MISSING_RUNTIMECONFIG);
     }
-    catch (...)
+
+    if (runtime_loader_ == nullptr)
     {
-        ReleaseFailedPackage(bootstrap_args);
-        return DAS_E_CSHARP_PLUGIN_INIT_FAILED;
+        return DAS::Utils::MakeUnexpected(DAS_E_CSHARP_HOSTFXR_INIT_FAILED);
     }
+
+    auto runtime = runtime_loader_->InitializeForRuntimeConfig(
+        *manifest.runtime_config_path);
+    if (!runtime)
+    {
+        return DAS::Utils::MakeUnexpected(runtime.error());
+    }
+
+    const auto type_name = BuildAssemblyQualifiedTypeName(manifest);
+    auto       entrypoint = runtime.value()->LoadAssemblyAndGetFunctionPointer(
+        manifest.plugin_binary_path,
+        type_name,
+        manifest.entry_point.method_name);
+    if (!entrypoint)
+    {
+        return DAS::Utils::MakeUnexpected(entrypoint.error());
+    }
+
+    return static_cast<DasResult>(entrypoint.value()(
+        &bootstrap_args,
+        static_cast<std::int32_t>(sizeof(DasCSharpBootstrapArgsV1))));
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

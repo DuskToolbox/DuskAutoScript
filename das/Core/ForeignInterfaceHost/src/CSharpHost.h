@@ -17,9 +17,16 @@ class ICSharpRuntimeBackend
 public:
     virtual ~ICSharpRuntimeBackend() = default;
 
-    virtual DasResult LoadPlugin(
+    // 模板方法：固定公共引导流程（入口点校验、bootstrap args 组装与
+    // 校验、托管失败映射、包所有权），派生类只实现托管入口调用差异。
+    auto LoadPlugin(const CSharpManifest& manifest) -> DAS::Utils::Expected<
+        DasPtr<DAS::PluginInterface::IDasPluginPackage>>;
+
+protected:
+    virtual auto InvokeBootstrapEntrypoint(
         const CSharpManifest&     manifest,
-        DasCSharpBootstrapArgsV1& bootstrap_args) = 0;
+        DasCSharpBootstrapArgsV1& bootstrap_args)
+        -> DAS::Utils::Expected<DasResult> = 0;
 };
 
 struct CSharpRuntimeBackendSet

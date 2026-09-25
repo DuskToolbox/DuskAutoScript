@@ -2,6 +2,7 @@
 
 #include "CSharpNetFxBackend.h"
 
+#include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 
 #include <cstdint>
@@ -18,20 +19,6 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 namespace
 {
-    void ReleaseFailedPackage(DasCSharpBootstrapArgsV1& bootstrap_args)
-    {
-        if (bootstrap_args.pp_package == nullptr)
-        {
-            return;
-        }
-
-        if (*bootstrap_args.pp_package != nullptr)
-        {
-            (*bootstrap_args.pp_package)->Release();
-            *bootstrap_args.pp_package = nullptr;
-        }
-    }
-
     std::string BuildBootstrapCookie(DasCSharpBootstrapArgsV1& bootstrap_args)
     {
         return std::to_string(
@@ -50,58 +37,6 @@ namespace
         return std::wstring{value.begin(), value.end()};
     }
 
-    class RuntimeHostPtr
-    {
-    public:
-        RuntimeHostPtr() = default;
-        explicit RuntimeHostPtr(ICLRRuntimeHost* host) : host_{host} {}
-
-        RuntimeHostPtr(const RuntimeHostPtr&) = delete;
-        RuntimeHostPtr& operator=(const RuntimeHostPtr&) = delete;
-
-        RuntimeHostPtr(RuntimeHostPtr&& other) noexcept
-            : host_{std::exchange(other.host_, nullptr)}
-        {
-        }
-
-        RuntimeHostPtr& operator=(RuntimeHostPtr&& other) noexcept
-        {
-            if (this != &other)
-            {
-                Reset();
-                host_ = std::exchange(other.host_, nullptr);
-            }
-            return *this;
-        }
-
-        ~RuntimeHostPtr() { Reset(); }
-
-        [[nodiscard]]
-        ICLRRuntimeHost* Get() const noexcept
-        {
-            return host_;
-        }
-
-        ICLRRuntimeHost* Detach() noexcept
-        {
-            return std::exchange(host_, nullptr);
-        }
-
-        void Reset() noexcept
-        {
-            if (host_ == nullptr)
-            {
-                return;
-            }
-
-            host_->Release();
-            host_ = nullptr;
-        }
-
-    private:
-        ICLRRuntimeHost* host_ = nullptr;
-    };
-
     class DynamicNetFxRuntimeSession final : public ICSharpNetFxRuntimeHost
     {
     public:
@@ -110,16 +45,17 @@ namespace
         {
         }
 
-        int ExecuteInDefaultAppDomain(
+        auto ExecuteInDefaultAppDomain(
             const std::filesystem::path& assembly_path,
             std::string_view             type_name,
             std::string_view             method_name,
-            std::string_view             bootstrap_cookie,
-            unsigned long*               return_value) override
+            std::string_view             bootstrap_cookie) const
+            -> DAS::Utils::Expected<DasResult> override
         {
-            if (runtime_host_ == nullptr || return_value == nullptr)
+            if (!runtime_host_)
             {
-                return -1;
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_COM_CLR_INIT_FAILED);
             }
 
             const auto wide_assembly_path = ToWide(assembly_path);
@@ -133,12 +69,22 @@ namespace
                 wide_method_name.c_str(),
                 wide_bootstrap_cookie.c_str(),
                 &managed_return);
-            *return_value = managed_return;
-            return static_cast<int>(hr);
+            if (FAILED(hr))
+            {
+                DAS_CORE_LOG_ERROR(
+                    "ICLRRuntimeHost::ExecuteInDefaultAppDomain failed: "
+                    "hr={}",
+                    static_cast<long>(hr));
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_ENTRYPOINT_MISSING);
+            }
+
+            return static_cast<DasResult>(managed_return);
         }
 
     private:
-        ICLRRuntimeHost* runtime_host_ = nullptr;
+        // 拷贝构造语义自动 AddRef：会话自持引用，与 loader 生命周期解耦。
+        Das::DasPtr<ICLRRuntimeHost> runtime_host_;
     };
 
     class DynamicNetFxRuntimeLoader final : public ICSharpNetFxRuntimeLoader
@@ -153,20 +99,13 @@ namespace
             }
         }
 
-        int StartRuntime(
-            std::unique_ptr<ICSharpNetFxRuntimeHost>* runtime_host) override
+        auto StartRuntime() const -> DAS::Utils::Expected<
+            std::unique_ptr<ICSharpNetFxRuntimeHost>> override
         {
-            if (runtime_host == nullptr)
-            {
-                return -1;
-            }
-
-            *runtime_host = nullptr;
             if (runtime_host_ != nullptr)
             {
-                *runtime_host =
-                    std::make_unique<DynamicNetFxRuntimeSession>(runtime_host_);
-                return 0;
+                return std::make_unique<DynamicNetFxRuntimeSession>(
+                    runtime_host_);
             }
 
             // 非弃用宿主路径：CLRCreateInstance → GetRuntime → GetInterface，
@@ -180,7 +119,11 @@ namespace
                 meta_host.PutVoid());
             if (FAILED(hr) || !meta_host)
             {
-                return static_cast<int>(hr);
+                DAS_CORE_LOG_ERROR(
+                    "CLRCreateInstance failed: hr={}",
+                    static_cast<long>(hr));
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_COM_CLR_INIT_FAILED);
             }
 
             Das::DasPtr<ICLRRuntimeInfo> runtime_info;
@@ -190,7 +133,11 @@ namespace
                 runtime_info.PutVoid());
             if (FAILED(hr) || !runtime_info)
             {
-                return static_cast<int>(hr);
+                DAS_CORE_LOG_ERROR(
+                    "ICLRMetaHost::GetRuntime failed: hr={}",
+                    static_cast<long>(hr));
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_COM_CLR_INIT_FAILED);
             }
 
             hr = runtime_info->SetDefaultStartupFlags(
@@ -198,34 +145,46 @@ namespace
                 nullptr);
             if (FAILED(hr))
             {
-                return static_cast<int>(hr);
+                DAS_CORE_LOG_ERROR(
+                    "ICLRRuntimeInfo::SetDefaultStartupFlags failed: hr={}",
+                    static_cast<long>(hr));
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_COM_CLR_INIT_FAILED);
             }
 
-            ICLRRuntimeHost* raw_host = nullptr;
+            // DasOutPtr 直接绑定成员槽位：GetInterface 写入、Start 失败
+            // 自动 Release，成功后 Keep() 交还 loader 成员持有。
+            Das::DasOutPtr<ICLRRuntimeHost> host_out{&runtime_host_};
             hr = runtime_info->GetInterface(
                 CLSID_CLRRuntimeHost,
                 IID_ICLRRuntimeHost,
-                reinterpret_cast<LPVOID*>(&raw_host));
-            if (FAILED(hr) || raw_host == nullptr)
+                reinterpret_cast<LPVOID*>(host_out.Put()));
+            if (FAILED(hr) || runtime_host_ == nullptr)
             {
-                return static_cast<int>(hr);
+                DAS_CORE_LOG_ERROR(
+                    "ICLRRuntimeInfo::GetInterface failed: hr={}",
+                    static_cast<long>(hr));
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_COM_CLR_INIT_FAILED);
             }
 
-            RuntimeHostPtr host{raw_host};
-            hr = host.Get()->Start();
+            hr = runtime_host_->Start();
             if (FAILED(hr))
             {
-                return static_cast<int>(hr);
+                DAS_CORE_LOG_ERROR(
+                    "ICLRRuntimeHost::Start failed: hr={}",
+                    static_cast<long>(hr));
+                return DAS::Utils::MakeUnexpected(
+                    DAS_E_CSHARP_COM_CLR_INIT_FAILED);
             }
 
-            runtime_host_ = host.Detach();
-            *runtime_host =
-                std::make_unique<DynamicNetFxRuntimeSession>(runtime_host_);
-            return 0;
+            host_out.Keep();
+            return std::make_unique<DynamicNetFxRuntimeSession>(runtime_host_);
         }
 
     private:
-        ICLRRuntimeHost* runtime_host_ = nullptr;
+        // StartRuntime 为 const：惰性填充的运行时缓存属逻辑 const，可变。
+        mutable ICLRRuntimeHost* runtime_host_ = nullptr;
     };
 
     std::shared_ptr<ICSharpNetFxRuntimeLoader> LoadDefaultRuntimeLoader()
@@ -251,76 +210,29 @@ CSharpNetFxBackend::CSharpNetFxBackend(
 {
 }
 
-DasResult CSharpNetFxBackend::LoadPlugin(
+auto CSharpNetFxBackend::InvokeBootstrapEntrypoint(
     const CSharpManifest&     manifest,
-    DasCSharpBootstrapArgsV1& bootstrap_args)
+    DasCSharpBootstrapArgsV1& bootstrap_args) -> DAS::Utils::Expected<DasResult>
 {
-#ifndef _WIN32
-    (void)manifest;
-    (void)bootstrap_args;
-    return DAS_E_CSHARP_NETFX_UNSUPPORTED_PLATFORM;
-#else
-    try
+    if (runtime_loader_ == nullptr)
     {
-        if (manifest.entry_point.type_name.empty()
-            || manifest.entry_point.method_name.empty())
-        {
-            return DAS_E_CSHARP_ENTRYPOINT_INVALID;
-        }
-
-        const auto bootstrap_result =
-            ValidateDasCSharpBootstrapArgsV1(&bootstrap_args);
-        if (DAS::IsFailed(bootstrap_result))
-        {
-            return bootstrap_result;
-        }
-
-        if (runtime_loader_ == nullptr)
-        {
-            return DAS_E_CSHARP_COM_CLR_INIT_FAILED;
-        }
-
-        *bootstrap_args.pp_package = nullptr;
-
-        std::unique_ptr<ICSharpNetFxRuntimeHost> runtime_host;
-        const auto start_result = runtime_loader_->StartRuntime(&runtime_host);
-        if (start_result < 0 || runtime_host == nullptr)
-        {
-            return DAS_E_CSHARP_COM_CLR_INIT_FAILED;
-        }
-
-        unsigned long managed_return = 0;
-        const auto    bootstrap_cookie = BuildBootstrapCookie(bootstrap_args);
-        const auto entrypoint_result = runtime_host->ExecuteInDefaultAppDomain(
-            manifest.plugin_binary_path,
-            manifest.entry_point.type_name,
-            manifest.entry_point.method_name,
-            bootstrap_cookie,
-            &managed_return);
-        if (entrypoint_result < 0)
-        {
-            return DAS_E_CSHARP_ENTRYPOINT_MISSING;
-        }
-
-        if (DAS::IsFailed(static_cast<DasResult>(managed_return)))
-        {
-            ReleaseFailedPackage(bootstrap_args);
-            return DAS_E_CSHARP_PLUGIN_INIT_FAILED;
-        }
-
-        if (*bootstrap_args.pp_package == nullptr)
-        {
-            return DAS_E_CSHARP_PLUGIN_INIT_FAILED;
-        }
-
-        return DAS_S_OK;
+        return DAS::Utils::MakeUnexpected(
+            CSharpHost::BackendUnavailableError(
+                CSharpTargetFrameworkFamily::NetFx));
     }
-    catch (...)
+
+    auto runtime_host = runtime_loader_->StartRuntime();
+    if (!runtime_host)
     {
-        ReleaseFailedPackage(bootstrap_args);
-        return DAS_E_CSHARP_PLUGIN_INIT_FAILED;
+        return DAS::Utils::MakeUnexpected(runtime_host.error());
     }
-#endif
+
+    const auto bootstrap_cookie = BuildBootstrapCookie(bootstrap_args);
+    return runtime_host.value()->ExecuteInDefaultAppDomain(
+        manifest.plugin_binary_path,
+        manifest.entry_point.type_name,
+        manifest.entry_point.method_name,
+        bootstrap_cookie);
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
