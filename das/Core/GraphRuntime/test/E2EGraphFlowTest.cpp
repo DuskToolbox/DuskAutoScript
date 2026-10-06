@@ -2999,6 +2999,424 @@ TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
 }
 
 // ===========================================================================
+// 执行时编译 E2E：绑条目节点的产物投递通道=GraphRuntime 在节点执行期间经
+// creator 现编——计数器在 Run 开始前快照、Run 结束后增量 > 0（时点取证，
+// 与编译期注入 pass 的调用区分）；执行期 context 携 repositoryEntryId 与
+// 闭包栈（顶层图空栈+本条目）；组件 Do 照旧从 executionInput 键读产物。
+// ===========================================================================
+namespace
+{
+    // 执行时编译探针：creator 收到的调用计数与 context 原文（按调用次序）。
+    struct ExecutionTimeProbeCounters
+    {
+        std::atomic<int>         session_calls{0};
+        std::atomic<int>         compile_calls{0};
+        std::vector<std::string> contexts;
+    };
+
+    // 计数会话替身：Compile 递增计数后回固定产物。
+    class ExecutionTimeProbeSession final
+        : public Das::PluginInterface::IDasTaskAuthoringSession
+    {
+    public:
+        ExecutionTimeProbeSession(
+            std::shared_ptr<ExecutionTimeProbeCounters> counters,
+            std::string                                 compile_json)
+            : counters_(std::move(counters)),
+              compile_json_(std::move(compile_json))
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid
+                == DasIidOf<Das::PluginInterface::IDasTaskAuthoringSession>())
+            {
+                *pp_out = static_cast<
+                    Das::PluginInterface::IDasTaskAuthoringSession*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult GetGuid(DasGuid* p_out_guid) override
+        {
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{REF_CHAIN_GRAPH_TASK_GUID});
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "ExecutionTimeProbeSession",
+                pp_out_name);
+        }
+
+        DasResult GetDocument(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_document_json) override
+        {
+            if (pp_out_document_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_document_json = new Das::Core::Utils::IDasJsonImpl(
+                R"({"document":{"viewKind":"graph","ports":[]},"diagnostics":[]})");
+            (*pp_out_document_json)->AddRef();
+            return DAS_S_OK;
+        }
+
+        DasResult ApplyChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult Compile(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            ++counters_->compile_calls;
+            *pp_out_result_json =
+                new Das::Core::Utils::IDasJsonImpl(compile_json_.c_str());
+            (*pp_out_result_json)->AddRef();
+            return DAS_S_OK;
+        }
+
+    private:
+        std::shared_ptr<ExecutionTimeProbeCounters> counters_;
+        std::string                                 compile_json_;
+        std::atomic<uint32_t>                       ref_count_{0};
+    };
+
+    // 探针 creator：CreateTaskComponent 造记录组件，
+    // CreateAuthoringSession 递增计数并记录 context 原文。
+    class ExecutionTimeProbeHost final
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
+              ExecutionTimeProbeHost>
+    {
+    public:
+        ExecutionTimeProbeHost(
+            std::shared_ptr<ReferenceChainState>        state,
+            std::shared_ptr<ExecutionTimeProbeCounters> counters,
+            std::string                                 compile_json)
+            : state_(std::move(state)), counters_(std::move(counters)),
+              compile_json_(std::move(compile_json))
+        {
+        }
+
+        DasResult CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_component = nullptr;
+            auto* component =
+                new ExecutionInputRecorderComponent(state_, component_guid);
+            component->AddRef();
+            *pp_out_component = component;
+            return DAS_S_OK;
+        }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                                   task_guid,
+            Das::ExportInterface::IDasJson*                  p_context_json,
+            Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+            override
+        {
+            std::ignore = task_guid;
+            if (pp_out_session == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_session = nullptr;
+            ++counters_->session_calls;
+            counters_->contexts.push_back(RefChainJsonText(p_context_json));
+            auto* session =
+                new ExecutionTimeProbeSession(counters_, compile_json_);
+            session->AddRef();
+            *pp_out_session = session;
+            return DAS_S_OK;
+        }
+
+    private:
+        std::shared_ptr<ReferenceChainState>        state_;
+        std::shared_ptr<ExecutionTimeProbeCounters> counters_;
+        std::string                                 compile_json_;
+    };
+} // namespace
+
+TEST_F(E2EGraphFlowTest, ExecutionTimeReferenceCompileReachesComponentPort)
+{
+    const auto state = std::make_shared<ReferenceChainState>();
+    const auto counters = std::make_shared<ExecutionTimeProbeCounters>();
+
+    // 被引条目 Compile 产物：真实 {"fingerprint","plan"} shell（单节点子计
+    // 划）——编译期注入与执行期现编共用同一固定产物（内容确定性一致）。
+    std::string child_shell_text;
+    {
+        CompiledGraphPlanDto child_plan;
+        child_plan.source_fingerprint = "fp_execution_time_child";
+        CompiledNodeSnapshotDto child_node;
+        child_node.node_id = "child_node";
+        child_node.component_guid = std::string{REF_CHAIN_GRAPH_TASK_GUID};
+        child_plan.node_snapshots.push_back(std::move(child_node));
+        child_plan.execution_order = {"child_node"};
+        child_shell_text =
+            Das::Utils::SerializeYyjsonValue(
+                BuildCompiledPlanShell(yyjson::object(child_plan)))
+                .value_or("");
+        ASSERT_FALSE(child_shell_text.empty());
+    }
+    std::string referenced_compile_json;
+    {
+        yyjson::value compile_response(Das::Utils::MakeYyjsonObject());
+        auto          response_obj = compile_response.as_object();
+        yyjson::value compile_section(Das::Utils::MakeYyjsonObject());
+        (*compile_section.as_object())[std::string_view("executionInput")] =
+            yyjson::value(child_shell_text);
+        (*response_obj)[std::string_view("compile")] =
+            std::move(compile_section);
+        (*response_obj)[std::string_view("diagnostics")] =
+            Das::Utils::MakeYyjsonArray();
+        referenced_compile_json =
+            Das::Utils::SerializeYyjsonValue(
+                Das::Utils::CloneYyjsonValue(compile_response))
+                .value_or("");
+        ASSERT_FALSE(referenced_compile_json.empty());
+    }
+
+    auto creator =
+        ExecutionTimeProbeHost::Make(state, counters, referenced_compile_json);
+
+    // 会话 context：actionCatalog 声明 GraphTask 组件的 taskRepositoryRef
+    // 配置字段（绑条目判定的数据源）。
+    const std::string catalog =
+        std::string(R"([{"actionId":")")
+        + std::string{REF_CHAIN_GRAPH_TASK_GUID}
+        + R"(","ports":[{"portId":"executionInput","portType":"object","direction":"input"}],)"
+          R"("config":[{"name":"repositoryRef","type":"taskRepositoryRef","taskGuid":")"
+        + std::string{REF_CHAIN_GRAPH_TASK_GUID} + R"("}]}])";
+    const std::string context =
+        std::string(R"({"actionCatalog":)") + catalog + "}";
+
+    GraphAuthoringSessionState* session_state = nullptr;
+    {
+        auto ctx = RefChainMakeText(context);
+        ASSERT_EQ(
+            CreateGraphAuthoringSession(
+                creator.Get(),
+                ctx.Get(),
+                &session_state),
+            DAS_S_OK);
+    }
+    ASSERT_NE(session_state, nullptr);
+
+    // 建绑条目节点 + 绑定 entryId 42（真实 authoring 变更流）。
+    std::string bound_node_id;
+    {
+        Das::DasPtr<Das::ExportInterface::IDasJson> add_result;
+        const auto                                  add_change =
+            std::string(
+                R"({"baseRevision":0,"kind":"addGraphNode","payload":{"actionId":")")
+            + std::string{REF_CHAIN_GRAPH_TASK_GUID} + R"("}})";
+        ASSERT_EQ(
+            GraphAuthoringSessionApplyChange(
+                session_state,
+                RefChainMakeText(add_change).Get(),
+                add_result.Put()),
+            DAS_S_OK);
+        const auto add_text = RefChainJsonText(add_result.Get());
+        ASSERT_EQ(add_text.find("\"errorKind\""), std::string::npos)
+            << add_text;
+        auto add_root = yyjson::read(add_text);
+        auto add_obj = add_root.as_object();
+        ASSERT_TRUE(add_obj.has_value());
+        ASSERT_TRUE(add_obj->contains(std::string_view("acceptedProperties")));
+        auto accepted = (*add_obj)[std::string_view("acceptedProperties")];
+        auto accepted_obj = accepted.as_object();
+        ASSERT_TRUE(accepted_obj.has_value());
+        auto nodes = (*accepted_obj)[std::string_view("nodes")].as_array();
+        ASSERT_TRUE(nodes.has_value());
+        for (const auto& node : *nodes)
+        {
+            auto serialized = Das::Utils::SerializeYyjsonValue(
+                                  Das::Utils::CloneYyjsonValue(node))
+                                  .value_or("");
+            if (serialized.find(std::string{REF_CHAIN_GRAPH_TASK_GUID})
+                != std::string::npos)
+            {
+                auto node_obj = node.as_object();
+                auto node_id =
+                    (*node_obj)[std::string_view("nodeId")].as_string();
+                ASSERT_TRUE(node_id.has_value());
+                bound_node_id = *node_id;
+                break;
+            }
+        }
+        ASSERT_FALSE(bound_node_id.empty()) << add_text;
+    }
+    {
+        Das::DasPtr<Das::ExportInterface::IDasJson> set_result;
+        const auto                                  set_change =
+            std::string(
+                R"({"baseRevision":1,"kind":"setValue","payload":{"target":{"kind":"graphNode","id":")")
+            + bound_node_id + R"("},"fieldName":"repositoryRef","value":42}})";
+        ASSERT_EQ(
+            GraphAuthoringSessionApplyChange(
+                session_state,
+                RefChainMakeText(set_change).Get(),
+                set_result.Put()),
+            DAS_S_OK);
+        const auto set_text = RefChainJsonText(set_result.Get());
+        ASSERT_EQ(set_text.find("\"errorKind\""), std::string::npos)
+            << set_text;
+    }
+
+    // 编译父图（编译期注入链照旧产出注入绑定），取 shell 供执行。
+    std::string parent_shell_text;
+    std::string parent_fingerprint;
+    {
+        Das::DasPtr<Das::ExportInterface::IDasJson> compiled;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(
+                session_state,
+                nullptr,
+                compiled.Put()),
+            DAS_S_OK);
+        const auto envelope_text = RefChainJsonText(compiled.Get());
+        auto       envelope = yyjson::read(envelope_text);
+        auto       envelope_obj = envelope.as_object();
+        ASSERT_TRUE(envelope_obj.has_value());
+        auto compile_obj =
+            (*envelope_obj)[std::string_view("compile")].as_object();
+        ASSERT_TRUE(compile_obj.has_value());
+        const auto& execution_input =
+            (*compile_obj)[std::string_view("executionInput")];
+        if (const auto text = execution_input.as_string())
+        {
+            parent_shell_text = std::string(*text);
+        }
+        else
+        {
+            parent_shell_text =
+                Das::Utils::SerializeYyjsonValue(
+                    Das::Utils::CloneYyjsonValue(execution_input))
+                    .value_or("");
+        }
+        ASSERT_FALSE(parent_shell_text.empty()) << envelope_text;
+        auto shell = yyjson::read(parent_shell_text);
+        auto shell_obj = shell.as_object();
+        ASSERT_TRUE(shell_obj.has_value());
+        auto fingerprint =
+            (*shell_obj)[std::string_view("fingerprint")].as_string();
+        ASSERT_TRUE(fingerprint.has_value());
+        parent_fingerprint = *fingerprint;
+    }
+    DestroyGraphAuthoringSession(session_state);
+
+    yyjson::value parent_plan_value;
+    {
+        auto shell_root = yyjson::read(parent_shell_text);
+        auto shell_obj = shell_root.as_object();
+        ASSERT_TRUE(shell_obj.has_value());
+        parent_plan_value = Das::Utils::CloneYyjsonValue(
+            (*shell_obj)[std::string_view("plan")]);
+    }
+    const auto parent_plan =
+        yyjson::cast<CompiledGraphPlanDto>(parent_plan_value);
+
+    // Run 前快照：编译期的 creator 调用不计入执行期取证。
+    const auto session_calls_before = counters->session_calls.load();
+    const auto compile_calls_before = counters->compile_calls.load();
+    const auto contexts_before = counters->contexts.size();
+
+    GraphRuntime runtime;
+    const auto   hr = runtime.RunWithHost(
+        parent_plan,
+        parent_fingerprint,
+        token_.Get(),
+        creator.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    // 执行期现编取证：Run 期间 creator 收到 CreateAuthoringSession 与
+    // Compile（产物经协议保留键达组件 Do）。
+    const auto session_calls_delta =
+        counters->session_calls.load() - session_calls_before;
+    const auto compile_calls_delta =
+        counters->compile_calls.load() - compile_calls_before;
+    EXPECT_GT(session_calls_delta, 0)
+        << "creator must receive CreateAuthoringSession during Run";
+    EXPECT_GT(compile_calls_delta, 0)
+        << "entry session must receive Compile during Run";
+    ASSERT_GT(counters->contexts.size(), contexts_before);
+
+    // 执行期 context：repositoryEntryId=42 + 闭包栈=[42]（顶层图空栈+本
+    // 条目——子层环检测经它恢复祖先链）。
+    {
+        const auto& context_text = counters->contexts.back();
+        auto        parsed = yyjson::read(context_text);
+        auto        obj = parsed.as_object();
+        ASSERT_TRUE(obj.has_value()) << context_text;
+        ASSERT_TRUE(obj->contains(std::string_view("repositoryEntryId")))
+            << context_text;
+        EXPECT_EQ(
+            (*obj)[std::string_view("repositoryEntryId")].as_int().value_or(0),
+            42)
+            << context_text;
+        ASSERT_TRUE(obj->contains(std::string_view("closureEntryIds")))
+            << context_text;
+        auto ids = (*obj)[std::string_view("closureEntryIds")].as_array();
+        ASSERT_TRUE(ids.has_value()) << context_text;
+        ASSERT_EQ(ids->size(), 1u) << context_text;
+        EXPECT_EQ(ids->begin()->as_int().value_or(0), 42) << context_text;
+    }
+
+    ASSERT_TRUE(state->received)
+        << "the bound GraphTask node must receive executionInput";
+    EXPECT_EQ(state->execution_input_text, child_shell_text);
+}
+
+// ===========================================================================
 // 引用闭包真实链的类型化值流 E2E：绑条目 GraphTask 节点的口面=被引条目文
 // 档根 ports 自述（编译期注入 pass 现算），编译产物经 $graph_input 广播绑
 // 定物化到节点 executionInput 口；执行期 GraphTask 形替身组件消费产物、
