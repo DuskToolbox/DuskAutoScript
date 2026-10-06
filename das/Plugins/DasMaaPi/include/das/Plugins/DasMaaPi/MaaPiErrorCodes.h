@@ -68,10 +68,10 @@ namespace Das::Plugins::DasMaaPi
         static_cast<DasResult>(-10011);
 
     /// The executionInput port is missing on Do. The envelope's only source
-    /// is the compile-time injection chain (parent graph compilation writes
-    /// the compiled envelope into the node's input port); settings carrying
-    /// repositoryRef do NOT trigger a runtime repository self-resolution
-    /// fallback. Missing wire fails loudly.
+    /// is the execution-time compile chain (the orchestration layer compiles
+    /// at execution time and writes the compiled envelope into the node's
+    /// input port); settings carrying repositoryRef do NOT trigger a runtime
+    /// repository self-resolution fallback. Missing wire fails loudly.
     inline constexpr DasResult DAS_E_MAAPI_EXECUTION_INPUT_MISSING =
         static_cast<DasResult>(-10012);
 
