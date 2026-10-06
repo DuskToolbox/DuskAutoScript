@@ -92,8 +92,8 @@ namespace Plugins::DasMaaPi
         // ADB 扫描结果暂态（会话内存态，不入 acceptedProperties、不落
         // 盘）。discoverAdbDevices 命令调用
         // AdbDeviceFinder::FindAllAdbDevices 填充；adbDevice 字段投影的
-        // candidates 从此读取；PiCompiler 编译期按
-        // settings.pi.controller_adb_device 在此查六字段。空 vector =
+        // candidates 从此读取（UI 下拉候选唯一用途——编译路径已改现扫，
+        // 不消费此缓存）。空 vector =
         // 未扫描或扫描到 0 设备（前端 dropdown 空候补）。
         // checkUpdate 结果不再走 session 暂态：进程级 UpdateCheckStore 按
         // pi_dir 存活（后台 job 线程不许碰 session——session 会被驱逐重建）。

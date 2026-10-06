@@ -455,7 +455,7 @@ namespace Plugins::DasMaaPi
             // 便包装进严格 envelope。
             const DasPtr<ExportInterface::IDasJson> compiled_handle =
                 SerializeCompileResult(
-                    CompileMaapi(settings_, *catalog, purpose, &device_cache_),
+                    CompileMaapi(settings_, *catalog, purpose),
                     purpose);
             if (compiled_handle)
             {

@@ -6,6 +6,7 @@
 #include "ControllerMethodMaps.h"
 #include "I18nResolver.h"
 #include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
+#include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
 #include <MaaFramework/MaaAPI.h>
@@ -785,8 +786,8 @@ namespace Das::Plugins::DasMaaPi
     CompileResultDto CompileMaapi(
         const AcceptedSettingsDto& settings,
         const PiCatalog&           catalog,
-        std::string_view,
-        const std::vector<AdbDeviceInfo>* device_cache)
+        std::string_view           purpose,
+        const AdbDeviceEnumerator& adb_enumerator)
     {
         CompileResultDto     result;
         ExecutionEnvelopeDto envelope;
@@ -853,36 +854,62 @@ namespace Das::Plugins::DasMaaPi
 
         envelope.maapi.controller_name = controller->dto.name;
         envelope.maapi.controller = NormalizeControllerSpec(*controller);
-        // 解析选中的 ADB 设备：若 settings.pi.controller_adb_device 非空且
-        // device_cache 含该 address，取其六字段作为 typed init params 覆盖源
-        // （Toolkit 探测的推荐值优先于 raw_json — 用户已选设备就用最新扫描
-        // 结果）。cache miss 时不阻断编译，emit warning diagnostic 后 fallback
-        // raw_json（既有行为保持，用户可重新扫描）。
+        // 设备六字段装配只发生在 purpose=execution（编辑会话每编译一笔
+        // 不得触发设备扫描，preview 离线可过）。已选地址时现扫 Toolkit
+        // 设备清单，按地址唯一命中填六字段；扫不到/多台同地址=遇缺即错
+        // ——地址是持久化选择键，清单里没有就是设备已不在线，fallback
+        // raw_json 会拿着陈旧配置静默跑错设备。
         const AdbDeviceInfo* selected_adb_device = nullptr;
         AdbDeviceInfo        adb_device_holder;
-        if (device_cache != nullptr && settings.pi.controller_adb_device
+        if (purpose == "execution" && settings.pi.controller_adb_device
             && !settings.pi.controller_adb_device->empty())
         {
             const std::string& selected_address =
                 *settings.pi.controller_adb_device;
-            auto device_it = std::find_if(
-                device_cache->begin(),
-                device_cache->end(),
-                [&](const AdbDeviceInfo& info)
-                { return info.address == selected_address; });
-            if (device_it != device_cache->end())
+            const std::vector<AdbDeviceInfo> devices = FindAllAdbDevices(
+                adb_enumerator ? adb_enumerator : DefaultAdbDeviceEnumerator());
+            const AdbDeviceInfo* address_match = nullptr;
+            std::size_t          address_match_count = 0;
+            for (const auto& info : devices)
             {
-                adb_device_holder = *device_it;
+                if (info.address == selected_address)
+                {
+                    ++address_match_count;
+                    address_match = &info;
+                }
+            }
+            if (address_match_count == 1)
+            {
+                adb_device_holder = *address_match;
                 selected_adb_device = &adb_device_holder;
             }
             else
             {
-                AddDiagnostic(
-                    result,
-                    "warning",
-                    "adb-device-cache-miss",
-                    "Selected ADB device '" + selected_address
-                        + "' not in scan cache; falling back to raw_json");
+                result.ok = false;
+                result.can_execute = false;
+                if (address_match_count == 0)
+                {
+                    AddDiagnostic(
+                        result,
+                        "error",
+                        "adb-device-missing",
+                        "Selected ADB device '" + selected_address
+                            + "' not found in the runtime Toolkit scan");
+                    result.diagnostics.back().int_code =
+                        static_cast<std::int64_t>(
+                            DAS_E_MAAPI_ADB_DEVICE_MISSING);
+                }
+                else
+                {
+                    AddDiagnostic(
+                        result,
+                        "error",
+                        "adb-device-ambiguous",
+                        "Multiple ADB devices share address '"
+                            + selected_address
+                            + "'; the selection is ambiguous");
+                }
+                return result;
             }
         }
         // Typed init params: always emitted. Every supported controller type

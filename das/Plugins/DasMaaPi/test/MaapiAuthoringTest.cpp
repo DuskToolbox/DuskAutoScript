@@ -10786,147 +10786,6 @@ TEST(
     EXPECT_GE(warning_count, 1u);
 }
 
-// ===== CompileMaapi 设备 cache → controller_init_params 链路测试 =====
-
-// settings.pi.controller_adb_device + device_cache 含该 address → 编译输出
-// 的 controller_init_params.adb 六字段取自 cache（覆盖 raw_json）。
-TEST(MaapiCompileDeviceCacheTest, SelectedDeviceInCacheOverridesRawJson)
-{
-    using namespace Das::Plugins::DasMaaPi;
-
-    // interface_controller.jsonc fixture 含一个 Adb controller 名为 "Android"
-    // address="127.0.0.1:5555"（raw_json 默认值），cache 提供同 address 的设备
-    // 但 adb_path/screencap/input/config 不同 → 编译期应取 cache 值。
-    auto parsed = ParseProjectInterface(
-        {.interface_path = FixturePath("interface_controller.jsonc")});
-    ASSERT_TRUE(parsed.ok);
-
-    AcceptedSettingsDto settings;
-    settings.adapter.interface_path =
-        Das::Utils::PathToUtf8(FixturePath("interface_controller.jsonc"));
-    settings.pi.controller_name = "Android";
-    settings.pi.controller_adb_device = "127.0.0.1:5554";
-
-    std::vector<AdbDeviceInfo> cache;
-    AdbDeviceInfo              dev;
-    dev.name = "emulator-5554";
-    dev.adb_path = "/cache/adb";
-    dev.address = "127.0.0.1:5554";
-    dev.screencap_methods = 0x1;
-    dev.input_methods = 0x2;
-    dev.config = R"({"cache":true})";
-    cache.push_back(dev);
-
-    auto compile = CompileMaapi(settings, parsed.catalog, "preview", &cache);
-    ASSERT_TRUE(compile.ok);
-    ASSERT_TRUE(compile.execution_input.has_value());
-    ASSERT_TRUE(
-        compile.execution_input->maapi.controller_init_params.has_value());
-    ASSERT_TRUE(
-        compile.execution_input->maapi.controller_init_params->adb.has_value());
-    const auto& adb =
-        *compile.execution_input->maapi.controller_init_params->adb;
-    EXPECT_EQ(adb.address, "127.0.0.1:5554");
-    EXPECT_EQ(adb.adb_path, "/cache/adb");
-    EXPECT_EQ(adb.screencap_method, 0x1u);
-    EXPECT_EQ(adb.input_method, 0x2u);
-    EXPECT_EQ(adb.config_json, R"({"cache":true})");
-}
-
-// settings.pi.controller_adb_device 指向不在 cache 的 address → fallback 用
-// raw_json 字段 + warning diagnostic。
-TEST(MaapiCompileDeviceCacheTest, SelectedDeviceNotInCacheFallsBackWithWarning)
-{
-    using namespace Das::Plugins::DasMaaPi;
-
-    auto parsed = ParseProjectInterface(
-        {.interface_path = FixturePath("interface_controller.jsonc")});
-    ASSERT_TRUE(parsed.ok);
-
-    AcceptedSettingsDto settings;
-    settings.adapter.interface_path =
-        Das::Utils::PathToUtf8(FixturePath("interface_controller.jsonc"));
-    settings.pi.controller_name = "Android";
-    // 指向不在 cache 的 address。
-    settings.pi.controller_adb_device = "ghost:9999";
-
-    std::vector<AdbDeviceInfo> cache;
-    AdbDeviceInfo              dev;
-    dev.address = "127.0.0.1:5554";
-    cache.push_back(dev);
-
-    auto compile = CompileMaapi(settings, parsed.catalog, "preview", &cache);
-    ASSERT_TRUE(compile.ok);
-    ASSERT_TRUE(compile.execution_input.has_value());
-    ASSERT_TRUE(
-        compile.execution_input->maapi.controller_init_params.has_value());
-    ASSERT_TRUE(
-        compile.execution_input->maapi.controller_init_params->adb.has_value());
-    const auto& adb =
-        *compile.execution_input->maapi.controller_init_params->adb;
-    // 用 raw_json 既有字段（fixture 中 address="127.0.0.1:5555"，adbPath 缺省
-    // → fallback "adb"）。
-    EXPECT_EQ(adb.address, "127.0.0.1:5555");
-    EXPECT_EQ(adb.adb_path, "adb");
-    // warning diagnostic 记录 cache miss。
-    bool found_warning = false;
-    for (const auto& diag : compile.diagnostics)
-    {
-        if (diag.severity == "warning"
-            && diag.message.find("ghost:9999") != std::string::npos)
-        {
-            found_warning = true;
-            break;
-        }
-    }
-    EXPECT_TRUE(found_warning);
-}
-
-// settings.pi.controller_adb_device=nullopt + cache 非空 → 完全用 raw_json
-// （cache 被忽略，既有行为保持）。验证无选中设备时 cache 不强制覆盖。
-TEST(MaapiCompileDeviceCacheTest, EmptySelectedDeviceUsesRawJsonAndIgnoresCache)
-{
-    using namespace Das::Plugins::DasMaaPi;
-
-    auto parsed = ParseProjectInterface(
-        {.interface_path = FixturePath("interface_controller.jsonc")});
-    ASSERT_TRUE(parsed.ok);
-
-    AcceptedSettingsDto settings;
-    settings.adapter.interface_path =
-        Das::Utils::PathToUtf8(FixturePath("interface_controller.jsonc"));
-    settings.pi.controller_name = "Android";
-    // controller_adb_device 留空（nullopt）。
-
-    std::vector<AdbDeviceInfo> cache;
-    AdbDeviceInfo              dev;
-    dev.address = "127.0.0.1:5554";
-    cache.push_back(dev);
-
-    auto compile = CompileMaapi(settings, parsed.catalog, "preview", &cache);
-    ASSERT_TRUE(compile.ok);
-    ASSERT_TRUE(compile.execution_input.has_value());
-    ASSERT_TRUE(
-        compile.execution_input->maapi.controller_init_params.has_value());
-    ASSERT_TRUE(
-        compile.execution_input->maapi.controller_init_params->adb.has_value());
-    const auto& adb =
-        *compile.execution_input->maapi.controller_init_params->adb;
-    EXPECT_EQ(adb.address, "127.0.0.1:5555");
-    EXPECT_EQ(adb.adb_path, "adb");
-    // 无 cache miss warning（用户未选设备，不需要查 cache）。
-    bool found_cache_warning = false;
-    for (const auto& diag : compile.diagnostics)
-    {
-        if (diag.severity == "warning" && diag.code == "adb-device-cache-miss")
-        {
-            found_cache_warning = true;
-            break;
-        }
-    }
-    EXPECT_FALSE(found_cache_warning);
-}
-
 // ===== CompileMaapi 设备现扫四形态 + 地址未选择（execution 装配段语义） =====
 // 设备六字段装配只发生在 purpose=execution 编译——按地址唯一命中选中
 // （地址是持久化选择键，唯一才选中；不做名称消歧），扫不到/多台同地址
@@ -10990,10 +10849,11 @@ TEST(MaapiCompileAdbDeviceScanTest, ExecutionMissingDeviceFailsCompile)
 
     const auto settings = MakeAdbScanFixtureSettings("127.0.0.1:5554");
     // 扫描结果为空表（设备已拔出 / toolkit 不可用降级同为空表形态）。
-    const std::vector<AdbDeviceInfo> devices;
+    const AdbDeviceEnumerator enumerator = []
+    { return std::vector<AdbDeviceInfo>{}; };
 
     auto compile =
-        CompileMaapi(settings, parsed.catalog, "execution", &devices);
+        CompileMaapi(settings, parsed.catalog, "execution", enumerator);
     EXPECT_FALSE(compile.ok);
     const auto* diag = FindDiagnosticByCode(compile, "adb-device-missing");
     ASSERT_NE(diag, nullptr);
@@ -11016,8 +10876,11 @@ TEST(MaapiCompileAdbDeviceScanTest, ExecutionNoAddressMatchFailsCompile)
     devices.push_back(MakeScanDevice("127.0.0.1:5556"));
     devices.push_back(MakeScanDevice("127.0.0.1:5558"));
 
-    auto compile =
-        CompileMaapi(settings, parsed.catalog, "execution", &devices);
+    auto compile = CompileMaapi(
+        settings,
+        parsed.catalog,
+        "execution",
+        [&devices] { return devices; });
     EXPECT_FALSE(compile.ok);
     const auto* diag = FindDiagnosticByCode(compile, "adb-device-missing");
     ASSERT_NE(diag, nullptr);
@@ -11039,8 +10902,11 @@ TEST(MaapiCompileAdbDeviceScanTest, ExecutionAmbiguousAddressFailsCompile)
     devices.push_back(MakeScanDevice("127.0.0.1:5554"));
     devices.push_back(MakeScanDevice("127.0.0.1:5554"));
 
-    auto compile =
-        CompileMaapi(settings, parsed.catalog, "execution", &devices);
+    auto compile = CompileMaapi(
+        settings,
+        parsed.catalog,
+        "execution",
+        [&devices] { return devices; });
     EXPECT_FALSE(compile.ok);
     const auto* diag = FindDiagnosticByCode(compile, "adb-device-ambiguous");
     ASSERT_NE(diag, nullptr);
@@ -11061,8 +10927,11 @@ TEST(MaapiCompileAdbDeviceScanTest, ExecutionScanHitFillsTypedInitParams)
     std::vector<AdbDeviceInfo> devices;
     devices.push_back(MakeScanDevice("127.0.0.1:5554"));
 
-    auto compile =
-        CompileMaapi(settings, parsed.catalog, "execution", &devices);
+    auto compile = CompileMaapi(
+        settings,
+        parsed.catalog,
+        "execution",
+        [&devices] { return devices; });
     ASSERT_TRUE(compile.ok);
     ASSERT_TRUE(compile.execution_input.has_value());
     ASSERT_TRUE(
@@ -11078,8 +10947,9 @@ TEST(MaapiCompileAdbDeviceScanTest, ExecutionScanHitFillsTypedInitParams)
     EXPECT_EQ(adb.config_json, R"({"scan":true})");
 }
 
-// preview + 含匹配设备的设备表 → 零设备动作：六字段不填（保持 raw_json
-// 值），无任何 adb-device 诊断；preview 编译本身 ok（离线可过）。
+// preview + 含匹配设备的设备表 → 零设备动作：枚举器零调用、六字段不填
+// （保持 raw_json 值），无任何 adb-device 诊断；preview 编译本身 ok（离线
+// 可过）。
 TEST(MaapiCompileAdbDeviceScanTest, PreviewTakesNoDeviceAction)
 {
     using namespace Das::Plugins::DasMaaPi;
@@ -11091,8 +10961,17 @@ TEST(MaapiCompileAdbDeviceScanTest, PreviewTakesNoDeviceAction)
     const auto settings = MakeAdbScanFixtureSettings("127.0.0.1:5554");
     std::vector<AdbDeviceInfo> devices;
     devices.push_back(MakeScanDevice("127.0.0.1:5554"));
+    int                       scan_calls = 0;
+    const AdbDeviceEnumerator enumerator =
+        [&devices, &scan_calls]() -> std::vector<AdbDeviceInfo>
+    {
+        ++scan_calls;
+        return devices;
+    };
 
-    auto compile = CompileMaapi(settings, parsed.catalog, "preview", &devices);
+    auto compile =
+        CompileMaapi(settings, parsed.catalog, "preview", enumerator);
+    EXPECT_EQ(scan_calls, 0);
     ASSERT_TRUE(compile.ok);
     ASSERT_TRUE(compile.execution_input.has_value());
     ASSERT_TRUE(
@@ -11117,8 +10996,8 @@ TEST(MaapiCompileAdbDeviceScanTest, PreviewTakesNoDeviceAction)
     }
 }
 
-// execution + 地址未选择（空）→ 编译不因设备失败，六字段取 raw_json
-// （运行期 MaapiRuntime 既有 -10010 路径兜底——既有行为保持）。
+// execution + 地址未选择（空）→ 编译不因设备失败、枚举器零调用，六字段
+// 取 raw_json（运行期 MaapiRuntime 既有 -10010 路径兜底——既有行为保持）。
 TEST(MaapiCompileAdbDeviceScanTest, ExecutionWithoutSelectedAddressUsesRawJson)
 {
     using namespace Das::Plugins::DasMaaPi;
@@ -11130,9 +11009,17 @@ TEST(MaapiCompileAdbDeviceScanTest, ExecutionWithoutSelectedAddressUsesRawJson)
     const auto                 settings = MakeAdbScanFixtureSettings(nullptr);
     std::vector<AdbDeviceInfo> devices;
     devices.push_back(MakeScanDevice("127.0.0.1:5554"));
+    int                       scan_calls = 0;
+    const AdbDeviceEnumerator enumerator =
+        [&devices, &scan_calls]() -> std::vector<AdbDeviceInfo>
+    {
+        ++scan_calls;
+        return devices;
+    };
 
     auto compile =
-        CompileMaapi(settings, parsed.catalog, "execution", &devices);
+        CompileMaapi(settings, parsed.catalog, "execution", enumerator);
+    EXPECT_EQ(scan_calls, 0);
     ASSERT_TRUE(compile.ok);
     ASSERT_TRUE(compile.execution_input.has_value());
     ASSERT_TRUE(
