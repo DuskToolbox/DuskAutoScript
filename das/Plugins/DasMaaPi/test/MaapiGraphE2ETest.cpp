@@ -11,6 +11,8 @@
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentCreator.Implements.hpp>
 #include <gtest/gtest.h>
@@ -82,8 +84,9 @@ namespace
     // envelope fixture 直接构造 ExecutionEnvelopeDto 并序列化——cpp_yyjson
     // 的 default_caster 经 PFR 对每个字段调 obj[key]，缺 key（如
     // focusTranslationsPath/schedule 即便为空也必须显式存在）在 cast 前抛
-    // std::out_of_range，手搓 JSON 字符串极易漏键。
-    yyjson::value MakeEnvelopeValue()
+    // std::out_of_range，手搓 JSON 字符串极易漏键。pipeline_override 由参
+    // 数注入（默认空对象 = entry 编译期选项值形态）。
+    yyjson::value MakeEnvelopeValue(const yyjson::value& pipeline_override = {})
     {
         ExecutionEnvelopeDto envelope;
         envelope.maapi.interface_directory = "C:/maa";
@@ -109,7 +112,10 @@ namespace
         MaaTaskExecutionDto task;
         task.task_name = "E2ETestTask";
         task.entry = "StartE2E";
-        task.pipeline_override = Utils::MakeYyjsonObject();
+        task.pipeline_override =
+            pipeline_override.is_object()
+                ? Utils::CloneYyjsonValue(pipeline_override)
+                : Utils::MakeYyjsonObject();
         envelope.maapi.tasks.push_back(std::move(task));
 
         return Utils::CloneYyjsonValue(yyjson::object(envelope));
@@ -117,10 +123,11 @@ namespace
 
     // 编译产物串：被引 maapi 条目的 compile 段 executionInput 形态=
     // envelope 原文（maapi.run 的产物通道——无 {fingerprint, plan} 外壳）。
-    std::string MakeEnvelopeArtifactText()
+    std::string MakeEnvelopeArtifactText(
+        const yyjson::value& pipeline_override = {})
     {
         const auto serialized = Utils::SerializeYyjsonValue(
-            Utils::CloneYyjsonValue(MakeEnvelopeValue()));
+            Utils::CloneYyjsonValue(MakeEnvelopeValue(pipeline_override)));
         return serialized.value_or("{}");
     }
 
@@ -164,6 +171,26 @@ namespace
 
         plan.reference_entries.push_back(ReferenceEntryDto{NODE_ID, 42});
 
+        return plan;
+    }
+
+    // 暴露口计划变体：maapi.run 节点声明一个 string 暴露口 + boundary 绑定
+    // （调用方输入值优先、声明默认兜底——default 留 null，口值完全由调用
+    // 方输入表供给或保持未连线）。
+    CompiledGraphPlanDto MakeMaapiRunNodePlanWithExposedPort(
+        const std::string& port_id)
+    {
+        auto plan = MakeSingleMaapiRunNodePlan();
+        plan.node_snapshots[0].resolved_ports.push_back(
+            MakePortDef(port_id, "string"));
+
+        PortBindingDto binding;
+        binding.kind = PortBindingKind::Boundary;
+        binding.target_node_id = NODE_ID;
+        binding.target_port_id = port_id;
+        binding.expected_type = "string";
+        binding.target_type = "string";
+        plan.binding_plan.bindings.push_back(std::move(binding));
         return plan;
     }
 
@@ -877,6 +904,76 @@ TEST(MaapiGraphE2ETest, MaapiRunNodeExecutesInjectedEnvelopeInGraphRuntime)
     // 并到达 MaaRuntime 的任务投递。
     EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:"));
     EXPECT_TRUE(fake.Contains("CreateTasker"));
+}
+
+// ===================================================================
+// Test 1b: MaapiRunNodeWiredExposedValueOverridesCompileTimeOption
+//
+// wired 暴露值两态 E2E（态一：连线覆盖）：图内 maapi.run 绑条目节点声明
+// 暴露口，boundary 绑定 + 调用方输入表喂值（外图常量形态）→ 执行时编译
+// 产物（envelope）携带 entry 编译期选项值，但绑定抄写把连线值落进节点
+// portmap、组件侧恒等映射让连线值胜出——PostTask 的 pipelineOverride 携
+// 带连线值。
+// ===================================================================
+
+TEST(MaapiGraphE2ETest, MaapiRunNodeWiredExposedValueOverridesCompileTimeOption)
+{
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    auto compile_time_override = Utils::MakeYyjsonObject();
+    (*compile_time_override.as_object())[std::string_view("exposed_param")] =
+        yyjson::value(std::string("compile-time-value"));
+
+    auto plan = MakeMaapiRunNodePlanWithExposedPort("exposed_param");
+
+    auto host = MaapiMockHost::Make(MakeEntryCompileResponse(
+        MakeEnvelopeArtifactText(compile_time_override)));
+    auto token = PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    DasPtr<ExportInterface::IDasPortMap> graph_inputs;
+    ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
+    graph_inputs->SetString(
+        DasReadOnlyString("exposed_param").Get(),
+        DasReadOnlyString("wired-value").Get());
+
+    GraphRuntime rt;
+    rt.SetGraphInputs(graph_inputs.Get());
+    const auto hr = rt.RunWithHost(plan, "fp_e2e", token.Get(), host.Get());
+
+    EXPECT_EQ(hr, DAS_S_OK);
+    EXPECT_TRUE(fake.ContainsSubstring("wired-value"));
+    EXPECT_FALSE(fake.ContainsSubstring("compile-time-value"));
+}
+
+// ===================================================================
+// Test 1c: MaapiRunNodeUnwiredExposedPortKeepsCompileTimeOption
+//
+// wired 暴露值两态 E2E（态二：未连线 = 编译期值）：同一暴露口声明与
+// boundary 绑定在场，但调用方输入表不供值、声明默认为 null（口未连线）
+// → 组件 portmap 无该键，entry 编译期选项值原样生效。
+// ===================================================================
+
+TEST(MaapiGraphE2ETest, MaapiRunNodeUnwiredExposedPortKeepsCompileTimeOption)
+{
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    auto compile_time_override = Utils::MakeYyjsonObject();
+    (*compile_time_override.as_object())[std::string_view("exposed_param")] =
+        yyjson::value(std::string("compile-time-value"));
+
+    auto plan = MakeMaapiRunNodePlanWithExposedPort("exposed_param");
+
+    auto host = MaapiMockHost::Make(MakeEntryCompileResponse(
+        MakeEnvelopeArtifactText(compile_time_override)));
+    auto token = PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    GraphRuntime rt;
+    const auto   hr = rt.RunWithHost(plan, "fp_e2e", token.Get(), host.Get());
+
+    EXPECT_EQ(hr, DAS_S_OK);
+    EXPECT_TRUE(fake.ContainsSubstring("compile-time-value"));
 }
 
 // ===================================================================
