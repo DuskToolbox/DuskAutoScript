@@ -2016,7 +2016,7 @@ namespace
             R"([{"actionId":"{g1}","label":"das.maapi.run","config":[)"
             R"({"name":"repositoryRef","type":"taskRepositoryRef",)"
             R"("taskGuid":"69F20001-0000-4000-8000-000000000001"},)"
-            R"({"name":"runtimeInputs","type":"object"}]}])")};
+            R"({"name":"extraOption","type":"string"}]}])")};
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -2036,7 +2036,7 @@ namespace
 
         const auto inputs_field = FirstGraphNodeFieldDescriptorOf(
             document,
-            std::string_view("runtimeInputs"),
+            std::string_view("extraOption"),
             std::string_view("{g1}"));
         ASSERT_TRUE(inputs_field.has_value());
         auto inputs_obj = inputs_field->as_object();

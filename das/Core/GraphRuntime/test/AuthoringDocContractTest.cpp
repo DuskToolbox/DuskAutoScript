@@ -986,8 +986,7 @@ namespace
             "taskRepositoryRef",
             yyjson::value{},
             "69F20001-0000-4000-8000-000000000001"));
-        entry.config_fields.push_back(
-            MakeConfigField("runtimeInputs", "object"));
+        entry.config_fields.push_back(MakeConfigField("extraOption", "string"));
         catalog.entries.push_back(entry);
 
         const auto  out = ToAuthoringDocument(doc, catalog);
