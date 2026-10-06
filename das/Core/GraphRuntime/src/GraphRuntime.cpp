@@ -1334,7 +1334,7 @@ DasResult GraphRuntime::RunWithHost(
     }
 
     // 带节点却无执行序的计划是编译期否决产物（无信号回路承载的数据环、
-    // 引用闭包注入 pass 失败、组件解析失败等致命诊断都会清空
+    // 引用闭包口面 pass 失败、组件解析失败等致命诊断都会清空
     // execution_order）：放行会跑成「成功+零节点」，必须拒绝。诊断
     // 全量透出到 last_error——运行期不按 kind 过滤，真根因由编译期
     // 诊断陈述，每条以「[kind] message」形态拼接。

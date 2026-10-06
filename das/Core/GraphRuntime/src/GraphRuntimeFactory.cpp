@@ -333,17 +333,18 @@ struct GraphAuthoringSessionState
     // 会话创建，与文档快照同 freshness（会话缓存按 revision 键控）。
     Das::Core::GraphRuntime::GraphCompiler::NodeFacesMap node_faces;
     // faces 通道携带的注册类型透传容器（文档 types[]——口面复核的注册类
-    // 型判定数据源；绑条目节点的口面唯一源=注入 pass 编译期现算）。
+    // 型判定数据源；绑条目节点的口面唯一源=引用闭包口面半段编译期现算）。
     std::vector<Das::Core::GraphRuntime::GraphCompiler::DocumentFaceType>
         entry_face_types;
     // creator（TaskComponentCreator）借用指针：会话编译路径经
-    // 它开被引条目的 authoring 会话（GetDocument 现算口面 + Compile 产
-    // 物）。借用不拥有——插件包持有的 host_ 保证本尊长命于会话（与
-    // CreateGraphRuntimeWithHost 的执行侧对称）；nullptr = 不携带。
+    // 它开被引条目的 authoring 会话（GetDocument 现算口面）；执行侧由
+    // GraphRuntime 在绑条目节点执行期间经它现编（编译=编排层的事，插
+    // 件永不自编译）。借用不拥有——插件包持有的 host_ 保证本尊长命于会
+    // 话（与 CreateGraphRuntimeWithHost 的执行侧对称）；nullptr = 不携带。
     Das::PluginInterface::IDasTaskComponentCreator* creator = nullptr;
     // 闭包栈（closureEntryIds context 键）：本会话作为被引条目的子层编
-    // 译时的祖先 entryId 链——会话编译路径恢复为注入 pass 的初始栈（环
-    // 检测跨编译层生效；空 = 顶层编译）。
+    // 译时的祖先 entryId 链——会话编译路径恢复为引用闭包 pass 的初始栈
+    // （环检测跨编译层生效；空 = 顶层编译）。
     std::vector<int64_t> closure_entry_ids;
 };
 
@@ -2342,10 +2343,11 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         Das::Core::GraphRuntime::GraphCompiler compiler;
         // 口面知识接线（faces/entryFaces/声明面 provider/types 注册表——
         // Apply 路径的编译期复核共用同一接线的单一来源）。creator 携带
-        // （creator 携带通道）：绑条目节点经它走注入 pass（GetDocument 现算口面
-        // + Compile 产物广播绑定）——编辑期不静默跳过（Pitfall 5）；未
-        // 携带（nullptr）时该 pass 对绑条目节点产出具名诊断。闭包栈恢复
-        // （本会话作为被引条目子层编译时的祖先链——环检测跨层生效）。
+        // （creator 携带通道）：绑条目节点经它走引用闭包 pass（GetDocument
+        // 现算口面——产物不寄存，执行期由 GraphRuntime 现编）——编辑期
+        // 不静默跳过（Pitfall 5）；未携带（nullptr）时该 pass 对绑条目节
+        // 点产出具名诊断。闭包栈恢复（本会话作为被引条目子层编译时的祖
+        // 先链——环检测跨层生效）。
         BindSessionPortKnowledge(compiler, *p);
         compiler.BindCreator(p->creator);
         compiler.BindClosureEntryIds(p->closure_entry_ids);
