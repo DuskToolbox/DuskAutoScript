@@ -1845,11 +1845,10 @@ TEST_F(E2EGraphFlowTest, CanonicalBackfillSkippedWhenNodeCancelled)
 }
 
 // ===========================================================================
-// 引用闭包注入真实链 E2E（编译期现算+creator 携带通道）：fake creator
-// 携带进图 authoring 会话 → 会话编译含绑条目节点的图 → binding_plan 出
-// 现产物广播绑定（$graph_input→executionInput，default_value=compile 段
-// 原文）→ RunWithHost 执行 → 记录组件经 executionInput 收到产物（物化
-// 路径零新机制——DoAdapter 现成 $graph_input 广播物化）。
+// 引用闭包真实链 E2E（执行时编译+creator 携带通道）：fake creator 携带
+// 进图 authoring 会话 → 会话编译只算口面+记档绑条目清单（产物零寄存）
+// → RunWithHost 执行 → 执行时编译段经 creator 现编绑条目、产物写进该
+// 节点 executionInput 协议保留键 → 组件 Do 照旧读取。
 // ===========================================================================
 namespace
 {
@@ -1958,16 +1957,19 @@ namespace
         std::atomic<uint32_t>                ref_count_{0};
     };
 
-    // 固定响应的 authoring 会话替身（fake creator 的后端产物）。
+    // 固定响应的 authoring 会话替身（fake creator 的后端产物）。可选编译
+    // 计数器供「每层 Run 期间编译调用」取证（空 = 不计数）。
     class ReferenceChainFakeSession final
         : public Das::PluginInterface::IDasTaskAuthoringSession
     {
     public:
         ReferenceChainFakeSession(
-            std::string document_json,
-            std::string compile_json)
+            std::string                       document_json,
+            std::string                       compile_json,
+            std::shared_ptr<std::atomic<int>> compile_counter = nullptr)
             : document_json_(std::move(document_json)),
-              compile_json_(std::move(compile_json))
+              compile_json_(std::move(compile_json)),
+              compile_counter_(std::move(compile_counter))
         {
         }
 
@@ -2057,6 +2059,10 @@ namespace
             {
                 return DAS_E_INVALID_POINTER;
             }
+            if (compile_counter_ != nullptr)
+            {
+                ++(*compile_counter_);
+            }
             *pp_out_result_json =
                 new Das::Core::Utils::IDasJsonImpl(compile_json_.c_str());
             (*pp_out_result_json)->AddRef();
@@ -2064,9 +2070,10 @@ namespace
         }
 
     private:
-        std::string           document_json_;
-        std::string           compile_json_;
-        std::atomic<uint32_t> ref_count_{0};
+        std::string                       document_json_;
+        std::string                       compile_json_;
+        std::shared_ptr<std::atomic<int>> compile_counter_;
+        std::atomic<uint32_t>             ref_count_{0};
     };
 
     // fake creator：CreateTaskComponent 造记录组件（GraphTask/begin/end
@@ -2137,14 +2144,16 @@ namespace
 
     // 三层嵌套真实链的中间层：GraphAuthoringSessionState 的薄包装（生产
     // DasGraphTask 会话同款管道——GetDocument/Compile 直转 Core C ABI、
-    // state RAII 销毁）。其编译内部的注入 pass 经同一 creator 递归处理
-    // 孙引用——creator 本尊单一（与执行侧对称，零新工厂机制）。
+    // state RAII 销毁）。其编译内部的引用闭包 pass 经同一 creator 递归处
+    // 理孙引用——creator 本尊单一（与执行侧对称，零新工厂机制）。
     class NestedChainRealSession final
         : public Das::PluginInterface::IDasTaskAuthoringSession
     {
     public:
-        explicit NestedChainRealSession(GraphAuthoringSessionState* state)
-            : state_(state)
+        NestedChainRealSession(
+            GraphAuthoringSessionState*       state,
+            std::shared_ptr<std::atomic<int>> compile_counter = nullptr)
+            : state_(state), compile_counter_(std::move(compile_counter))
         {
         }
 
@@ -2240,6 +2249,10 @@ namespace
             {
                 return DAS_E_INVALID_POINTER;
             }
+            if (compile_counter_ != nullptr)
+            {
+                ++(*compile_counter_);
+            }
             auto req = RefChainMakeText(RefChainJsonText(p_request_json));
             return GraphAuthoringSessionCompile(
                 state_,
@@ -2248,31 +2261,215 @@ namespace
         }
 
     private:
-        GraphAuthoringSessionState* state_ = nullptr;
-        std::atomic<uint32_t>       ref_count_{0};
+        GraphAuthoringSessionState*       state_ = nullptr;
+        std::shared_ptr<std::atomic<int>> compile_counter_;
+        std::atomic<uint32_t>             ref_count_{0};
     };
 
-    // 三层链 fake creator：按 context 的 repositoryEntryId 路由——子条目
-    // （42）开真实 Core 会话（properties/actionCatalog/nodeFaces/继承闭包
-    // 栈组 context，creator 传本尊=递归），孙条目（7）回固定 fake 会话。
-    // 收到的 context 原文记录进 seen_contexts（闭包栈跨层传递的取证）。
-    class NestedChainCreatorHost final
-        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
-              NestedChainCreatorHost>
+    // 递归链共享观测：按层序入档的产物文本（内层产物逐层送达组件的取证）
+    // 与最深层运行时错误文本（环诊断冒泡的唯一观测点——组件边界只回错误
+    // 码，内层 last_error 不透传，须在失败返回前就地捕获）。
+    struct RecursiveChainState
+    {
+        std::vector<std::string> delivered_artifacts;
+        std::string              innermost_error;
+    };
+
+    // 按 repositoryEntryId 路由的调用计数：session_calls 区分口面半段的
+    // GetDocument 与执行时编译段的会话开启，compile_calls 是「每层 Run 期
+    // 间编译调用」的直接证据（口面半段只 GetDocument 零 Compile）。
+    struct RecursiveChainCounters
+    {
+        std::map<int64_t, int>                       session_calls;
+        std::map<int64_t, int>                       compile_calls;
+        std::vector<std::pair<int64_t, std::string>> routed_contexts;
+    };
+
+    // 递归链叶子组件 guid（孙图产物内的普通节点——非 GraphTask 形，走
+    // 直通记录分支）。
+    const std::string RECURSIVE_CHAIN_LEAF_GUID =
+        "D0000000-0000-0000-0000-000000000001";
+
+    // GraphTask 形替身（递归即执行取证版）：读 executionInput 产物跑内层
+    // runtime（creator 下传——内层引用节点同样执行时现编），产物文本按层
+    // 序入档；内层失败时捕获最深层运行时错误文本。
+    class RecursiveGraphTaskStandInComponent final : public IDasTaskComponent
     {
     public:
-        NestedChainCreatorHost(
-            std::shared_ptr<ReferenceChainState> state,
-            std::string                          grandchild_compile_json,
-            std::string                          child_properties_json,
-            std::string                          catalog_json,
-            std::string                          child_node_faces_json)
-            : state_(std::move(state)),
-              grandchild_compile_json_(std::move(grandchild_compile_json)),
-              child_properties_json_(std::move(child_properties_json)),
-              catalog_json_(std::move(catalog_json)),
-              child_node_faces_json_(std::move(child_node_faces_json))
+        std::atomic<uint32_t> ref_count_{0};
+
+        RecursiveGraphTaskStandInComponent(
+            Das::PluginInterface::IDasTaskComponentCreator* creator,
+            std::shared_ptr<RecursiveChainState>            state)
+            : creator_(creator), state_(std::move(state))
         {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult GetGuid(DasGuid* p_out_guid) override
+        {
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{REF_CHAIN_GRAPH_TASK_GUID});
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "RecursiveGraphTaskStandInComponent",
+                pp_out_name);
+        }
+
+        DasResult ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json != nullptr)
+            {
+                *pp_out_result_json = nullptr;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken*       stop_token,
+            IDasReadOnlyPortMap* p_input_port_map,
+            IDasPortMap**        pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_port_map = nullptr;
+
+            std::string artifact_text;
+            if (p_input_port_map != nullptr)
+            {
+                const DasReadOnlyString         key{"executionInput"};
+                Das::DasPtr<IDasReadOnlyString> artifact;
+                if (DAS::IsOk(
+                        p_input_port_map->GetString(key.Get(), artifact.Put()))
+                    && artifact.Get() != nullptr)
+                {
+                    const char* utf8 = nullptr;
+                    if (DAS::IsOk(artifact->GetUtf8(&utf8)) && utf8 != nullptr)
+                    {
+                        artifact_text = utf8;
+                    }
+                }
+            }
+            if (artifact_text.empty())
+            {
+                return DAS_E_FAIL;
+            }
+            state_->delivered_artifacts.push_back(artifact_text);
+
+            CompiledGraphPlanDto child_plan;
+            {
+                auto shell = yyjson::read(artifact_text);
+                auto shell_obj = shell.as_object();
+                if (!shell_obj.has_value())
+                {
+                    return DAS_E_INVALID_JSON;
+                }
+                child_plan = yyjson::cast<CompiledGraphPlanDto>(
+                    Das::Utils::CloneYyjsonValue(
+                        (*shell_obj)[std::string_view("plan")]));
+            }
+
+            GraphRuntime child_runtime;
+            child_runtime.SetGraphInputs(p_input_port_map);
+            const DasResult run_result = child_runtime.RunWithHost(
+                child_plan,
+                child_plan.source_fingerprint,
+                stop_token,
+                creator_,
+                pp_out_port_map);
+            if (DAS::IsFailed(run_result) && state_->innermost_error.empty())
+            {
+                state_->innermost_error = child_runtime.GetLastErrorMessage();
+            }
+            return run_result;
+        }
+
+    private:
+        Das::PluginInterface::IDasTaskComponentCreator* creator_;
+        std::shared_ptr<RecursiveChainState>            state_;
+    };
+
+    // 递归链 fake creator：按 context 的 repositoryEntryId 路由——real 条目
+    // 开真实 Core 会话（properties/actionCatalog/nodeFaces/继承闭包栈组
+    // context，creator 传本尊=递归），fake 条目回固定响应会话。会话/编译
+    // 调用按条目计数，context 原文按路由次序入档（闭包栈跨层传递取证）。
+    class RecursiveChainCreatorHost final
+        : public Das::PluginInterface::DasTaskComponentCreatorImplBase<
+              RecursiveChainCreatorHost>
+    {
+    public:
+        struct RealEntry
+        {
+            std::string properties_json;
+            std::string node_faces_json;
+        };
+
+        struct FakeEntry
+        {
+            std::string document_json;
+            std::string compile_json;
+        };
+
+        RecursiveChainCreatorHost(
+            std::shared_ptr<RecursiveChainState>    state,
+            std::shared_ptr<RecursiveChainCounters> counters,
+            std::string                             catalog_json)
+            : state_(std::move(state)), counters_(std::move(counters)),
+              catalog_json_(std::move(catalog_json))
+        {
+        }
+
+        void AddRealEntry(int64_t entry_id, RealEntry entry)
+        {
+            real_entries_.emplace(entry_id, std::move(entry));
+            compile_counters_.emplace(
+                entry_id,
+                std::make_shared<std::atomic<int>>(0));
+        }
+
+        void AddFakeEntry(int64_t entry_id, FakeEntry entry)
+        {
+            fake_entries_.emplace(entry_id, std::move(entry));
+            compile_counters_.emplace(
+                entry_id,
+                std::make_shared<std::atomic<int>>(0));
+        }
+
+        int CompileCallsOf(int64_t entry_id) const
+        {
+            const auto found = compile_counters_.find(entry_id);
+            return found != compile_counters_.end() ? found->second->load() : 0;
         }
 
         DasResult CreateTaskComponent(
@@ -2284,8 +2481,22 @@ namespace
                 return DAS_E_INVALID_POINTER;
             }
             *pp_out_component = nullptr;
-            auto* component =
-                new ExecutionInputRecorderComponent(state_, component_guid);
+            const std::string guid_text =
+                Das::Core::ForeignInterfaceHost::DasGuidToStdString(
+                    component_guid);
+
+            IDasTaskComponent* component = nullptr;
+            if (guid_text == REF_CHAIN_GRAPH_TASK_GUID)
+            {
+                component =
+                    new RecursiveGraphTaskStandInComponent(this, state_);
+            }
+            else
+            {
+                component = new ExecutionInputRecorderComponent(
+                    passthrough_state_,
+                    component_guid);
+            }
             component->AddRef();
             *pp_out_component = component;
             return DAS_S_OK;
@@ -2305,7 +2516,6 @@ namespace
             *pp_out_session = nullptr;
 
             const std::string context_text = RefChainJsonText(p_context_json);
-            seen_contexts.push_back(context_text);
 
             // context 解析：repositoryEntryId 路由 + closureEntryIds 透传。
             std::optional<int64_t> entry_id;
@@ -2340,16 +2550,30 @@ namespace
                 return DAS_E_INVALID_ARGUMENT;
             }
 
-            if (*entry_id == 42)
+            const auto compile_counter = compile_counters_.find(*entry_id);
+            const auto real_entry = real_entries_.find(*entry_id);
+            const auto fake_entry = fake_entries_.find(*entry_id);
+            if (compile_counter == compile_counters_.end()
+                || (real_entry == real_entries_.end()
+                    && fake_entry == fake_entries_.end()))
             {
-                // 子条目：真实 Core 会话（context=被引条目文档 + catalog +
-                // 边界口 faces + 继承闭包栈——生产后端 resolver 的
-                // properties 预载同款合并语义）。creator 传本尊：子层编译
-                // 的注入 pass 经同一 creator 递归处理孙引用。
+                return DAS_E_INVALID_ARGUMENT;
+            }
+
+            counters_->session_calls[*entry_id] += 1;
+            counters_->routed_contexts.emplace_back(*entry_id, context_text);
+
+            if (real_entry != real_entries_.end())
+            {
+                // 真实 Core 会话（context=被引条目文档 + catalog + 边界口
+                // faces + 继承闭包栈——生产后端 resolver 的 properties 预
+                // 载同款合并语义）。creator 传本尊：子层编译的引用闭包
+                // pass 经同一 creator 递归处理更深的引用。
                 const std::string child_context =
-                    std::string(R"({"properties":)") + child_properties_json_
+                    std::string(R"({"properties":)")
+                    + real_entry->second.properties_json
                     + R"(,"actionCatalog":)" + catalog_json_
-                    + R"(,"nodeFaces":)" + child_node_faces_json_
+                    + R"(,"nodeFaces":)" + real_entry->second.node_faces_json
                     + R"(,"closureEntryIds":)" + closure_ids_text + "}";
                 GraphAuthoringSessionState* child_state = nullptr;
                 auto       ctx = RefChainMakeText(child_context);
@@ -2359,29 +2583,32 @@ namespace
                 {
                     return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
                 }
-                auto* session = new NestedChainRealSession(child_state);
+                auto* session = new NestedChainRealSession(
+                    child_state,
+                    compile_counter->second);
                 session->AddRef();
                 *pp_out_session = session;
                 return DAS_S_OK;
             }
 
-            // 孙条目（7）：固定 fake 会话（根 ports 自述 + 固定产物）。
             auto* session = new ReferenceChainFakeSession(
-                R"({"document":{"viewKind":"graph","ports":[{"id":"grand_out","type":"string","direction":"output"}]},"diagnostics":[]})",
-                grandchild_compile_json_);
+                fake_entry->second.document_json,
+                fake_entry->second.compile_json,
+                compile_counter->second);
             session->AddRef();
             *pp_out_session = session;
             return DAS_S_OK;
         }
 
-        std::vector<std::string> seen_contexts;
-
     private:
-        std::shared_ptr<ReferenceChainState> state_;
-        std::string                          grandchild_compile_json_;
-        std::string                          child_properties_json_;
-        std::string                          catalog_json_;
-        std::string                          child_node_faces_json_;
+        std::shared_ptr<RecursiveChainState>                 state_;
+        std::shared_ptr<RecursiveChainCounters>              counters_;
+        std::string                                          catalog_json_;
+        std::map<int64_t, RealEntry>                         real_entries_;
+        std::map<int64_t, FakeEntry>                         fake_entries_;
+        std::map<int64_t, std::shared_ptr<std::atomic<int>>> compile_counters_;
+        std::shared_ptr<ReferenceChainState> passthrough_state_ =
+            std::make_shared<ReferenceChainState>();
     };
 
     std::string RefChainJsonText(Das::ExportInterface::IDasJson* json)
@@ -2659,350 +2886,6 @@ TEST_F(E2EGraphFlowTest, ReferenceClosureInjectionReachesExecutionInputPort)
     ASSERT_TRUE(state->received)
         << "the bound GraphTask node must receive executionInput";
     EXPECT_EQ(state->execution_input_text, child_shell_text);
-}
-
-// 三层嵌套真实链：父图 GraphTask 节点绑子条目 42（真实 Core 会话），子图
-// 又含 GraphTask 节点绑孙条目 7（固定 fake）→ 编译期只算口面（父层
-// GetDocument 子条目），执行期递归现编（闭包栈经 context 跨层传递：子
-// [42] → 孙 [42,7]），执行绿灯（记录组件收到子层现编产物）。
-TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
-{
-    const auto state = std::make_shared<ReferenceChainState>();
-
-    // 孙条目 Compile 产物：固定 shell 串（真实 {"fingerprint","plan"} 形
-    // 态，单节点计划）。
-    std::string grandchild_shell_text;
-    {
-        CompiledGraphPlanDto grandchild_plan;
-        grandchild_plan.source_fingerprint = "fp_nested_grandchild";
-        CompiledNodeSnapshotDto grandchild_node;
-        grandchild_node.node_id = "grandchild_node";
-        grandchild_node.component_guid = std::string{REF_CHAIN_GRAPH_TASK_GUID};
-        grandchild_plan.node_snapshots.push_back(std::move(grandchild_node));
-        grandchild_plan.execution_order = {"grandchild_node"};
-        grandchild_shell_text =
-            Das::Utils::SerializeYyjsonValue(
-                BuildCompiledPlanShell(yyjson::object(grandchild_plan)))
-                .value_or("");
-        ASSERT_FALSE(grandchild_shell_text.empty());
-    }
-    std::string grandchild_compile_json;
-    {
-        yyjson::value compile_response(Das::Utils::MakeYyjsonObject());
-        auto          response_obj = compile_response.as_object();
-        yyjson::value compile_section(Das::Utils::MakeYyjsonObject());
-        (*compile_section.as_object())[std::string_view("executionInput")] =
-            yyjson::value(grandchild_shell_text);
-        (*response_obj)[std::string_view("compile")] =
-            std::move(compile_section);
-        (*response_obj)[std::string_view("diagnostics")] =
-            Das::Utils::MakeYyjsonArray();
-        grandchild_compile_json =
-            Das::Utils::SerializeYyjsonValue(
-                Das::Utils::CloneYyjsonValue(compile_response))
-                .value_or("");
-        ASSERT_FALSE(grandchild_compile_json.empty());
-    }
-
-    // 子条目文档（raw graph doc）：begin + GraphTask 节点（绑孙条目 7）+
-    // end。end 节点携带 nodeFaces（child_out 输出口）——图视图投影根
-    // ports section 的发射条件（faces 缺席时整 section 缺省，注入 pass 会
-    // 把子文档判为缺 root ports）。
-    constexpr std::string_view child_properties = R"json({
-        "documentId": "nested_child",
-        "nodes": [
-            {"nodeId": "cb", "target": {"targetKind": "componentRef", "componentRef": {"kind": "componentRef", "componentGuid": "A7D3F1B5-9E2C-4A8D-B6F0-3C5E7D9B1A4E", "pluginGuid": "{p}"}}},
-            {"nodeId": "c_task", "target": {"targetKind": "componentRef", "componentRef": {"kind": "componentRef", "componentGuid": ")json";
-    const std::string          child_properties_json =
-        std::string{child_properties} + std::string{REF_CHAIN_GRAPH_TASK_GUID}
-        + R"json(", "pluginGuid": "{p}"}}, "settings": {"repositoryRef": 7}},
-            {"nodeId": "ce", "target": {"targetKind": "componentRef", "componentRef": {"kind": "componentRef", "componentGuid": "E1B7C9D3-5F4A-4E2B-8D6C-7A9E1F3B5C2D", "pluginGuid": "{p}"}}}
-        ],
-        "edges": []
-    })json";
-    constexpr std::string_view child_node_faces =
-        R"json([{"nodeId": "ce", "ports": [{"id": "child_out", "type": "string", "direction": "output"}]}])json";
-
-    // catalog：GraphTask 组件声明 taskRepositoryRef 配置字段 +
-    // executionInput 端口（子层绑定判定的数据源）。
-    const std::string catalog =
-        std::string(R"([{"actionId":")")
-        + std::string{REF_CHAIN_GRAPH_TASK_GUID}
-        + R"(","ports":[{"portId":"executionInput","portType":"object","direction":"input"}],)"
-          R"("config":[{"name":"repositoryRef","type":"taskRepositoryRef","taskGuid":")"
-        + std::string{REF_CHAIN_GRAPH_TASK_GUID} + R"("}]}])";
-
-    auto creator = NestedChainCreatorHost::MakeImpl(
-        state,
-        grandchild_compile_json,
-        child_properties_json,
-        catalog,
-        std::string{child_node_faces});
-
-    // 父会话：真实 authoring 变更流建绑条目节点（entryId 42）。
-    const std::string parent_context =
-        std::string(R"({"actionCatalog":)") + catalog + "}";
-    GraphAuthoringSessionState* session_state = nullptr;
-    {
-        auto ctx = RefChainMakeText(parent_context);
-        ASSERT_EQ(
-            CreateGraphAuthoringSession(
-                creator.Get(),
-                ctx.Get(),
-                &session_state),
-            DAS_S_OK);
-    }
-    ASSERT_NE(session_state, nullptr);
-
-    std::string bound_node_id;
-    {
-        Das::DasPtr<Das::ExportInterface::IDasJson> add_result;
-        const auto                                  add_change =
-            std::string(
-                R"({"baseRevision":0,"kind":"addGraphNode","payload":{"actionId":")")
-            + std::string{REF_CHAIN_GRAPH_TASK_GUID} + R"("}})";
-        ASSERT_EQ(
-            GraphAuthoringSessionApplyChange(
-                session_state,
-                RefChainMakeText(add_change).Get(),
-                add_result.Put()),
-            DAS_S_OK);
-        const auto add_text = RefChainJsonText(add_result.Get());
-        ASSERT_EQ(add_text.find("\"errorKind\""), std::string::npos)
-            << add_text;
-        auto add_root = yyjson::read(add_text);
-        auto add_obj = add_root.as_object();
-        ASSERT_TRUE(add_obj.has_value());
-        ASSERT_TRUE(add_obj->contains(std::string_view("acceptedProperties")));
-        auto accepted = (*add_obj)[std::string_view("acceptedProperties")];
-        auto accepted_obj = accepted.as_object();
-        ASSERT_TRUE(accepted_obj.has_value());
-        auto nodes = (*accepted_obj)[std::string_view("nodes")].as_array();
-        ASSERT_TRUE(nodes.has_value());
-        for (const auto& node : *nodes)
-        {
-            auto serialized = Das::Utils::SerializeYyjsonValue(
-                                  Das::Utils::CloneYyjsonValue(node))
-                                  .value_or("");
-            if (serialized.find(std::string{REF_CHAIN_GRAPH_TASK_GUID})
-                != std::string::npos)
-            {
-                auto node_obj = node.as_object();
-                auto node_id =
-                    (*node_obj)[std::string_view("nodeId")].as_string();
-                ASSERT_TRUE(node_id.has_value());
-                bound_node_id = *node_id;
-                break;
-            }
-        }
-        ASSERT_FALSE(bound_node_id.empty()) << add_text;
-    }
-    {
-        Das::DasPtr<Das::ExportInterface::IDasJson> set_result;
-        const auto                                  set_change =
-            std::string(
-                R"({"baseRevision":1,"kind":"setValue","payload":{"target":{"kind":"graphNode","id":")")
-            + bound_node_id + R"("},"fieldName":"repositoryRef","value":42}})";
-        ASSERT_EQ(
-            GraphAuthoringSessionApplyChange(
-                session_state,
-                RefChainMakeText(set_change).Get(),
-                set_result.Put()),
-            DAS_S_OK);
-        const auto set_text = RefChainJsonText(set_result.Get());
-        ASSERT_EQ(set_text.find("\"errorKind\""), std::string::npos)
-            << set_text;
-    }
-
-    // 父编译：注入 pass 只算口面（父层 GetDocument 子条目），孙引用不触
-    // 及——编译期 creator 只收一次 CreateAuthoringSession。
-    std::string parent_shell_text;
-    {
-        Das::DasPtr<Das::ExportInterface::IDasJson> compiled;
-        ASSERT_EQ(
-            GraphAuthoringSessionCompile(
-                session_state,
-                nullptr,
-                compiled.Put()),
-            DAS_S_OK);
-        const auto envelope_text = RefChainJsonText(compiled.Get());
-        auto       envelope = yyjson::read(envelope_text);
-        auto       envelope_obj = envelope.as_object();
-        ASSERT_TRUE(envelope_obj.has_value());
-        auto compile_obj =
-            (*envelope_obj)[std::string_view("compile")].as_object();
-        ASSERT_TRUE(compile_obj.has_value());
-        const auto& execution_input =
-            (*compile_obj)[std::string_view("executionInput")];
-        if (const auto text = execution_input.as_string())
-        {
-            parent_shell_text = std::string(*text);
-        }
-        else
-        {
-            parent_shell_text =
-                Das::Utils::SerializeYyjsonValue(
-                    Das::Utils::CloneYyjsonValue(execution_input))
-                    .value_or("");
-        }
-        ASSERT_FALSE(parent_shell_text.empty()) << envelope_text;
-    }
-    DestroyGraphAuthoringSession(session_state);
-
-    const auto closure_ids_of =
-        [](const std::string& context_text) -> std::vector<int64_t>
-    {
-        auto parsed = yyjson::read(context_text);
-        auto obj = parsed.as_object();
-        if (!obj.has_value()
-            || !obj->contains(std::string_view("closureEntryIds")))
-        {
-            return {};
-        }
-        auto arr = (*obj)[std::string_view("closureEntryIds")].as_array();
-        if (!arr.has_value())
-        {
-            return {};
-        }
-        std::vector<int64_t> ids;
-        for (const auto& id_value : *arr)
-        {
-            ids.push_back(id_value.as_int().value_or(0));
-        }
-        return ids;
-    };
-
-    // 编译期取证：仅子条目（42）被开过会话（口面半段），context 闭包栈
-    // [42]；孙条目（7）编译期零触及。
-    ASSERT_EQ(creator->seen_contexts.size(), 1u);
-    {
-        const auto child_ids = closure_ids_of(creator->seen_contexts[0]);
-        ASSERT_EQ(child_ids.size(), 1u) << creator->seen_contexts[0];
-        EXPECT_EQ(child_ids[0], 42) << creator->seen_contexts[0];
-    }
-    const auto compile_time_context_count = creator->seen_contexts.size();
-
-    // 父 shell：绑条目记档在场（referenceEntries 携 bound 节点→42、闭包
-    // 栈空——顶层图），产物零寄存（无 executionInput 目标绑定）。
-    std::string parent_fingerprint;
-    {
-        auto shell = yyjson::read(parent_shell_text);
-        auto shell_obj = shell.as_object();
-        ASSERT_TRUE(shell_obj.has_value());
-        auto fingerprint =
-            (*shell_obj)[std::string_view("fingerprint")].as_string();
-        ASSERT_TRUE(fingerprint.has_value());
-        parent_fingerprint = *fingerprint;
-        auto plan_value = (*shell_obj)[std::string_view("plan")];
-        auto plan_obj = plan_value.as_object();
-        ASSERT_TRUE(plan_obj.has_value());
-        auto reference_entries =
-            (*plan_obj)[std::string_view("referenceEntries")].as_array();
-        ASSERT_TRUE(reference_entries.has_value());
-        ASSERT_EQ(reference_entries->size(), 1u);
-        auto entry_obj = (*reference_entries)[0].as_object();
-        ASSERT_TRUE(entry_obj.has_value());
-        EXPECT_EQ(
-            (*entry_obj)[std::string_view("nodeId")].as_string().value_or(""),
-            bound_node_id);
-        EXPECT_EQ(
-            (*entry_obj)[std::string_view("entryId")].as_int().value_or(0),
-            42);
-
-        auto binding_plan =
-            (*plan_obj)[std::string_view("bindingPlan")].as_object();
-        ASSERT_TRUE(binding_plan.has_value());
-        auto bindings =
-            (*binding_plan)[std::string_view("bindings")].as_array();
-        ASSERT_TRUE(bindings.has_value());
-        for (const auto& binding : *bindings)
-        {
-            auto binding_obj = binding.as_object();
-            if (!binding_obj.has_value())
-            {
-                continue;
-            }
-            auto target_port =
-                (*binding_obj)[std::string_view("targetPortId")].as_string();
-            if (!target_port.has_value() || *target_port != "executionInput")
-            {
-                continue;
-            }
-            // 派生悬空广播（null 默认）合法在场；钉死产物零寄存。
-            EXPECT_TRUE(
-                (*binding_obj)[std::string_view("defaultValue")].is_null())
-                << "executionInput binding must not carry an artifact "
-                   "(zero artifact registration)";
-        }
-    }
-
-    // 执行：递归即执行——运行时现编子条目（context 闭包栈 [42]），子会话
-    // 编译内部再对孙引用记档（GetDocument 7 时闭包栈 [42,7]）。
-    yyjson::value parent_plan_value;
-    {
-        auto shell_root = yyjson::read(parent_shell_text);
-        auto shell_obj = shell_root.as_object();
-        ASSERT_TRUE(shell_obj.has_value());
-        parent_plan_value = Das::Utils::CloneYyjsonValue(
-            (*shell_obj)[std::string_view("plan")]);
-    }
-    const auto parent_plan =
-        yyjson::cast<CompiledGraphPlanDto>(parent_plan_value);
-    GraphRuntime runtime;
-    const auto   hr = runtime.RunWithHost(
-        parent_plan,
-        parent_fingerprint,
-        token_.Get(),
-        creator.Get());
-    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
-    ASSERT_TRUE(state->received)
-        << "the bound GraphTask node must receive the child artifact";
-
-    // 执行期闭包栈跨层取证：运行时子会话 context [42]，孙条目 GetDocument
-    // context [42,7]（递归即执行 + 环防护跨执行层）。
-    ASSERT_EQ(creator->seen_contexts.size(), compile_time_context_count + 2u);
-    {
-        const auto run_child_ids =
-            closure_ids_of(creator->seen_contexts[compile_time_context_count]);
-        ASSERT_EQ(run_child_ids.size(), 1u);
-        EXPECT_EQ(run_child_ids[0], 42);
-    }
-    {
-        const auto grandchild_ids = closure_ids_of(
-            creator->seen_contexts[compile_time_context_count + 1]);
-        ASSERT_EQ(grandchild_ids.size(), 2u);
-        EXPECT_EQ(grandchild_ids[0], 42);
-        EXPECT_EQ(grandchild_ids[1], 7);
-    }
-
-    // 子层现编产物（执行期 Compile 的 executionInput）：解析为 shell，
-    // plan 携孙引用记档（c_task→7）与子层闭包栈 [42]——递归链的物证。
-    ASSERT_FALSE(state->execution_input_text.empty());
-    {
-        auto shell = yyjson::read(state->execution_input_text);
-        auto shell_obj = shell.as_object();
-        ASSERT_TRUE(shell_obj.has_value()) << state->execution_input_text;
-        auto plan_value = (*shell_obj)[std::string_view("plan")];
-        auto plan_obj = plan_value.as_object();
-        ASSERT_TRUE(plan_obj.has_value());
-        auto reference_entries =
-            (*plan_obj)[std::string_view("referenceEntries")].as_array();
-        ASSERT_TRUE(reference_entries.has_value());
-        ASSERT_EQ(reference_entries->size(), 1u);
-        auto entry_obj = (*reference_entries)[0].as_object();
-        ASSERT_TRUE(entry_obj.has_value());
-        EXPECT_EQ(
-            (*entry_obj)[std::string_view("nodeId")].as_string().value_or(""),
-            "c_task");
-        EXPECT_EQ(
-            (*entry_obj)[std::string_view("entryId")].as_int().value_or(0),
-            7);
-        auto closure_ids =
-            (*plan_obj)[std::string_view("closureEntryIds")].as_array();
-        ASSERT_TRUE(closure_ids.has_value());
-        ASSERT_EQ(closure_ids->size(), 1u);
-        EXPECT_EQ((*closure_ids)[0].as_int().value_or(0), 42);
-    }
 }
 
 // ===========================================================================
@@ -4696,4 +4579,376 @@ TEST_F(E2EGraphFlowTest, ReferenceClosureProjectsMultiValueTypedOutputs)
     ASSERT_TRUE(multivalue_state->received_string_present)
         << "the string downstream node never received e_2";
     EXPECT_EQ(multivalue_state->received_string_value, "multi-out");
+}
+
+// ===========================================================================
+// 递归即执行与条目环 E2E（执行时编译深验）
+// ===========================================================================
+namespace
+{
+    // 真实条目文档：begin + 绑条目 GraphTask 节点（repositoryRef=被引条
+    // 目）+ end。end 节点 faces 携带输出口——图视图投影根 ports section 的
+    // 发射条件（faces 缺席时整 section 缺省，引用闭包 pass 会把子文档判
+    // 为缺 root ports）。
+    std::string MakeRecursiveEntryDocument(
+        const std::string& bound_node_id,
+        int64_t            referenced_entry_id)
+    {
+        return std::string(R"({"documentId":")") + bound_node_id
+               + R"(_doc","nodes":[)"
+               + MakeChainNode("cb", GRAPH_BEGIN_NODE_GUID, "{}") + ","
+               + MakeChainNode(
+                   bound_node_id,
+                   std::string{REF_CHAIN_GRAPH_TASK_GUID},
+                   std::string(R"({"repositoryRef":)")
+                       + std::to_string(referenced_entry_id) + "}")
+               + "," + MakeChainNode("ce", GRAPH_END_NODE_GUID, "{}")
+               + R"(],"edges":[]})";
+    }
+
+    std::string MakeRecursiveEntryNodeFaces()
+    {
+        return R"json([{"nodeId": "ce", "ports": [{"id": "recursive_out", "type": "string", "direction": "output"}]}])json";
+    }
+
+    std::vector<int64_t> ClosureIdsOfContext(const std::string& context_text)
+    {
+        auto parsed = yyjson::read(context_text);
+        auto obj = parsed.as_object();
+        if (!obj.has_value()
+            || !obj->contains(std::string_view("closureEntryIds")))
+        {
+            return {};
+        }
+        auto arr = (*obj)[std::string_view("closureEntryIds")].as_array();
+        if (!arr.has_value())
+        {
+            return {};
+        }
+        std::vector<int64_t> ids;
+        for (const auto& id_value : *arr)
+        {
+            ids.push_back(id_value.as_int().value_or(0));
+        }
+        return ids;
+    }
+} // namespace
+
+// 三层嵌套真实链：父图绑子条目 42（真实 Core 会话），子图又绑孙条目 7
+// （固定 fake）→ 编译期只算口面（零 Compile 调用），执行期逐层现编——
+// 子条目编译于父图 Run、孙条目编译于子图 Run（GraphTask 形替身跑内层计
+// 划承载递归），内层产物逐层送达组件，闭包栈跨层传递（[42] → [42,7]）。
+TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
+{
+    const auto state = std::make_shared<RecursiveChainState>();
+    const auto counters = std::make_shared<RecursiveChainCounters>();
+
+    // 孙条目 Compile 产物：固定 shell（单叶节点计划——叶组件走直通记录分
+    // 支，孙图无更深引用）。
+    std::string grandchild_shell_text;
+    {
+        CompiledGraphPlanDto grandchild_plan;
+        grandchild_plan.source_fingerprint = "fp_nested_grandchild";
+        CompiledNodeSnapshotDto grandchild_node;
+        grandchild_node.node_id = "grandchild_node";
+        grandchild_node.component_guid = RECURSIVE_CHAIN_LEAF_GUID;
+        grandchild_plan.node_snapshots.push_back(std::move(grandchild_node));
+        grandchild_plan.execution_order = {"grandchild_node"};
+        grandchild_shell_text =
+            Das::Utils::SerializeYyjsonValue(
+                BuildCompiledPlanShell(yyjson::object(grandchild_plan)))
+                .value_or("");
+        ASSERT_FALSE(grandchild_shell_text.empty());
+    }
+
+    const std::string catalog =
+        std::string(R"([)") + MakeGraphTaskCatalogEntry() + "]";
+
+    auto creator =
+        RecursiveChainCreatorHost::MakeImpl(state, counters, catalog);
+    creator->AddRealEntry(
+        42,
+        {MakeRecursiveEntryDocument("c_task", 7),
+         MakeRecursiveEntryNodeFaces()});
+    creator->AddFakeEntry(
+        7,
+        {MakeEntryDocument(
+             R"({"id":"grand_out","type":"string","direction":"output"})"),
+         MakeEntryCompileResponse(grandchild_shell_text)});
+
+    // 父图文档：begin + 绑条目 GraphTask 节点（entry 42）+ end。
+    const std::string parent_document =
+        std::string(R"({"documentId":"nested-recursive","version":1,"nodes":[)")
+        + MakeChainNode("n_begin", GRAPH_BEGIN_NODE_GUID, "{}") + ","
+        + MakeChainNode(
+            "n_bound",
+            std::string{REF_CHAIN_GRAPH_TASK_GUID},
+            R"({"repositoryRef":42})")
+        + "," + MakeChainNode("n_end", GRAPH_END_NODE_GUID, "{}") + "]}";
+
+    ChainPlanHandle parent;
+    CompileChainPlan(
+        creator.Get(),
+        MakeChainContext(parent_document, catalog),
+        parent);
+    ASSERT_NO_FATAL_FAILURE(ExpectReferenceRecordAndZeroArtifactBinding(
+        parent.plan,
+        "n_bound",
+        42));
+
+    // 编译期取证：口面半段只 GetDocument——子条目（42）被开过一次会话，
+    // 两条目的 Compile 均零调用。
+    ASSERT_EQ(counters->session_calls[42], 1);
+    ASSERT_EQ(counters->session_calls[7], 0);
+    EXPECT_EQ(creator->CompileCallsOf(42), 0);
+    EXPECT_EQ(creator->CompileCallsOf(7), 0);
+
+    // 执行：递归即执行——父图 Run 期间现编子条目，子图 Run 期间现编孙条
+    // 目（每层 Run 各有编译调用）。
+    GraphRuntime runtime;
+    const auto   hr = runtime.RunWithHost(
+        parent.plan,
+        parent.fingerprint,
+        token_.Get(),
+        creator.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    EXPECT_EQ(creator->CompileCallsOf(42), 1)
+        << "the child entry must compile during the parent graph Run";
+    EXPECT_EQ(creator->CompileCallsOf(7), 1)
+        << "the grandchild entry must compile during the child graph Run";
+    ASSERT_EQ(counters->session_calls[42], 2);
+    ASSERT_EQ(counters->session_calls[7], 2);
+
+    // 执行期闭包栈跨层取证：子会话 context [42]，孙会话 context [42,7]
+    // （孙会话两次——子条目编译的口面半段与孙图执行时编译各一）。
+    {
+        const auto& run_contexts = counters->routed_contexts;
+        ASSERT_EQ(run_contexts.size(), 4u);
+        EXPECT_EQ(run_contexts[1].first, 42);
+        EXPECT_EQ(
+            ClosureIdsOfContext(run_contexts[1].second),
+            (std::vector<int64_t>{42}));
+        EXPECT_EQ(run_contexts[2].first, 7);
+        EXPECT_EQ(
+            ClosureIdsOfContext(run_contexts[2].second),
+            (std::vector<int64_t>{42, 7}));
+        EXPECT_EQ(run_contexts[3].first, 7);
+        EXPECT_EQ(
+            ClosureIdsOfContext(run_contexts[3].second),
+            (std::vector<int64_t>{42, 7}));
+    }
+
+    // 内层产物逐层送达组件：父节点收子条目 shell（plan 携孙引用记档与子
+    // 层闭包栈 [42]），子节点收孙条目固定 shell。
+    ASSERT_EQ(state->delivered_artifacts.size(), 2u);
+    {
+        auto shell = yyjson::read(state->delivered_artifacts[0]);
+        auto shell_obj = shell.as_object();
+        ASSERT_TRUE(shell_obj.has_value()) << state->delivered_artifacts[0];
+        auto plan_obj = (*shell_obj)[std::string_view("plan")].as_object();
+        ASSERT_TRUE(plan_obj.has_value());
+        auto reference_entries =
+            (*plan_obj)[std::string_view("referenceEntries")].as_array();
+        ASSERT_TRUE(reference_entries.has_value());
+        ASSERT_EQ(reference_entries->size(), 1u);
+        auto entry_obj = (*reference_entries)[0].as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        EXPECT_EQ(
+            (*entry_obj)[std::string_view("nodeId")].as_string().value_or(""),
+            "c_task");
+        EXPECT_EQ(
+            (*entry_obj)[std::string_view("entryId")].as_int().value_or(0),
+            7);
+        auto closure_ids =
+            (*plan_obj)[std::string_view("closureEntryIds")].as_array();
+        ASSERT_TRUE(closure_ids.has_value());
+        ASSERT_EQ(closure_ids->size(), 1u);
+        EXPECT_EQ((*closure_ids)[0].as_int().value_or(0), 42);
+    }
+    EXPECT_EQ(state->delivered_artifacts[1], grandchild_shell_text);
+}
+
+// 条目环 A→B→A：父图绑条目 100（A），A 的文档绑 200（B），B 的文档绑回
+// 100——执行 A 的引用节点编译 B 时，B 的闭包面发现 A 在闭包栈上（执行时
+// context 携 [100] → [100,200]，环检测跨执行层生效），具名环诊断随编译
+// 期否决产物（空执行序）冒泡为节点失败，递归有界不挂死。
+TEST_F(
+    E2EGraphFlowTest,
+    EntryCycleThroughBoundReferenceFailsWithNamedDiagnostic)
+{
+    const auto state = std::make_shared<RecursiveChainState>();
+    const auto counters = std::make_shared<RecursiveChainCounters>();
+
+    const std::string catalog =
+        std::string(R"([)") + MakeGraphTaskCatalogEntry() + "]";
+
+    auto creator =
+        RecursiveChainCreatorHost::MakeImpl(state, counters, catalog);
+    creator->AddRealEntry(
+        100,
+        {MakeRecursiveEntryDocument("a_task", 200),
+         MakeRecursiveEntryNodeFaces()});
+    creator->AddRealEntry(
+        200,
+        {MakeRecursiveEntryDocument("b_task", 100),
+         MakeRecursiveEntryNodeFaces()});
+
+    const std::string parent_document =
+        std::string(
+            R"({"documentId":"cycle-through-bound","version":1,"nodes":[)")
+        + MakeChainNode("n_begin", GRAPH_BEGIN_NODE_GUID, "{}") + ","
+        + MakeChainNode(
+            "n_bound",
+            std::string{REF_CHAIN_GRAPH_TASK_GUID},
+            R"({"repositoryRef":100})")
+        + "," + MakeChainNode("n_end", GRAPH_END_NODE_GUID, "{}") + "]}";
+
+    ChainPlanHandle parent;
+    CompileChainPlan(
+        creator.Get(),
+        MakeChainContext(parent_document, catalog),
+        parent);
+    ASSERT_NO_FATAL_FAILURE(ExpectReferenceRecordAndZeroArtifactBinding(
+        parent.plan,
+        "n_bound",
+        100));
+
+    GraphRuntime runtime;
+    const auto   hr = runtime.RunWithHost(
+        parent.plan,
+        parent.fingerprint,
+        token_.Get(),
+        creator.Get());
+
+    // 节点失败冒泡：环诊断经「编译期否决产物拒绝」路径终止整图（有限时
+    // 间返回，非挂死）。
+    EXPECT_NE(hr, DAS_S_OK);
+    ASSERT_NE(
+        state->innermost_error.find(
+            "appears again on the reference closure stack"),
+        std::string::npos)
+        << state->innermost_error;
+    EXPECT_NE(
+        state->innermost_error.find("100 -> 200 -> 100"),
+        std::string::npos)
+        << state->innermost_error;
+
+    // 递归有界取证：A 编译一次（父图 Run）+ B 编译一次（A 图 Run，环在
+    // 此检出）——B 的计划不执行任何节点，环不再展开。
+    EXPECT_EQ(creator->CompileCallsOf(100), 1);
+    EXPECT_EQ(creator->CompileCallsOf(200), 1);
+    ASSERT_EQ(counters->session_calls[100], 2);
+    ASSERT_EQ(counters->session_calls[200], 2);
+
+    // 环检出层的产物=编译期否决产物：送达组件但执行序为空（诊断携带者）。
+    ASSERT_EQ(state->delivered_artifacts.size(), 2u);
+    {
+        auto shell = yyjson::read(state->delivered_artifacts[1]);
+        auto shell_obj = shell.as_object();
+        ASSERT_TRUE(shell_obj.has_value()) << state->delivered_artifacts[1];
+        auto plan_obj = (*shell_obj)[std::string_view("plan")].as_object();
+        ASSERT_TRUE(plan_obj.has_value());
+        auto execution_order =
+            (*plan_obj)[std::string_view("executionOrder")].as_array();
+        ASSERT_TRUE(execution_order.has_value());
+        EXPECT_TRUE(execution_order->empty())
+            << "the cycle-detected entry must compile to a vetoed plan";
+    }
+}
+
+// 条目环 B→C→B（顶层进 B——闭包栈含自身条目 id 的硬验收）：父图直接绑
+// 条目 200（B），B 的文档绑 300（C），C 的文档绑回 200——B 首跳编译的
+// context 闭包栈即携 [200]（执行时编译段=本图栈+本条目），C 的闭包面据
+// 此检出 200 重现，同 A→B→A 形态冒泡节点失败，不挂死。
+TEST_F(
+    E2EGraphFlowTest,
+    EntryCycleEnteredFromTopLevelEntryFailsWithNamedDiagnostic)
+{
+    const auto state = std::make_shared<RecursiveChainState>();
+    const auto counters = std::make_shared<RecursiveChainCounters>();
+
+    const std::string catalog =
+        std::string(R"([)") + MakeGraphTaskCatalogEntry() + "]";
+
+    auto creator =
+        RecursiveChainCreatorHost::MakeImpl(state, counters, catalog);
+    creator->AddRealEntry(
+        200,
+        {MakeRecursiveEntryDocument("b_task", 300),
+         MakeRecursiveEntryNodeFaces()});
+    creator->AddRealEntry(
+        300,
+        {MakeRecursiveEntryDocument("c_task", 200),
+         MakeRecursiveEntryNodeFaces()});
+
+    const std::string parent_document =
+        std::string(
+            R"({"documentId":"cycle-from-top-entry","version":1,"nodes":[)")
+        + MakeChainNode("n_begin", GRAPH_BEGIN_NODE_GUID, "{}") + ","
+        + MakeChainNode(
+            "n_bound",
+            std::string{REF_CHAIN_GRAPH_TASK_GUID},
+            R"({"repositoryRef":200})")
+        + "," + MakeChainNode("n_end", GRAPH_END_NODE_GUID, "{}") + "]}";
+
+    ChainPlanHandle parent;
+    CompileChainPlan(
+        creator.Get(),
+        MakeChainContext(parent_document, catalog),
+        parent);
+    ASSERT_NO_FATAL_FAILURE(ExpectReferenceRecordAndZeroArtifactBinding(
+        parent.plan,
+        "n_bound",
+        200));
+
+    const auto contexts_before_run = counters->routed_contexts.size();
+    ASSERT_EQ(contexts_before_run, 1u);
+
+    GraphRuntime runtime;
+    const auto   hr = runtime.RunWithHost(
+        parent.plan,
+        parent.fingerprint,
+        token_.Get(),
+        creator.Get());
+
+    // 首跳闭包栈硬验收：Run 期间第一个 context（B 的执行时编译）闭包栈
+    // =[200]——本图栈空 + 本条目 id（缺失则环要再绕一层才检出，防护位
+    // 语义钉死）。
+    ASSERT_GT(counters->routed_contexts.size(), contexts_before_run);
+    EXPECT_EQ(counters->routed_contexts[contexts_before_run].first, 200);
+    EXPECT_EQ(
+        ClosureIdsOfContext(
+            counters->routed_contexts[contexts_before_run].second),
+        (std::vector<int64_t>{200}));
+
+    EXPECT_NE(hr, DAS_S_OK);
+    ASSERT_NE(
+        state->innermost_error.find(
+            "appears again on the reference closure stack"),
+        std::string::npos)
+        << state->innermost_error;
+    EXPECT_NE(
+        state->innermost_error.find("200 -> 300 -> 200"),
+        std::string::npos)
+        << state->innermost_error;
+
+    EXPECT_EQ(creator->CompileCallsOf(200), 1);
+    EXPECT_EQ(creator->CompileCallsOf(300), 1);
+    ASSERT_EQ(counters->session_calls[200], 2);
+    ASSERT_EQ(counters->session_calls[300], 2);
+
+    ASSERT_EQ(state->delivered_artifacts.size(), 2u);
+    {
+        auto shell = yyjson::read(state->delivered_artifacts[1]);
+        auto shell_obj = shell.as_object();
+        ASSERT_TRUE(shell_obj.has_value()) << state->delivered_artifacts[1];
+        auto plan_obj = (*shell_obj)[std::string_view("plan")].as_object();
+        ASSERT_TRUE(plan_obj.has_value());
+        auto execution_order =
+            (*plan_obj)[std::string_view("executionOrder")].as_array();
+        ASSERT_TRUE(execution_order.has_value());
+        EXPECT_TRUE(execution_order->empty())
+            << "the cycle-detected entry must compile to a vetoed plan";
+    }
 }

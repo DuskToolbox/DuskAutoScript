@@ -37,10 +37,6 @@ namespace
         "69F20008-0000-4000-8000-000000000001";
     const std::string NODE_ID = "30000000-0000-0000-0000-000000000001";
 
-    // 图输入广播绑定哨兵（与 GraphRuntime/DoAdapter 的 BROADCAST_SOURCE
-    // 一致）：source 不是真实节点，default_value 直接物化到目标输入口。
-    constexpr std::string_view GRAPH_INPUT_BROADCAST_SOURCE = "$graph_input";
-
     // ---- Mock StopToken ----
 
     class MockStopToken final
@@ -173,8 +169,10 @@ namespace
         return serialized.value_or("{}");
     }
 
-    CompiledGraphPlanDto MakeSingleMaapiRunNodePlan(
-        const std::string& artifact_text)
+    // 执行时编译链计划：单 maapi.run 节点 + 绑条目记档（node→entryId——
+    // 执行时编译段的驱动数据）。产物零寄存——envelope 由运行时在节点执行
+    // 期间经 creator 现编写进 executionInput 协议保留键。
+    CompiledGraphPlanDto MakeSingleMaapiRunNodePlan()
     {
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_e2e";
@@ -192,17 +190,7 @@ namespace
         plan.node_snapshots.push_back(std::move(snap));
         plan.execution_order.push_back(NODE_ID);
 
-        // 图输入广播绑定：编译产物串以字符串标量物化到 executionInput
-        // 输入口（GraphRuntime 只对标量做广播注入，对象/数组会被跳过）。
-        // yyjson::value 的 lvalue std::string 路径存的是视图（悬垂），
-        // 必须走 rvalue 拷贝路径让其持有字节。
-        PortBindingDto broadcast;
-        broadcast.source_node_id = std::string{GRAPH_INPUT_BROADCAST_SOURCE};
-        broadcast.source_port_id = "artifact";
-        broadcast.target_node_id = NODE_ID;
-        broadcast.target_port_id = "executionInput";
-        broadcast.default_value = yyjson::value(std::string{artifact_text});
-        plan.binding_plan.bindings.push_back(std::move(broadcast));
+        plan.reference_entries.push_back(ReferenceEntryDto{NODE_ID, 42});
 
         return plan;
     }
@@ -830,11 +818,11 @@ namespace
 // ===================================================================
 // Test 1: MaapiRunNodeExecutesInjectedEnvelopeInGraphRuntime
 //
-// tracer 端到端链路验收（引用闭包注入链形态）：
-//   GraphRuntime::RunWithHost → maapi run 组件节点（无中间人组件）→
-//   $graph_input 广播物化 executionInput（被引条目编译产物=envelope
-//   原文）→ MaapiRunTaskComponent::Do → 共享执行内核 → MaaRuntime::Run
-//   （FakeMaaApiBoundary 观测）
+// tracer 端到端链路验收（执行时编译链形态）：
+//   GraphRuntime::RunWithHost → 绑条目 maapi.run 节点执行期间经 creator
+//   现编（host mock 链为指定载体）→ 产物写 executionInput 协议保留键
+//   （envelope 原文）→ MaapiRunTaskComponent::Do → 共享执行内核 →
+//   MaaRuntime::Run（FakeMaaApiBoundary 观测）
 // ===================================================================
 
 TEST(MaapiGraphE2ETest, MaapiRunNodeExecutesInjectedEnvelopeInGraphRuntime)
@@ -842,7 +830,7 @@ TEST(MaapiGraphE2ETest, MaapiRunNodeExecutesInjectedEnvelopeInGraphRuntime)
     FakeMaaApiBoundary       fake;
     const ScopedBoundaryHook hook(fake);
 
-    auto plan = MakeSingleMaapiRunNodePlan(MakeEnvelopeArtifactText());
+    auto plan = MakeSingleMaapiRunNodePlan();
 
     auto host = MaapiMockHost::Make();
     auto token = PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
@@ -872,7 +860,7 @@ TEST(MaapiGraphE2ETest, MaapiRunNodePropagatesChildFailureToGraph)
     fake.wait_status_by_entry["StartE2E"] = MaaTaskStatus::Failed;
     const ScopedBoundaryHook hook(fake);
 
-    auto plan = MakeSingleMaapiRunNodePlan(MakeEnvelopeArtifactText());
+    auto plan = MakeSingleMaapiRunNodePlan();
 
     auto host = MaapiMockHost::Make();
     auto token = PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
