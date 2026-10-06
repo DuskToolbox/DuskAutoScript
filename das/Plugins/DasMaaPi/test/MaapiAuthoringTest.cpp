@@ -10,6 +10,7 @@
 #include <das/DasString.hpp>
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
+#include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Plugins/DasMaaPi/PiCatalog.h>
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
@@ -10924,6 +10925,231 @@ TEST(MaapiCompileDeviceCacheTest, EmptySelectedDeviceUsesRawJsonAndIgnoresCache)
         }
     }
     EXPECT_FALSE(found_cache_warning);
+}
+
+// ===== CompileMaapi 设备现扫四形态 + 地址未选择（execution 装配段语义） =====
+// 设备六字段装配只发生在 purpose=execution 编译——按地址唯一命中选中
+// （地址是持久化选择键，唯一才选中；不做名称消歧），扫不到/多台同地址
+// =遇缺即错具名诊断；preview 编译零设备动作（不扫、不查缓存、不填六字
+// 段）；地址未选择不因设备失败（运行期 adb-device-missing 兜底）。
+// 设备表经第 4 参注入（枚举器形态前身为 device_cache 指针，语义同为
+// 「本次可见设备清单」）。
+
+namespace
+{
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto MakeAdbScanFixtureSettings(
+        const char* selected_address)
+    {
+        Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+        settings.adapter.interface_path =
+            Das::Utils::PathToUtf8(FixturePath("interface_controller.jsonc"));
+        settings.pi.controller_name = "Android";
+        if (selected_address != nullptr)
+        {
+            settings.pi.controller_adb_device = selected_address;
+        }
+        return settings;
+    }
+
+    Das::Plugins::DasMaaPi::AdbDeviceInfo MakeScanDevice(const char* address)
+    {
+        Das::Plugins::DasMaaPi::AdbDeviceInfo device;
+        device.name = std::string("emulator@") + address;
+        device.adb_path = "/scan/adb";
+        device.address = address;
+        device.screencap_methods = 0x11;
+        device.input_methods = 0x22;
+        device.config = R"({"scan":true})";
+        return device;
+    }
+
+    const Das::Plugins::DasMaaPi::PiDiagnosticDto* FindDiagnosticByCode(
+        const Das::Plugins::DasMaaPi::CompileResultDto& compile,
+        const char*                                     code)
+    {
+        for (const auto& diag : compile.diagnostics)
+        {
+            if (diag.code == code)
+            {
+                return &diag;
+            }
+        }
+        return nullptr;
+    }
+} // namespace
+
+// execution + 已选地址 + 扫描零设备 → 遇缺即错：ok=false + 具名
+// adb-device-missing 诊断（int_code 复用 -10010 语义，不新配号）。
+TEST(MaapiCompileAdbDeviceScanTest, ExecutionMissingDeviceFailsCompile)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto parsed = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_controller.jsonc")});
+    ASSERT_TRUE(parsed.ok);
+
+    const auto settings = MakeAdbScanFixtureSettings("127.0.0.1:5554");
+    // 扫描结果为空表（设备已拔出 / toolkit 不可用降级同为空表形态）。
+    const std::vector<AdbDeviceInfo> devices;
+
+    auto compile =
+        CompileMaapi(settings, parsed.catalog, "execution", &devices);
+    EXPECT_FALSE(compile.ok);
+    const auto* diag = FindDiagnosticByCode(compile, "adb-device-missing");
+    ASSERT_NE(diag, nullptr);
+    EXPECT_EQ(diag->severity, "error");
+    ASSERT_TRUE(diag->int_code.has_value());
+    EXPECT_EQ(*diag->int_code, DAS_E_MAAPI_ADB_DEVICE_MISSING);
+}
+
+// execution + N 台设备但无地址命中 → 同为设备未找到（遇缺即错）。
+TEST(MaapiCompileAdbDeviceScanTest, ExecutionNoAddressMatchFailsCompile)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto parsed = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_controller.jsonc")});
+    ASSERT_TRUE(parsed.ok);
+
+    const auto settings = MakeAdbScanFixtureSettings("127.0.0.1:5554");
+    std::vector<AdbDeviceInfo> devices;
+    devices.push_back(MakeScanDevice("127.0.0.1:5556"));
+    devices.push_back(MakeScanDevice("127.0.0.1:5558"));
+
+    auto compile =
+        CompileMaapi(settings, parsed.catalog, "execution", &devices);
+    EXPECT_FALSE(compile.ok);
+    const auto* diag = FindDiagnosticByCode(compile, "adb-device-missing");
+    ASSERT_NE(diag, nullptr);
+    EXPECT_EQ(diag->severity, "error");
+}
+
+// execution + 多台设备同地址 → 唯一才选中：ok=false + 具名
+// adb-device-ambiguous 诊断。
+TEST(MaapiCompileAdbDeviceScanTest, ExecutionAmbiguousAddressFailsCompile)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto parsed = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_controller.jsonc")});
+    ASSERT_TRUE(parsed.ok);
+
+    const auto settings = MakeAdbScanFixtureSettings("127.0.0.1:5554");
+    std::vector<AdbDeviceInfo> devices;
+    devices.push_back(MakeScanDevice("127.0.0.1:5554"));
+    devices.push_back(MakeScanDevice("127.0.0.1:5554"));
+
+    auto compile =
+        CompileMaapi(settings, parsed.catalog, "execution", &devices);
+    EXPECT_FALSE(compile.ok);
+    const auto* diag = FindDiagnosticByCode(compile, "adb-device-ambiguous");
+    ASSERT_NE(diag, nullptr);
+    EXPECT_EQ(diag->severity, "error");
+}
+
+// execution + 单设备地址命中 → 六字段 typed init params 全部来自活扫描值
+// （地址/adbPath/screencap/input/config 覆盖 raw_json）。
+TEST(MaapiCompileAdbDeviceScanTest, ExecutionScanHitFillsTypedInitParams)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto parsed = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_controller.jsonc")});
+    ASSERT_TRUE(parsed.ok);
+
+    const auto settings = MakeAdbScanFixtureSettings("127.0.0.1:5554");
+    std::vector<AdbDeviceInfo> devices;
+    devices.push_back(MakeScanDevice("127.0.0.1:5554"));
+
+    auto compile =
+        CompileMaapi(settings, parsed.catalog, "execution", &devices);
+    ASSERT_TRUE(compile.ok);
+    ASSERT_TRUE(compile.execution_input.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params->adb.has_value());
+    const auto& adb =
+        *compile.execution_input->maapi.controller_init_params->adb;
+    EXPECT_EQ(adb.address, "127.0.0.1:5554");
+    EXPECT_EQ(adb.adb_path, "/scan/adb");
+    EXPECT_EQ(adb.screencap_method, 0x11u);
+    EXPECT_EQ(adb.input_method, 0x22u);
+    EXPECT_EQ(adb.config_json, R"({"scan":true})");
+}
+
+// preview + 含匹配设备的设备表 → 零设备动作：六字段不填（保持 raw_json
+// 值），无任何 adb-device 诊断；preview 编译本身 ok（离线可过）。
+TEST(MaapiCompileAdbDeviceScanTest, PreviewTakesNoDeviceAction)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto parsed = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_controller.jsonc")});
+    ASSERT_TRUE(parsed.ok);
+
+    const auto settings = MakeAdbScanFixtureSettings("127.0.0.1:5554");
+    std::vector<AdbDeviceInfo> devices;
+    devices.push_back(MakeScanDevice("127.0.0.1:5554"));
+
+    auto compile = CompileMaapi(settings, parsed.catalog, "preview", &devices);
+    ASSERT_TRUE(compile.ok);
+    ASSERT_TRUE(compile.execution_input.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params->adb.has_value());
+    const auto& adb =
+        *compile.execution_input->maapi.controller_init_params->adb;
+    // raw_json 既有值：fixture address=127.0.0.1:5555、adbPath 缺省 "adb"。
+    EXPECT_EQ(adb.address, "127.0.0.1:5555");
+    EXPECT_EQ(adb.adb_path, "adb");
+    EXPECT_EQ(adb.screencap_method, 0u);
+    EXPECT_EQ(adb.input_method, 0u);
+    EXPECT_EQ(adb.config_json, "{}");
+    for (const auto& diag : compile.diagnostics)
+    {
+        EXPECT_TRUE(
+            diag.code != "adb-device-missing"
+            && diag.code != "adb-device-ambiguous"
+            && diag.code != "adb-device-cache-miss")
+            << "unexpected device diagnostic: " << diag.code;
+    }
+}
+
+// execution + 地址未选择（空）→ 编译不因设备失败，六字段取 raw_json
+// （运行期 MaapiRuntime 既有 -10010 路径兜底——既有行为保持）。
+TEST(MaapiCompileAdbDeviceScanTest, ExecutionWithoutSelectedAddressUsesRawJson)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto parsed = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_controller.jsonc")});
+    ASSERT_TRUE(parsed.ok);
+
+    const auto                 settings = MakeAdbScanFixtureSettings(nullptr);
+    std::vector<AdbDeviceInfo> devices;
+    devices.push_back(MakeScanDevice("127.0.0.1:5554"));
+
+    auto compile =
+        CompileMaapi(settings, parsed.catalog, "execution", &devices);
+    ASSERT_TRUE(compile.ok);
+    ASSERT_TRUE(compile.execution_input.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params->adb.has_value());
+    const auto& adb =
+        *compile.execution_input->maapi.controller_init_params->adb;
+    EXPECT_EQ(adb.address, "127.0.0.1:5555");
+    EXPECT_EQ(adb.adb_path, "adb");
+    for (const auto& diag : compile.diagnostics)
+    {
+        EXPECT_TRUE(
+            diag.code != "adb-device-missing"
+            && diag.code != "adb-device-ambiguous")
+            << "unexpected device diagnostic: " << diag.code;
+    }
 }
 
 // schedule.kind 投影为根字段（select：candidates off/interval/daily）。
