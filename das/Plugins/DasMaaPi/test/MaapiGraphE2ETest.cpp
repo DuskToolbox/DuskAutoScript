@@ -493,9 +493,9 @@ namespace
 
     // worker 模式注入链的编译腿：真实 Core 会话（C ABI）+ 绑条目
     // maapi.run 节点（真实 authoring 变更流）+ 注入 pass 编译。成功时
-    // out_plan 携带产物广播绑定（$graph_input → executionInput，
-    // default_value=被引条目 compile 段 envelope 原文）。返回 false 时
-    // 失败细节已经 EXPECT 输出，out 参数无效。
+    // out_plan 携带绑条目记档（referenceEntries——执行时编译段的驱动数
+    // 据）且产物零寄存。返回 false 时失败细节已经 EXPECT 输出，out 参数
+    // 无效。
     bool CompileBoundMaapiRunNodePlan(
         const std::string& envelope_text,
         Das::DasPtr<Das::PluginInterface::IDasTaskComponentCreator>&
@@ -722,8 +722,9 @@ namespace
         }
         DestroyGraphAuthoringSession(session_state);
 
-        // 解析父 shell：断言 binding_plan 含产物广播绑定（$graph_input →
-        // bound 节点 executionInput，default_value=compile 段原文）。
+        // 解析父 shell：断言绑条目记档在场（referenceEntries 携 bound 节
+        // 点→42——执行时编译段的驱动数据）且产物零寄存（无 executionInput
+        // 目标绑定）。
         yyjson::value parent_plan_value;
         {
             auto shell = yyjson::read(parent_shell_text);
@@ -751,60 +752,70 @@ namespace
             }
             // DTO 序列化为 camelCase 键（PFR 字段名驼峰化——
             // CompiledArtifactTest 契约）。
+            auto reference_entries =
+                (*plan_obj)[std::string_view("referenceEntries")].as_array();
+            if (!reference_entries.has_value())
+            {
+                EXPECT_TRUE(reference_entries.has_value());
+                return false;
+            }
+            bool found_record = false;
+            for (const auto& entry : *reference_entries)
+            {
+                auto entry_obj = entry.as_object();
+                if (!entry_obj.has_value())
+                {
+                    continue;
+                }
+                auto node_id =
+                    (*entry_obj)[std::string_view("nodeId")].as_string();
+                auto entry_id =
+                    (*entry_obj)[std::string_view("entryId")].as_int();
+                if (!node_id.has_value() || *node_id != bound_node_id)
+                {
+                    continue;
+                }
+                EXPECT_EQ(entry_id.value_or(0), 42);
+                found_record = true;
+            }
+            if (!found_record)
+            {
+                EXPECT_TRUE(found_record)
+                    << "compiled plan must record the bound entry";
+                return false;
+            }
             auto binding_plan =
                 (*plan_obj)[std::string_view("bindingPlan")].as_object();
-            if (!binding_plan.has_value())
+            if (binding_plan.has_value())
             {
-                EXPECT_TRUE(binding_plan.has_value());
-                return false;
-            }
-            auto bindings =
-                (*binding_plan)[std::string_view("bindings")].as_array();
-            if (!bindings.has_value())
-            {
-                EXPECT_TRUE(bindings.has_value());
-                return false;
-            }
-            bool found_broadcast = false;
-            for (const auto& binding : *bindings)
-            {
-                auto binding_obj = binding.as_object();
-                if (!binding_obj.has_value())
+                auto bindings =
+                    (*binding_plan)[std::string_view("bindings")].as_array();
+                if (bindings.has_value())
                 {
-                    continue;
+                    for (const auto& binding : *bindings)
+                    {
+                        auto binding_obj = binding.as_object();
+                        if (!binding_obj.has_value())
+                        {
+                            continue;
+                        }
+                        auto target_port =
+                            (*binding_obj)[std::string_view("targetPortId")]
+                                .as_string();
+                        if (!target_port.has_value()
+                            || *target_port != "executionInput")
+                        {
+                            continue;
+                        }
+                        // 声明口的派生悬空广播（null 默认，物化层无操作）
+                        // 合法在场；钉死的是产物零寄存。
+                        EXPECT_TRUE(
+                            (*binding_obj)[std::string_view("defaultValue")]
+                                .is_null())
+                            << "executionInput binding must not carry an "
+                               "artifact (zero artifact registration)";
+                    }
                 }
-                auto source = (*binding_obj)[std::string_view("sourceNodeId")]
-                                  .as_string();
-                auto target_node =
-                    (*binding_obj)[std::string_view("targetNodeId")]
-                        .as_string();
-                auto target_port =
-                    (*binding_obj)[std::string_view("targetPortId")]
-                        .as_string();
-                if (!source.has_value() || *source != "$graph_input"
-                    || !target_node.has_value() || *target_node != bound_node_id
-                    || !target_port.has_value()
-                    || *target_port != "executionInput")
-                {
-                    continue;
-                }
-                auto default_value =
-                    (*binding_obj)[std::string_view("defaultValue")]
-                        .as_string();
-                if (!default_value.has_value())
-                {
-                    EXPECT_TRUE(default_value.has_value());
-                    return false;
-                }
-                EXPECT_EQ(*default_value, envelope_text);
-                found_broadcast = true;
-            }
-            if (!found_broadcast)
-            {
-                EXPECT_TRUE(found_broadcast)
-                    << "compiled plan must carry the reference artifact "
-                       "broadcast binding";
-                return false;
             }
             parent_plan_value =
                 Das::Utils::CloneYyjsonValue((*shell_obj)["plan"]);
@@ -951,8 +962,9 @@ TEST(
         parent_plan,
         parent_fingerprint));
 
-    // 剥离产物广播绑定（唯一供数通道）：其余 plan 形状原样。
-    parent_plan.binding_plan.bindings.clear();
+    // 剥离绑条目记档（唯一供数通道——执行时编译段的驱动数据）：其余
+    // plan 形状原样。
+    parent_plan.reference_entries.clear();
 
     GraphRuntime rt;
     const auto   hr = rt.RunWithHost(

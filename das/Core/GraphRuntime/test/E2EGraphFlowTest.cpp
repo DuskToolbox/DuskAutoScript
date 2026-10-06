@@ -2576,8 +2576,9 @@ TEST_F(E2EGraphFlowTest, ReferenceClosureInjectionReachesExecutionInputPort)
     }
     DestroyGraphAuthoringSession(session_state);
 
-    // 解析父 shell：断言 binding_plan 含产物广播绑定（$graph_input →
-    // bound 节点 executionInput，default_value=compile 段原文）。
+    // 解析父 shell：断言绑条目记档在场（referenceEntries 携 bound 节点
+    // → 42）且产物零寄存（无任何 executionInput 目标绑定——编译产物不
+    // 再随计划走）。
     std::string parent_fingerprint;
     {
         auto shell = yyjson::read(parent_shell_text);
@@ -2591,15 +2592,25 @@ TEST_F(E2EGraphFlowTest, ReferenceClosureInjectionReachesExecutionInputPort)
         auto plan_value = (*shell_obj)[std::string_view("plan")];
         auto plan_obj = plan_value.as_object();
         ASSERT_TRUE(plan_obj.has_value());
-        // DTO 序列化为 camelCase 键（PFR 字段名驼峰化——CompiledArtifactTest
-        // 契约）。
+        auto reference_entries =
+            (*plan_obj)[std::string_view("referenceEntries")].as_array();
+        ASSERT_TRUE(reference_entries.has_value());
+        ASSERT_EQ(reference_entries->size(), 1u);
+        auto entry_obj = (*reference_entries)[0].as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        EXPECT_EQ(
+            (*entry_obj)[std::string_view("nodeId")].as_string().value_or(""),
+            bound_node_id);
+        EXPECT_EQ(
+            (*entry_obj)[std::string_view("entryId")].as_int().value_or(0),
+            42);
+
         auto binding_plan =
             (*plan_obj)[std::string_view("bindingPlan")].as_object();
         ASSERT_TRUE(binding_plan.has_value());
         auto bindings =
             (*binding_plan)[std::string_view("bindings")].as_array();
         ASSERT_TRUE(bindings.has_value());
-        bool found_broadcast = false;
         for (const auto& binding : *bindings)
         {
             auto binding_obj = binding.as_object();
@@ -2607,31 +2618,26 @@ TEST_F(E2EGraphFlowTest, ReferenceClosureInjectionReachesExecutionInputPort)
             {
                 continue;
             }
-            auto source =
-                (*binding_obj)[std::string_view("sourceNodeId")].as_string();
             auto target_node =
                 (*binding_obj)[std::string_view("targetNodeId")].as_string();
             auto target_port =
                 (*binding_obj)[std::string_view("targetPortId")].as_string();
-            if (!source.has_value() || *source != "$graph_input"
-                || !target_node.has_value() || *target_node != bound_node_id
+            if (!target_node.has_value() || *target_node != bound_node_id
                 || !target_port.has_value() || *target_port != "executionInput")
             {
                 continue;
             }
-            auto default_value =
-                (*binding_obj)[std::string_view("defaultValue")].as_string();
-            ASSERT_TRUE(default_value.has_value());
-            EXPECT_EQ(*default_value, child_shell_text);
-            found_broadcast = true;
+            // 声明口的派生悬空广播（null 默认，物化层无操作）合法在场；
+            // 钉死的是产物零寄存——不得携带非空 default_value。
+            EXPECT_TRUE(
+                (*binding_obj)[std::string_view("defaultValue")].is_null())
+                << "executionInput binding must not carry an artifact "
+                   "(zero artifact registration)";
         }
-        EXPECT_TRUE(found_broadcast)
-            << "compiled plan must carry the reference artifact broadcast "
-               "binding";
     }
 
-    // 执行：物化路径（DoAdapter $graph_input 广播）把产物送到绑条目节点
-    // 的 executionInput 口——记录组件收到 compile 段原文。
+    // 执行：执行时编译段（plan 记档驱动）现编产物写进绑条目节点的
+    // executionInput 口——记录组件收到 compile 段原文。
     yyjson::value parent_plan_value;
     {
         auto shell_root = yyjson::read(parent_shell_text);
@@ -2656,9 +2662,9 @@ TEST_F(E2EGraphFlowTest, ReferenceClosureInjectionReachesExecutionInputPort)
 }
 
 // 三层嵌套真实链：父图 GraphTask 节点绑子条目 42（真实 Core 会话），子图
-// 又含 GraphTask 节点绑孙条目 7（固定 fake）→ 编译期逐层递归（闭包栈经
-// context 传递：父 [42] → 孙 [42,7]），孙引用产物逐层上浮进父 plan 的广
-// 播绑定链，执行绿灯（记录组件收到子层产物）。
+// 又含 GraphTask 节点绑孙条目 7（固定 fake）→ 编译期只算口面（父层
+// GetDocument 子条目），执行期递归现编（闭包栈经 context 跨层传递：子
+// [42] → 孙 [42,7]），执行绿灯（记录组件收到子层现编产物）。
 TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
 {
     const auto state = std::make_shared<ReferenceChainState>();
@@ -2808,8 +2814,8 @@ TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
             << set_text;
     }
 
-    // 父编译：注入 pass 逐层递归（子会话编译内部再走注入 pass 处理孙引
-    // 用），产物逐层上浮。
+    // 父编译：注入 pass 只算口面（父层 GetDocument 子条目），孙引用不触
+    // 及——编译期 creator 只收一次 CreateAuthoringSession。
     std::string parent_shell_text;
     {
         Das::DasPtr<Das::ExportInterface::IDasJson> compiled;
@@ -2843,9 +2849,6 @@ TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
     }
     DestroyGraphAuthoringSession(session_state);
 
-    // 闭包栈跨层传递取证：子条目（42）context 携带 [42]，孙条目（7）
-    // context 携带 [42,7]（结构化断言，不依赖序列化空白形态）。
-    ASSERT_EQ(creator->seen_contexts.size(), 2u);
     const auto closure_ids_of =
         [](const std::string& context_text) -> std::vector<int64_t>
     {
@@ -2868,20 +2871,19 @@ TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
         }
         return ids;
     };
+
+    // 编译期取证：仅子条目（42）被开过会话（口面半段），context 闭包栈
+    // [42]；孙条目（7）编译期零触及。
+    ASSERT_EQ(creator->seen_contexts.size(), 1u);
     {
         const auto child_ids = closure_ids_of(creator->seen_contexts[0]);
         ASSERT_EQ(child_ids.size(), 1u) << creator->seen_contexts[0];
         EXPECT_EQ(child_ids[0], 42) << creator->seen_contexts[0];
     }
-    {
-        const auto grandchild_ids = closure_ids_of(creator->seen_contexts[1]);
-        ASSERT_EQ(grandchild_ids.size(), 2u) << creator->seen_contexts[1];
-        EXPECT_EQ(grandchild_ids[0], 42) << creator->seen_contexts[1];
-        EXPECT_EQ(grandchild_ids[1], 7) << creator->seen_contexts[1];
-    }
+    const auto compile_time_context_count = creator->seen_contexts.size();
 
-    // 父 shell：绑条目节点的产物广播绑定 default_value=子层编译产物。
-    std::string child_shell_text;
+    // 父 shell：绑条目记档在场（referenceEntries 携 bound 节点→42、闭包
+    // 栈空——顶层图），产物零寄存（无 executionInput 目标绑定）。
     std::string parent_fingerprint;
     {
         auto shell = yyjson::read(parent_shell_text);
@@ -2894,13 +2896,25 @@ TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
         auto plan_value = (*shell_obj)[std::string_view("plan")];
         auto plan_obj = plan_value.as_object();
         ASSERT_TRUE(plan_obj.has_value());
+        auto reference_entries =
+            (*plan_obj)[std::string_view("referenceEntries")].as_array();
+        ASSERT_TRUE(reference_entries.has_value());
+        ASSERT_EQ(reference_entries->size(), 1u);
+        auto entry_obj = (*reference_entries)[0].as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        EXPECT_EQ(
+            (*entry_obj)[std::string_view("nodeId")].as_string().value_or(""),
+            bound_node_id);
+        EXPECT_EQ(
+            (*entry_obj)[std::string_view("entryId")].as_int().value_or(0),
+            42);
+
         auto binding_plan =
             (*plan_obj)[std::string_view("bindingPlan")].as_object();
         ASSERT_TRUE(binding_plan.has_value());
         auto bindings =
             (*binding_plan)[std::string_view("bindings")].as_array();
         ASSERT_TRUE(bindings.has_value());
-        bool found_broadcast = false;
         for (const auto& binding : *bindings)
         {
             auto binding_obj = binding.as_object();
@@ -2908,74 +2922,22 @@ TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
             {
                 continue;
             }
-            auto source =
-                (*binding_obj)[std::string_view("sourceNodeId")].as_string();
-            auto target_node =
-                (*binding_obj)[std::string_view("targetNodeId")].as_string();
             auto target_port =
                 (*binding_obj)[std::string_view("targetPortId")].as_string();
-            if (!source.has_value() || *source != "$graph_input"
-                || !target_node.has_value() || *target_node != bound_node_id
-                || !target_port.has_value() || *target_port != "executionInput")
+            if (!target_port.has_value() || *target_port != "executionInput")
             {
                 continue;
             }
-            auto default_value =
-                (*binding_obj)[std::string_view("defaultValue")].as_string();
-            ASSERT_TRUE(default_value.has_value());
-            child_shell_text = *default_value;
-            found_broadcast = true;
+            // 派生悬空广播（null 默认）合法在场；钉死产物零寄存。
+            EXPECT_TRUE(
+                (*binding_obj)[std::string_view("defaultValue")].is_null())
+                << "executionInput binding must not carry an artifact "
+                   "(zero artifact registration)";
         }
-        ASSERT_TRUE(found_broadcast)
-            << "parent plan must carry the child artifact broadcast binding";
-    }
-    ASSERT_FALSE(child_shell_text.empty());
-
-    // 子 shell 内层：孙引用产物广播绑定（c_task.executionInput 的
-    // default_value=孙层产物）——产物逐层上浮的物证。
-    {
-        auto shell = yyjson::read(child_shell_text);
-        auto shell_obj = shell.as_object();
-        ASSERT_TRUE(shell_obj.has_value());
-        auto plan_value = (*shell_obj)[std::string_view("plan")];
-        auto plan_obj = plan_value.as_object();
-        ASSERT_TRUE(plan_obj.has_value());
-        auto binding_plan =
-            (*plan_obj)[std::string_view("bindingPlan")].as_object();
-        ASSERT_TRUE(binding_plan.has_value());
-        auto bindings =
-            (*binding_plan)[std::string_view("bindings")].as_array();
-        ASSERT_TRUE(bindings.has_value());
-        bool found_grandchild_broadcast = false;
-        for (const auto& binding : *bindings)
-        {
-            auto binding_obj = binding.as_object();
-            if (!binding_obj.has_value())
-            {
-                continue;
-            }
-            auto target_node =
-                (*binding_obj)[std::string_view("targetNodeId")].as_string();
-            auto target_port =
-                (*binding_obj)[std::string_view("targetPortId")].as_string();
-            if (!target_node.has_value() || *target_node != "c_task"
-                || !target_port.has_value() || *target_port != "executionInput")
-            {
-                continue;
-            }
-            auto default_value =
-                (*binding_obj)[std::string_view("defaultValue")].as_string();
-            ASSERT_TRUE(default_value.has_value());
-            EXPECT_EQ(*default_value, grandchild_shell_text);
-            found_grandchild_broadcast = true;
-        }
-        EXPECT_TRUE(found_grandchild_broadcast)
-            << "child plan must carry the grandchild artifact broadcast "
-               "binding";
     }
 
-    // 执行绿灯：父 plan 物化路径把子层产物送到绑条目节点的
-    // executionInput 口。
+    // 执行：递归即执行——运行时现编子条目（context 闭包栈 [42]），子会话
+    // 编译内部再对孙引用记档（GetDocument 7 时闭包栈 [42,7]）。
     yyjson::value parent_plan_value;
     {
         auto shell_root = yyjson::read(parent_shell_text);
@@ -2995,7 +2957,52 @@ TEST_F(E2EGraphFlowTest, NestedReferenceClosureCompilesRecursively)
     ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
     ASSERT_TRUE(state->received)
         << "the bound GraphTask node must receive the child artifact";
-    EXPECT_EQ(state->execution_input_text, child_shell_text);
+
+    // 执行期闭包栈跨层取证：运行时子会话 context [42]，孙条目 GetDocument
+    // context [42,7]（递归即执行 + 环防护跨执行层）。
+    ASSERT_EQ(creator->seen_contexts.size(), compile_time_context_count + 2u);
+    {
+        const auto run_child_ids =
+            closure_ids_of(creator->seen_contexts[compile_time_context_count]);
+        ASSERT_EQ(run_child_ids.size(), 1u);
+        EXPECT_EQ(run_child_ids[0], 42);
+    }
+    {
+        const auto grandchild_ids = closure_ids_of(
+            creator->seen_contexts[compile_time_context_count + 1]);
+        ASSERT_EQ(grandchild_ids.size(), 2u);
+        EXPECT_EQ(grandchild_ids[0], 42);
+        EXPECT_EQ(grandchild_ids[1], 7);
+    }
+
+    // 子层现编产物（执行期 Compile 的 executionInput）：解析为 shell，
+    // plan 携孙引用记档（c_task→7）与子层闭包栈 [42]——递归链的物证。
+    ASSERT_FALSE(state->execution_input_text.empty());
+    {
+        auto shell = yyjson::read(state->execution_input_text);
+        auto shell_obj = shell.as_object();
+        ASSERT_TRUE(shell_obj.has_value()) << state->execution_input_text;
+        auto plan_value = (*shell_obj)[std::string_view("plan")];
+        auto plan_obj = plan_value.as_object();
+        ASSERT_TRUE(plan_obj.has_value());
+        auto reference_entries =
+            (*plan_obj)[std::string_view("referenceEntries")].as_array();
+        ASSERT_TRUE(reference_entries.has_value());
+        ASSERT_EQ(reference_entries->size(), 1u);
+        auto entry_obj = (*reference_entries)[0].as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        EXPECT_EQ(
+            (*entry_obj)[std::string_view("nodeId")].as_string().value_or(""),
+            "c_task");
+        EXPECT_EQ(
+            (*entry_obj)[std::string_view("entryId")].as_int().value_or(0),
+            7);
+        auto closure_ids =
+            (*plan_obj)[std::string_view("closureEntryIds")].as_array();
+        ASSERT_TRUE(closure_ids.has_value());
+        ASSERT_EQ(closure_ids->size(), 1u);
+        EXPECT_EQ((*closure_ids)[0].as_int().value_or(0), 42);
+    }
 }
 
 // ===========================================================================
@@ -4291,31 +4298,36 @@ namespace
                 (*shell_obj)[std::string_view("plan")]));
     }
 
-    // 断言 plan 携带产物广播绑定（$graph_input → node.executionInput，
-    // default_value=编译产物原文）。
-    void ExpectArtifactBroadcast(
+    // 断言 plan 携带绑条目记档（node→entryId——执行时编译段的驱动数据）
+    // 且产物零寄存（executionInput 目标绑定不得携带非空 default——声明口
+    // 的派生悬空广播 null 默认合法在场）。
+    void ExpectReferenceRecordAndZeroArtifactBinding(
         const CompiledGraphPlanDto& plan,
         const std::string&          node_id,
-        const std::string&          expected_artifact)
+        int64_t                     expected_entry_id)
     {
-        bool found_broadcast = false;
-        for (const auto& binding : plan.binding_plan.bindings)
+        bool found_record = false;
+        for (const auto& reference_entry : plan.reference_entries)
         {
-            if (binding.source_node_id != "$graph_input"
-                || binding.target_node_id != node_id
-                || binding.target_port_id != "executionInput")
+            if (reference_entry.node_id != node_id)
             {
                 continue;
             }
-            const auto artifact = binding.default_value.as_string();
-            ASSERT_TRUE(artifact.has_value());
-            // 产物原文逐字节比对（string 标量承载编译产物 shell）。
-            EXPECT_EQ(*artifact, expected_artifact);
-            found_broadcast = true;
+            EXPECT_EQ(reference_entry.entry_id, expected_entry_id);
+            found_record = true;
         }
-        EXPECT_TRUE(found_broadcast)
-            << "compiled plan must carry the reference artifact broadcast "
-               "binding";
+        EXPECT_TRUE(found_record)
+            << "compiled plan must record the bound entry for node " << node_id;
+        for (const auto& binding : plan.binding_plan.bindings)
+        {
+            if (binding.target_port_id != "executionInput")
+            {
+                continue;
+            }
+            EXPECT_TRUE(binding.default_value.is_null())
+                << "executionInput binding must not carry an artifact "
+                   "(zero artifact registration)";
+        }
     }
 
     // 父图任务文档（graph 契约形状——nodes/edges 原文随 properties 播种）。
@@ -4479,8 +4491,10 @@ TEST_F(E2EGraphFlowTest, ReferenceClosureTypedImageFlowKeepsIdentity)
         creator.Get(),
         MakeChainContext(parent_document, catalog),
         parent);
-    ASSERT_NO_FATAL_FAILURE(
-        ExpectArtifactBroadcast(parent.plan, "n_bound", child_shell_text));
+    ASSERT_NO_FATAL_FAILURE(ExpectReferenceRecordAndZeroArtifactBinding(
+        parent.plan,
+        "n_bound",
+        42));
 
     // 执行：image 引用经「父图数据边 → 类型化直传覆盖层 → 子图中继 →
     // 类型化边界输出 → 父图数据边」全程同一实例。
@@ -4661,8 +4675,10 @@ TEST_F(E2EGraphFlowTest, ReferenceClosureProjectsMultiValueTypedOutputs)
         creator.Get(),
         MakeChainContext(parent_document, catalog),
         parent);
-    ASSERT_NO_FATAL_FAILURE(
-        ExpectArtifactBroadcast(parent.plan, "n_bound", child_shell_text));
+    ASSERT_NO_FATAL_FAILURE(ExpectReferenceRecordAndZeroArtifactBinding(
+        parent.plan,
+        "n_bound",
+        42));
 
     GraphRuntime runtime;
     const auto   hr = runtime.RunWithHost(

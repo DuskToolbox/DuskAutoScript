@@ -3984,11 +3984,11 @@ static std::optional<yyjson::value> UnwrapCompiledPlanShell(
 }
 
 // 绿色场景：可编译形态（条目 17 补 fixture 项目路径，见上注释）→ 编译
-// 成功、executionOrder 非空、n_2 的 executionInput 广播绑定携带被引条目
-// 编译产物。
+// 成功、executionOrder 非空、绑条目记档在场（n_2 → 17——执行时编译段的
+// 驱动数据）且产物零寄存（无 executionInput 目标绑定）。
 TEST_F(
     SchedulerRuntimeBackedTest,
-    RealDataTask63WithConfiguredEntry17CompilesInjectionChainGreen)
+    RealDataTask63WithConfiguredEntry17RecordsBoundEntry)
 {
     // 部署真实三插件（DasGraphTask：das.graph 类型+begin/end+focus log；
     // DasFlowControl：launch/value 组件；DasMaaPi：maapi.task 类型+run 组
@@ -4102,76 +4102,53 @@ TEST_F(
     EXPECT_FALSE(order->empty())
         << "execution_order cleared — compile was rejected";
 
-    // 注入链产物广播绑定：$graph_input → n_2.executionInput，
-    // default_value=被引条目编译段 envelope 原文（MaaPi envelope 携 maapi
-    // 接口目录/控制器/资源快照）。
-    const bool has_broadcast_binding = [&]()
+    // 绑条目记档：referenceEntries 携 n_2 → 17（执行时编译段照单驱动）；
+    // 产物零寄存——executionInput 目标绑定不得携带非空 default（声明口的
+    // 派生悬空广播 null 默认合法在场）。
+    {
+        auto reference_entries =
+            (*plan_obj)[std::string_view("referenceEntries")].as_array();
+        ASSERT_TRUE(reference_entries.has_value())
+            << "compiled plan carries no referenceEntries";
+        ASSERT_EQ(reference_entries->size(), 1u);
+        auto entry = (*reference_entries)[0].as_object();
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(
+            (*entry)[std::string_view("nodeId")].as_string().value_or(""),
+            "n_2");
+        EXPECT_EQ(
+            (*entry)[std::string_view("entryId")].as_int().value_or(0),
+            17);
+    }
     {
         auto bindings =
             (*plan_obj)[std::string_view("bindingPlan")].as_object();
-        if (!bindings || !bindings->contains(std::string_view("bindings")))
-        {
-            return false;
-        }
+        ASSERT_TRUE(bindings.has_value());
         auto arr = (*bindings)[std::string_view("bindings")].as_array();
-        if (!arr.has_value())
-        {
-            return false;
-        }
+        ASSERT_TRUE(arr.has_value());
         for (const auto& binding : *arr)
         {
             auto b = binding.as_object();
-            if (!b
-                || (*b)[std::string_view("sourceNodeId")].as_string()
-                       != std::string_view("$graph_input")
-                || (*b)[std::string_view("targetNodeId")].as_string()
-                       != std::string_view("n_2")
-                || (*b)[std::string_view("targetPortId")].as_string()
-                       != std::string_view("executionInput"))
+            ASSERT_TRUE(b.has_value());
+            if ((*b)[std::string_view("targetPortId")].as_string()
+                != std::string_view("executionInput"))
             {
                 continue;
             }
-            const auto envelope_text =
-                (*b)[std::string_view("defaultValue")].as_string();
-            if (!envelope_text.has_value())
-            {
-                return false;
-            }
-            // default_value 是被引条目 compile 段 envelope 原文（字符串形
-            // 态）——parse 后断言 maapi 执行内核段在场（接口目录/控制器/
-            // 资源快照的载体）。
-            auto envelope = Das::Utils::ParseYyjsonFromString(*envelope_text);
-            auto envelope_obj = envelope ? envelope->as_object() : std::nullopt;
-            return envelope_obj.has_value()
-                   && envelope_obj->contains(std::string_view("maapi"));
+            EXPECT_TRUE((*b)[std::string_view("defaultValue")].is_null())
+                << "executionInput binding must not carry an artifact "
+                   "(zero artifact registration)";
         }
-        return false;
-    }();
-    const auto bindings_dump = [&]()
-    {
-        auto bindings =
-            (*plan_obj)[std::string_view("bindingPlan")].as_object();
-        if (!bindings || !bindings->contains(std::string_view("bindings")))
-        {
-            return std::string("<no bindingPlan.bindings>");
-        }
-        return Das::Utils::SerializeYyjsonValue(
-                   (*bindings)[std::string_view("bindings")])
-            .value_or(std::string("<unserializable>"));
-    }();
-    EXPECT_TRUE(has_broadcast_binding)
-        << "referenced entry compile artifact is not broadcast-bound to "
-           "n_2.executionInput; bindings: "
-        << bindings_dump;
+    }
 }
 
-// 原样场景（条目 17 fixture 零字段覆盖——保持未配置 PI 项目形态）：编译
-// 按 fail-closed 设计拒绝，但诊断必须命中真根因（被引条目编译产物缺
-// 失），而不是实测缺陷的「carries no root ports section」（文档自述契约
-// 已由组件语境投影满足）。
+// 原样场景（条目 17 fixture 零字段覆盖——保持未配置 PI 项目形态）：
+// 可编译性到节点 Do 才报（编译不再取被引条目产物——口面半段只
+// GetDocument，文档自述契约由组件语境投影满足）→ 编译照常成功、记档在
+// 场；条目未配置的失败面移至执行时编译（节点失败路径，116-06 深验）。
 TEST_F(
     SchedulerRuntimeBackedTest,
-    RealDataTask63VerbatimEntry17FailsWithTrueRootCauseDiagnostic)
+    RealDataTask63VerbatimEntry17CompilesGreenUntilExecution)
 {
     WriteFactoryPluginManifest(
         manifest_path_,
@@ -4225,12 +4202,6 @@ TEST_F(
     const auto diagnostics_text = Das::Utils::SerializeYyjsonValue(
                                       (*obj)[std::string_view("diagnostics")])
                                       .value_or("");
-    EXPECT_NE(
-        diagnostics_text.find("compile result of referenced entry 17"),
-        std::string::npos)
-        << "expected the true root-cause diagnostic (referenced entry "
-           "compile product), got: "
-        << diagnostics_text;
     EXPECT_EQ(
         diagnostics_text.find("carries no root ports section"),
         std::string::npos)
@@ -4238,29 +4209,37 @@ TEST_F(
            "referenced form entry: "
         << diagnostics_text;
 
-    // 失败门：execution_order 清空（fail-closed）。
+    // 编译照常成功（零干跑预检——被引条目可编译性到节点 Do 才报）：
+    // executionOrder 非空 + 绑条目记档在场（执行时编译段的驱动数据）。
     auto compile_obj = (*obj)[std::string_view("compile")].as_object();
     ASSERT_TRUE(compile_obj.has_value());
-    if (compile_obj->contains(std::string_view("executionInput")))
+    ASSERT_TRUE(compile_obj->contains(std::string_view("executionInput")))
+        << "task 63 compile carries no executionInput";
+    const auto plan = UnwrapCompiledPlanShell(
+        (*compile_obj)[std::string_view("executionInput")]);
+    ASSERT_TRUE(plan.has_value());
+    auto plan_obj = plan->as_object();
+    ASSERT_TRUE(plan_obj.has_value());
     {
-        const auto plan = UnwrapCompiledPlanShell(
-            (*compile_obj)[std::string_view("executionInput")]);
-        if (plan.has_value())
-        {
-            auto plan_obj = plan->as_object();
-            ASSERT_TRUE(plan_obj.has_value());
-            if (plan_obj->contains(std::string_view("executionOrder")))
-            {
-                auto order =
-                    (*plan_obj)[std::string_view("executionOrder")].as_array();
-                if (order.has_value())
-                {
-                    EXPECT_TRUE(order->empty())
-                        << "compile with an unconfigurable referenced "
-                           "entry must fail closed";
-                }
-            }
-        }
+        auto order = (*plan_obj)[std::string_view("executionOrder")].as_array();
+        ASSERT_TRUE(order.has_value());
+        EXPECT_FALSE(order->empty())
+            << "compile must stay green for an unconfigured referenced entry "
+               "(failure moves to execution time)";
+    }
+    {
+        auto reference_entries =
+            (*plan_obj)[std::string_view("referenceEntries")].as_array();
+        ASSERT_TRUE(reference_entries.has_value());
+        ASSERT_EQ(reference_entries->size(), 1u);
+        auto entry = (*reference_entries)[0].as_object();
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(
+            (*entry)[std::string_view("nodeId")].as_string().value_or(""),
+            "n_2");
+        EXPECT_EQ(
+            (*entry)[std::string_view("entryId")].as_int().value_or(0),
+            17);
     }
 }
 

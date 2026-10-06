@@ -333,38 +333,6 @@ namespace
         return faces;
     }
 
-    /// 会话 Compile 响应 → compile 段 executionInput 原文（shell 串）。
-    std::optional<std::string> ParseCompileExecutionInput(
-        const yyjson::value& response)
-    {
-        auto obj = response.as_object();
-        if (!obj.has_value() || !obj->contains(std::string_view("compile")))
-        {
-            return std::nullopt;
-        }
-        auto compile_obj = (*obj)[std::string_view("compile")].as_object();
-        if (!compile_obj.has_value()
-            || !compile_obj->contains(std::string_view("executionInput")))
-        {
-            return std::nullopt;
-        }
-        const auto& execution_input =
-            (*compile_obj)[std::string_view("executionInput")];
-        if (const auto text = execution_input.as_string())
-        {
-            return std::string(*text);
-        }
-        // 非 string 形态（对象/序列化文本）按原文序列化消费——与
-        // DasGraphTaskImpl 的 GetString 读法对齐面为准（string 为正形态）。
-        auto serialized = Das::Utils::SerializeYyjsonValue(
-            Das::Utils::CloneYyjsonValue(execution_input));
-        if (!serialized.has_value())
-        {
-            return std::nullopt;
-        }
-        return std::move(*serialized);
-    }
-
     /// 同层复用 DFS 弹栈守卫：本层压入的 entryId 在节点处理结束（成功、
     /// 失败与异常路径同弹）后弹回——在途窗口=本节点子编译链期间，祖先
     /// 链（继承的初始栈）永不受弹栈影响。
@@ -379,18 +347,16 @@ namespace
 GraphCompiler::NodeFacesMap GraphCompiler::CollectReferenceFaces(
     const Dto::GraphDocumentDto& document)
 {
-    RunReferenceClosurePass(document, /*include_artifacts=*/false);
+    RunReferenceClosurePass(document);
     // 拷贝返回（内部 reference_faces_ 同步保留——同一 compiler 实例的
     // ResolveNodePorts/ReviewStaleEdges 消费同一现算口面）。
     return reference_faces_;
 }
 
 void GraphCompiler::RunReferenceClosurePass(
-    const Dto::GraphDocumentDto& document,
-    bool                         include_artifacts)
+    const Dto::GraphDocumentDto& document)
 {
     reference_faces_.clear();
-    reference_artifacts_.clear();
     reference_diagnostics_.clear();
     reference_entries_.clear();
     reference_pass_failed_ = false;
@@ -705,79 +671,6 @@ void GraphCompiler::RunReferenceClosurePass(
             continue;
         }
         reference_faces_.emplace(node.node_id, std::move(*faces));
-
-        // 口面半段止于此（CollectReferenceFaces 载体）：Apply 端点解析
-        // 只需口面知识，产物半段（会话 Compile → executionInput 广播绑
-        // 定）不涉——不触发被引条目的编译副作用。
-        if (!include_artifacts)
-        {
-            continue;
-        }
-
-        // 晚段：同一会话 Compile → 产物直写广播绑定（compile 段
-        // executionInput 原文；产物永不落盘、不写仓库）。请求体声明
-        // purpose=execution——注入链消费的是执行产物（provider 按
-        // purpose 门控 executionInput 段：MaaPi preview 不携带，缺省
-        // 请求按 preview 解读会误报产物缺失）；Core 会话型 provider
-        // （GraphTask 壳）对请求体不敏感，行为不变。
-        yyjson::value compile_request(Das::Utils::MakeYyjsonObject());
-        (*compile_request.as_object())[std::string_view("purpose")] =
-            std::make_pair(std::string_view("execution"), yyjson::copy_string);
-        Das::DasPtr<Das::Core::Utils::IDasJsonImpl> request_wrapper;
-        try
-        {
-            request_wrapper = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
-                Das::Utils::CloneYyjsonValue(compile_request));
-        }
-        catch (const std::exception&)
-        {
-            reference_pass_failed_ = true;
-            CompileEdgeDiagnostic diagnostic;
-            diagnostic.kind = CompileDiagnosticKind::ReferenceCompileFailed;
-            diagnostic.node_id = node.node_id;
-            diagnostic.message = DAS_FMT_NS::format(
-                "compile request construction failed for referenced entry {}",
-                *bound_entry_id);
-            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
-            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
-            continue;
-        }
-        Das::DasPtr<Das::ExportInterface::IDasJson> compile_json;
-        const auto                                  compile_result =
-            session->Compile(request_wrapper.Get(), compile_json.Put());
-        auto compile_value = JsonToYyjson(compile_json.Get());
-        if (DAS::IsFailed(compile_result) || !compile_value.has_value())
-        {
-            reference_pass_failed_ = true;
-            CompileEdgeDiagnostic diagnostic;
-            diagnostic.kind = CompileDiagnosticKind::ReferenceCompileFailed;
-            diagnostic.node_id = node.node_id;
-            diagnostic.message = DAS_FMT_NS::format(
-                "Compile failed for referenced entry {}: result={}",
-                *bound_entry_id,
-                compile_result);
-            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
-            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
-            continue;
-        }
-        auto artifact_text = ParseCompileExecutionInput(*compile_value);
-        if (!artifact_text.has_value())
-        {
-            reference_pass_failed_ = true;
-            CompileEdgeDiagnostic diagnostic;
-            diagnostic.kind = CompileDiagnosticKind::ReferenceCompileFailed;
-            diagnostic.node_id = node.node_id;
-            diagnostic.message = DAS_FMT_NS::format(
-                "compile result of referenced entry {} carries no "
-                "executionInput segment",
-                *bound_entry_id);
-            DAS_CORE_LOG_WARN("reference closure pass: {}", diagnostic.message);
-            reference_diagnostics_.push_back(DiagnosticToJson(diagnostic));
-            continue;
-        }
-        reference_artifacts_.emplace_back(
-            node.node_id,
-            std::move(*artifact_text));
     }
 }
 
@@ -3036,9 +2929,9 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     plan.source_fingerprint = document.fingerprint;
 
     // 引用闭包注入 pass（编译期早段）：绑条目节点经
-    // creator 开被引条目会话——GetDocument 现算口面（喂边校验）+ Compile
-    // 产物（晚段广播绑定）。具名诊断零兜底：任一失败 → execution_order
-    // 出口清空。
+    // creator 开被引条目会话——GetDocument 现算口面（喂边校验）+ 记档绑
+    // 条目清单（执行时编译段的驱动数据）。具名诊断零兜底：任一失败 →
+    // execution_order 出口清空。
     RunReferenceClosurePass(document);
     for (auto& diagnostic : reference_diagnostics_)
     {
@@ -3138,46 +3031,13 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     // Port binding plan
     plan.binding_plan = GeneratePortBindingPlan(document);
 
-    // 注入 pass 失败门先行：失败编译的 binding_plan 与无注入 pass 完全
-    // 一致（零产物绑定注入、零派生广播删除）——失败态不携带半批注入
-    // 痕迹，具名诊断是唯一失败陈述。
+    // 注入 pass 失败门：失败编译的 binding_plan 与无注入 pass 完全一致
+    // （零派生广播删除）——失败态不携带半批痕迹，具名诊断是唯一失败陈
+    // 述。编译产物零寄存（plan 不携带任何条目编译产物——执行时编译段
+    // 现编现用）。
     if (reference_pass_failed_)
     {
         plan.execution_order.clear();
-    }
-    // 注入 pass 晚段：产物直写广播绑定（$graph_input → executionInput，
-    // default_value=compile 段原文）——运行期物化半边（DoAdapter 现成
-    // 路径）零新机制。产物永不落盘、不写仓库。派生的悬
-    // 空输入广播（无缺省值）让位——pass 产物绑定是该口唯一供值源。
-    else
-    {
-        for (auto& [node_id, artifact_text] : reference_artifacts_)
-        {
-            auto& bindings = plan.binding_plan.bindings;
-            bindings.erase(
-                std::remove_if(
-                    bindings.begin(),
-                    bindings.end(),
-                    [&node_id](const Dto::PortBindingDto& candidate)
-                    {
-                        return candidate.source_node_id
-                                   == std::string{GRAPH_INPUT_BROADCAST_SOURCE}
-                               && candidate.target_node_id == node_id
-                               && candidate.target_port_id == "executionInput";
-                    }),
-                bindings.end());
-
-            Dto::PortBindingDto reference_broadcast;
-            reference_broadcast.source_node_id =
-                std::string{GRAPH_INPUT_BROADCAST_SOURCE};
-            reference_broadcast.source_port_id = "referenceArtifact";
-            reference_broadcast.target_node_id = node_id;
-            reference_broadcast.target_port_id = "executionInput";
-            reference_broadcast.expected_type = "string";
-            reference_broadcast.default_value = yyjson::value(artifact_text);
-            plan.binding_plan.bindings.push_back(
-                std::move(reference_broadcast));
-        }
     }
 
     // loopCarried 通道记档与校验：成对口合成 data 型回边入 plan.back_edges

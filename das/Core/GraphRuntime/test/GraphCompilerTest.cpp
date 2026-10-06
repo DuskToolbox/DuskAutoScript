@@ -3020,16 +3020,19 @@ namespace
     constexpr int64_t BOUND_ENTRY_ID = 42;
 
     // 固定响应的 authoring 会话替身：GetDocument 返回固定文档（根 ports
-    // 自述），Compile 返回固定产物（compile.executionInput 携 shell 串）。
+    // 自述），Compile 返回固定产物（compile.executionInput 携 shell 串；
+    // 调用计数供「编译期零 Compile 调用」负断言钉死）。
     class FakeReferenceAuthoringSession final
         : public Das::PluginInterface::IDasTaskAuthoringSession
     {
     public:
         FakeReferenceAuthoringSession(
             std::string document_json,
-            std::string compile_json)
+            std::string compile_json,
+            int*        compile_call_counter = nullptr)
             : document_json_(std::move(document_json)),
-              compile_json_(std::move(compile_json))
+              compile_json_(std::move(compile_json)),
+              compile_call_counter_(compile_call_counter)
         {
         }
 
@@ -3134,6 +3137,10 @@ namespace
             {
                 return DAS_E_INVALID_POINTER;
             }
+            if (compile_call_counter_ != nullptr)
+            {
+                ++*compile_call_counter_;
+            }
             if (compile_json_.empty())
             {
                 *pp_out_result_json = nullptr;
@@ -3148,6 +3155,7 @@ namespace
     private:
         std::string           document_json_;
         std::string           compile_json_;
+        int*                  compile_call_counter_;
         std::atomic<uint32_t> ref_count_{0};
     };
 
@@ -3158,6 +3166,8 @@ namespace
         StubFactoryManager mgr;
         // 会话工厂收到的 context 原文（闭包栈键经 context 传递的取证槽）。
         std::vector<std::string> seen_contexts;
+        // 会话 Compile 调用计数（编译期零 Compile 负断言的取证槽）。
+        int compile_calls = 0;
 
         ReferencePassFixture(
             std::string                           document_json,
@@ -3212,7 +3222,8 @@ namespace
                     }
                     auto* session = new FakeReferenceAuthoringSession(
                         document_json,
-                        compile_json);
+                        compile_json,
+                        &compile_calls);
                     session->AddRef();
                     *pp_out_session = session;
                     return DAS_S_OK;
@@ -3285,7 +3296,7 @@ namespace
 
 TEST(
     ReferenceClosureInjectionPassTest,
-    BroadcastsArtifactAndDerivesPortsFromReferencedDocument)
+    RecordsBoundEntryAndDerivesPortsFromReferencedDocument)
 {
     // 被引条目文档：根 ports 自述一个 int 输出口 doc_out。
     const std::string document_json = R"({
@@ -3297,13 +3308,7 @@ TEST(
         },
         "diagnostics": []
     })";
-    // 被引条目 Compile 产物：compile.executionInput 携 shell 串（现读法
-    // 对齐；单元断言用无引号纯文本，真实形态为 {"fingerprint","plan"}
-    // 序列化——E2E 用例覆盖真实 shell）。
-    const std::string shell_text = "fp_child_shell_text";
-    const std::string compile_json =
-        std::string(R"({"compile":{"executionInput":)") + "\"" + shell_text
-        + R"(","diagnostics":[]}})";
+    const std::string compile_json = R"({"compile":{"executionInput":"x"}})";
 
     ReferencePassFixture fixture{document_json, compile_json};
     auto                 compiler = fixture.MakeCompiler();
@@ -3316,19 +3321,18 @@ TEST(
 
     const auto plan = compiler.Compile(doc);
 
-    // ① 产物广播绑定：$graph_input → n_bound.executionInput，
-    // default_value = compile 段 executionInput 原文（shell 串）；
-    // expected_type 与 default_value 实际 string 形态对齐（DoAdapter 物
-    // 化读法按标量 SetString）。
-    const auto* broadcast = FindBroadcastBinding(plan, "n_bound");
-    ASSERT_NE(broadcast, nullptr);
-    const auto default_text = broadcast->default_value.as_string();
-    ASSERT_TRUE(default_text.has_value());
-    EXPECT_EQ(*default_text, shell_text);
-    EXPECT_EQ(broadcast->source_port_id, "referenceArtifact");
-    EXPECT_EQ(broadcast->expected_type, "string");
+    // ① 绑条目记档：reference_entries 携 {n_bound, 42}（执行时编译段的
+    // 驱动数据）；编译产物零寄存——无任何 executionInput 目标绑定。
+    ASSERT_EQ(plan.reference_entries.size(), 1u);
+    EXPECT_EQ(plan.reference_entries[0].node_id, "n_bound");
+    EXPECT_EQ(plan.reference_entries[0].entry_id, 42);
+    EXPECT_EQ(FindBroadcastBinding(plan, "n_bound"), nullptr);
 
-    // ② 节点口面 = 文档根 ports：doc_out 出口可供边校验（无 PortNotFound）
+    // ② 编译期对绑条目节点零 Compile 调用（口面半段只 GetDocument——
+    // 产物投递归执行时编译段）。
+    EXPECT_EQ(fixture.compile_calls, 0);
+
+    // ③ 节点口面 = 文档根 ports：doc_out 出口可供边校验（无 PortNotFound）
     EXPECT_FALSE(HasReferenceDiagnostic(
         plan,
         CompileDiagnosticKind::ReferenceDocumentMissing));
@@ -3395,11 +3399,10 @@ TEST(
 
 TEST(
     ReferenceClosureInjectionPassTest,
-    SameDocumentRepeatedEntryIdCompilesBothNodes)
+    SameDocumentRepeatedEntryIdRecordsBothNodes)
 {
     // 同层复用 DFS 弹栈语义：同文档两节点绑同一条目是合法复用形态
-    // （非环）——前一节点处理完弹栈，两个节点各自独立编译，产物绑定
-    // 各自在位。
+    // （非环）——前一节点处理完弹栈，两个节点各自独立走口面取数链。
     ReferencePassFixture fixture{
         R"({"document":{"ports":[]}})",
         R"({"compile":{"executionInput":"x"}})"};
@@ -3428,20 +3431,19 @@ TEST(
             "n_bound_b"),
         plan.execution_order.end());
 
-    // 两个节点的产物广播绑定各自在位，default_value 同为 compile 段原文。
-    const auto* broadcast_a = FindBroadcastBinding(plan, "n_bound_a");
-    ASSERT_NE(broadcast_a, nullptr);
-    const auto text_a = broadcast_a->default_value.as_string();
-    ASSERT_TRUE(text_a.has_value());
-    EXPECT_EQ(*text_a, "x");
-    const auto* broadcast_b = FindBroadcastBinding(plan, "n_bound_b");
-    ASSERT_NE(broadcast_b, nullptr);
-    const auto text_b = broadcast_b->default_value.as_string();
-    ASSERT_TRUE(text_b.has_value());
-    EXPECT_EQ(*text_b, "x");
+    // 两个节点各自记档（执行时编译段照单各自现编），产物零寄存。
+    ASSERT_EQ(plan.reference_entries.size(), 2u);
+    EXPECT_EQ(plan.reference_entries[0].node_id, "n_bound_a");
+    EXPECT_EQ(plan.reference_entries[0].entry_id, 42);
+    EXPECT_EQ(plan.reference_entries[1].node_id, "n_bound_b");
+    EXPECT_EQ(plan.reference_entries[1].entry_id, 42);
+    EXPECT_EQ(FindBroadcastBinding(plan, "n_bound_a"), nullptr);
+    EXPECT_EQ(FindBroadcastBinding(plan, "n_bound_b"), nullptr);
 
-    // 两个节点各开一次子会话（同层复用各自独立走完整编译链）。
+    // 两个节点各开一次子会话（同层复用各自独立取口面），编译期零
+    // Compile 调用。
     EXPECT_EQ(fixture.seen_contexts.size(), 2u);
+    EXPECT_EQ(fixture.compile_calls, 0);
 }
 
 TEST(
@@ -3525,9 +3527,9 @@ TEST(
     FailedPassKeepsBindingPlanIdenticalToNoInjectionBaseline)
 {
     // 硬不变量：pass 失败 ⇒ binding_plan 与无注入 pass 完全一致——零
-    // referenceArtifact 绑定注入、零派生广播删除。用可强制的失败（fake
-    // creator 会话开启失败）驱动；节点声明 executionInput 输入口使基线
-    // 携带派生悬空广播（失败态必须原样保留）。
+    // 派生广播删除。用可强制的失败（fake creator 会话开启失败）驱动；
+    // 节点声明 executionInput 输入口使基线携带派生悬空广播（失败态必须
+    // 原样保留）。
     ReferencePassFixture fixture{
         R"({"document":{"ports":[]}})",
         R"({"compile":{"executionInput":"x"}})",
@@ -3546,17 +3548,6 @@ TEST(
         plan,
         CompileDiagnosticKind::ReferenceSessionFailed));
     EXPECT_TRUE(plan.execution_order.empty());
-
-    // 零产物绑定注入。
-    int artifact_binding_count = 0;
-    for (const auto& binding : plan.binding_plan.bindings)
-    {
-        if (binding.source_port_id == "referenceArtifact")
-        {
-            ++artifact_binding_count;
-        }
-    }
-    EXPECT_EQ(artifact_binding_count, 0);
 
     // 基线：同一编译器装配但不声明仓库字段（pass 对本文档无绑条目节点
     // 可见，等价无注入 pass）；派生悬空广播在场，失败态原样保留。

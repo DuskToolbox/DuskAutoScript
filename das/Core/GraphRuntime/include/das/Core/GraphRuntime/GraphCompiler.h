@@ -72,8 +72,6 @@ enum class CompileDiagnosticKind
     ReferenceSessionFailed,
     // GetDocument 拿不到被引条目文档（失败或不可解析）。
     ReferenceDocumentMissing,
-    // 被引条目 Compile 失败或产物缺 executionInput 段。
-    ReferenceCompileFailed,
     // entryId 栈重现——引用环。
     ReferenceCycleDetected,
     // 会话 context 序列化失败（闭包栈键装配后的 JSON 编码阶段——非
@@ -278,9 +276,8 @@ public:
     /// 总数约束（每层压入不同 entryId——环检测保证）。
     void BindClosureEntryIds(std::vector<int64_t> entry_ids);
 
-    /// Apply 端点解析的绑条目口面现算：注入 pass 的口面半段（经 creator
-    /// 开被引条目会话 GetDocument 现算文档根 ports 自述）——不跑产物半段
-    /// （Apply 只需端点知识，不产 executionInput 广播绑定）。与编译期
+    /// Apply 端点解析的绑条目口面现算：注入 pass 的口面载体（经 creator
+    /// 开被引条目会话 GetDocument 现算文档根 ports 自述）。与编译期
     /// 「绑条目节点口面唯一源=会话现算」同源同款：per-apply 现算零缓存，
     /// 调用方把返回的 per-node 口面叠加到会话 nodeFaces 之上供端点解析
     /// （connectGraphPorts 的声明口判定）。口面不可得的节点不出现在返回
@@ -474,12 +471,11 @@ private:
     std::vector<int64_t> closure_entry_ids_;
 
     // 注入 pass（单次 Compile 生命周期）的产物：pass 现算的节点口面
-    // （node_id → 文档根 ports 自述）与产物广播绑定文本（node_id →
-    // compile 段 executionInput 原文）。pass 失败时 maps 为空。
+    // （node_id → 文档根 ports 自述）与绑条目记档清单。pass 失败时容器
+    // 为空。
     std::unordered_map<std::string, std::vector<DocumentFacePort>>
-                                                     reference_faces_;
-    std::vector<std::pair<std::string, std::string>> reference_artifacts_;
-    std::vector<yyjson::value>                       reference_diagnostics_;
+                               reference_faces_;
+    std::vector<yyjson::value> reference_diagnostics_;
     // 绑条目记档清单（pass 判定点顺带填充——执行时编译段的驱动数据，
     // Compile 出口随 plan 记档字段带出）。
     std::vector<Dto::ReferenceEntryDto> reference_entries_;
@@ -532,15 +528,11 @@ private:
 
     /// 引用闭包注入 pass：Compile 早段对每个绑条目节点
     /// 经 creator 开被引条目 authoring 会话——GetDocument 现算节点口面
-    /// （文档根 ports 自述，写入 reference_faces_）、Compile 产出产物
-    /// （compile 段 executionInput 原文，写入 reference_artifacts_）。
+    /// （文档根 ports 自述，写入 reference_faces_）并记档绑条目清单。
     /// 任一环节失败 → 具名诊断 + reference_pass_failed_（Compile 出口清
     /// 空 execution_order）。entryId 编译递归栈环检测（继承闭包栈+本层
-    /// 压栈，跨编译层生效）。include_artifacts=false 时只跑口面半段
-    /// （CollectReferenceFaces 的载体——产物半段与 pass-fail 门不涉）。
-    void RunReferenceClosurePass(
-        const Dto::GraphDocumentDto& document,
-        bool                         include_artifacts = true);
+    /// 压栈，跨编译层生效）。
+    void RunReferenceClosurePass(const Dto::GraphDocumentDto& document);
 
     /// Whether the node carries an injected faces entry (its own nodeFaces
     /// entry) — the stale-review eligibility marker distinguishing "the face
