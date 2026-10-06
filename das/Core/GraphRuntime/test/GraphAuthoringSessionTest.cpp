@@ -791,7 +791,7 @@ namespace
 
     // 会话编译端口面注入：catalog 声明的静态端口面（无 factory manager 绑
     // 定的 authoring 编译路径）驱动边界端口推导——未连线的声明输入口生成
-    // $graph_input broadcast 绑定、边界口清单进编译产物。
+    // kind=boundary 绑定、边界口清单进编译产物。
     TEST(GraphAuthoringSessionTest, CompileDerivesBoundaryFromSessionCatalog)
     {
         const SessionHandle s{WithActionCatalog(
@@ -824,32 +824,31 @@ namespace
         const auto plan_obj = (*shell)[std::string_view("plan")].as_object();
         ASSERT_TRUE(plan_obj.has_value());
 
-        // 未连线声明输入口（seed）→ 推导 $graph_input broadcast 绑定。
+        // 未连线声明输入口（seed）→ 推导 kind=boundary 绑定。
         const auto binding_plan =
             (*plan_obj)[std::string_view("bindingPlan")].as_object();
         ASSERT_TRUE(binding_plan.has_value());
         const auto bindings =
             (*binding_plan)[std::string_view("bindings")].as_array();
         ASSERT_TRUE(bindings.has_value());
-        bool seed_broadcast_found = false;
+        bool seed_boundary_found = false;
         for (const auto& binding : *bindings)
         {
             auto binding_obj = binding.as_object();
             ASSERT_TRUE(binding_obj.has_value());
-            if ((*binding_obj)[std::string_view("sourceNodeId")]
-                        .as_string()
-                        .value_or("")
-                    == std::string_view("$graph_input")
+            if ((*binding_obj)[std::string_view("kind")].as_string().value_or(
+                    "")
+                    == std::string_view("boundary")
                 && (*binding_obj)[std::string_view("targetPortId")]
                            .as_string()
                            .value_or("")
                        == std::string_view("seed"))
             {
-                seed_broadcast_found = true;
+                seed_boundary_found = true;
                 break;
             }
         }
-        EXPECT_TRUE(seed_broadcast_found);
+        EXPECT_TRUE(seed_boundary_found);
 
         // 边界口清单进编译产物（输入 seed / 输出 result）。
         const auto boundary_ports =
@@ -2578,14 +2577,14 @@ namespace
         return {};
     }
 
-    // 声明面动态展开 + 哨兵收敛（faces 通道形态）：begin 的文档口面经
+    // 声明面动态展开 + Boundary 收敛（faces 通道形态）：begin 的文档口面经
     // nodeFaces 注入（口对双侧并入——出侧供图内连线）→ begin 口连出到消
     // 费节点 → 编译零 PortNotFound/TypeMismatch（faces 是一路声明源）；
-    // begin 的 in 口悬空 → $graph_input 哨兵绑定 target=该口；边界输入面
+    // begin 的 in 口悬空 → kind=boundary 绑定 target=该口；边界输入面
     // 携带该口（display=口名）。存档分区已退役——节点 JSON 携带的旧分区
     // 由会话创建兼容读取段等价迁入 settings.boundaryPorts（apply 期端点
     // 解析的数据源），编译口面恒走 faces。
-    TEST(GraphAuthoringSessionTest, CompileResolvesDynamicPortEdgesAndSentinel)
+    TEST(GraphAuthoringSessionTest, CompileResolvesDynamicPortEdgesAndBoundary)
     {
         const std::string begin_with_port =
             std::string(
@@ -2627,8 +2626,8 @@ namespace
             outcome,
             Das::Core::GraphRuntime::CompileDiagnosticKind::TypeMismatch));
 
-        // 编译产物细读：哨兵绑定 target=begin 的动态口（悬空 in 口自动
-        // 收敛）+ 边界输入面携带该口。
+        // 编译产物细读：kind=boundary 绑定 target=begin 的动态口（悬空
+        // in 口自动收敛）+ 边界输入面携带该口。
         DasPtr<Das::ExportInterface::IDasJson> compiled;
         ASSERT_EQ(
             GraphAuthoringSessionCompile(s.p, nullptr, compiled.Put()),
@@ -2649,7 +2648,7 @@ namespace
         auto bindings =
             (*binding_plan)[std::string_view("bindings")].as_array();
         ASSERT_TRUE(bindings.has_value());
-        bool sentinel_target_found = false;
+        bool boundary_target_found = false;
         for (const auto& binding : *bindings)
         {
             auto binding_object = binding.as_object();
@@ -2657,10 +2656,10 @@ namespace
             {
                 continue;
             }
-            if ((*binding_object)[std::string_view("sourceNodeId")]
+            if ((*binding_object)[std::string_view("kind")]
                         .as_string()
                         .value_or("")
-                    == std::string_view("$graph_input")
+                    == std::string_view("boundary")
                 && (*binding_object)[std::string_view("targetNodeId")]
                            .as_string()
                            .value_or("")
@@ -2670,11 +2669,11 @@ namespace
                            .value_or("")
                        == std::string_view(dynamic_port_id))
             {
-                sentinel_target_found = true;
+                boundary_target_found = true;
                 break;
             }
         }
-        EXPECT_TRUE(sentinel_target_found);
+        EXPECT_TRUE(boundary_target_found);
 
         auto boundary_ports =
             (*plan_object)[std::string_view("boundaryPorts")].as_object();

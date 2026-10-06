@@ -783,16 +783,17 @@ TEST(GraphRuntimeFactoryTest, BoundaryFacesFullChainDrivesBoundarySignature)
     ASSERT_EQ(plan.boundary_ports.outputs[0].node_ids.size(), 1u);
     EXPECT_EQ(plan.boundary_ports.outputs[0].node_ids[0], "n_1");
 
-    // 广播绑定跟随 faces：begin 的悬空口各得一条 $graph_input 绑定。
-    std::size_t broadcast_bindings = 0;
+    // Boundary 绑定跟随 faces：begin 的悬空口各得一条 kind=Boundary 记录。
+    std::size_t boundary_bindings = 0;
     for (const auto& binding : plan.binding_plan.bindings)
     {
-        if (binding.source_node_id == "$graph_input")
+        if (binding.kind
+            == Das::Core::GraphRuntime::Dto::PortBindingKind::Boundary)
         {
-            ++broadcast_bindings;
+            ++boundary_bindings;
         }
     }
-    EXPECT_EQ(broadcast_bindings, 2u);
+    EXPECT_EQ(boundary_bindings, 2u);
 }
 
 TEST(GraphRuntimeFactoryTest, BoundaryFacesAbsentLeavesBoundaryEmpty)

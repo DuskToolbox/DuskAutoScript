@@ -2164,18 +2164,17 @@ TEST(GraphRuntimeTest, ExecuteExportsBoundaryOutputValues)
     plan.node_snapshots.push_back(MakeSnapshot(NODE_A, COMP_A));
     plan.execution_order = {NODE_A};
 
-    // 悬空输入经 broadcast 物化为 "hello"；替身组件回显输入口 → 帧
+    // 悬空输入经 Boundary 绑定物化为 "hello"；替身组件回显输入口 → 帧
     // (n_1, p2) 有值；p2 同时是清单里的边界输出口。
-    PortBindingDto broadcast;
-    broadcast.source_node_id = "$graph_input";
-    broadcast.source_port_id = "p2";
-    broadcast.target_node_id = NODE_A;
-    broadcast.target_port_id = "p2";
-    broadcast.expected_type = "string";
+    PortBindingDto boundary_binding;
+    boundary_binding.kind = PortBindingKind::Boundary;
+    boundary_binding.target_node_id = NODE_A;
+    boundary_binding.target_port_id = "p2";
+    boundary_binding.expected_type = "string";
     auto default_parsed = Das::Utils::ParseYyjsonFromString(R"("hello")");
     ASSERT_TRUE(default_parsed.has_value());
-    broadcast.default_value = std::move(*default_parsed);
-    plan.binding_plan.bindings.push_back(std::move(broadcast));
+    boundary_binding.default_value = std::move(*default_parsed);
+    plan.binding_plan.bindings.push_back(std::move(boundary_binding));
 
     BoundaryPortDto boundary_output;
     boundary_output.port_id = "p2";
@@ -2225,7 +2224,7 @@ TEST(GraphRuntimeTest, ExecuteWithoutBoundaryOutputsYieldsEmptyGraphOutputs)
 }
 
 // -------------------------------------------------------------------
-// ExecuteWithTypedIO（D-18/D-21 单通道）：graph_inputs 直传覆盖哨兵默认 +
+// ExecuteWithTypedIO（D-18/D-21 单通道）：graph_inputs 直传覆盖边界默认 +
 // 边界输出口类型化导出（含不可序列化对象引用——JSON 桥做不到的半段）。
 // -------------------------------------------------------------------
 namespace
@@ -2268,7 +2267,7 @@ namespace
     }
 } // namespace
 
-TEST(GraphRuntimeTest, ExecuteWithTypedIOOverridesSentinelDefault)
+TEST(GraphRuntimeTest, ExecuteWithTypedIOOverridesBoundaryDefault)
 {
     using namespace GraphRuntimeTestMock;
 
@@ -2277,18 +2276,18 @@ TEST(GraphRuntimeTest, ExecuteWithTypedIOOverridesSentinelDefault)
     plan.node_snapshots.push_back(MakeSnapshot(NODE_A, COMP_A));
     plan.execution_order = {NODE_A};
 
-    // 哨兵绑定声明默认 "hello"；直传 graph_inputs 携带 p2="typed" 时覆盖
-    // 层命中（默认不物化），回显组件读到 "typed" 并回显到帧 → 边界导出。
-    PortBindingDto broadcast;
-    broadcast.source_node_id = "$graph_input";
-    broadcast.source_port_id = "p2";
-    broadcast.target_node_id = NODE_A;
-    broadcast.target_port_id = "p2";
-    broadcast.expected_type = "string";
+    // Boundary 绑定声明默认 "hello"；直传 graph_inputs 携带 p2="typed" 时
+    // 覆盖层命中（默认不物化），回显组件读到 "typed" 并回显到帧 → 边界
+    // 导出。
+    PortBindingDto boundary_binding;
+    boundary_binding.kind = PortBindingKind::Boundary;
+    boundary_binding.target_node_id = NODE_A;
+    boundary_binding.target_port_id = "p2";
+    boundary_binding.expected_type = "string";
     auto default_parsed = Das::Utils::ParseYyjsonFromString(R"("hello")");
     ASSERT_TRUE(default_parsed.has_value());
-    broadcast.default_value = std::move(*default_parsed);
-    plan.binding_plan.bindings.push_back(std::move(broadcast));
+    boundary_binding.default_value = std::move(*default_parsed);
+    plan.binding_plan.bindings.push_back(std::move(boundary_binding));
 
     BoundaryPortDto boundary_output;
     boundary_output.port_id = "p2";
@@ -2369,18 +2368,17 @@ TEST(GraphRuntimeTest, ExecuteWithTypedIOExceptionPathClearsGraphInputs)
     plan.node_snapshots.push_back(MakeSnapshot(NODE_A, COMP_A));
     plan.execution_order = {NODE_A};
 
-    // 广播绑定保留 graph_inputs 的访问路径：恢复执行的 BuildInputPortMap
-    // 会对该绑定查询覆盖层——悬挂指针在此被解引用。
-    PortBindingDto broadcast;
-    broadcast.source_node_id = "$graph_input";
-    broadcast.source_port_id = "p2";
-    broadcast.target_node_id = NODE_A;
-    broadcast.target_port_id = "p2";
-    broadcast.expected_type = "string";
+    // Boundary 绑定保留 graph_inputs 的访问路径：恢复执行的
+    // BuildInputPortMap 会对该绑定查询覆盖层——悬挂指针在此被解引用。
+    PortBindingDto boundary_binding;
+    boundary_binding.kind = PortBindingKind::Boundary;
+    boundary_binding.target_node_id = NODE_A;
+    boundary_binding.target_port_id = "p2";
+    boundary_binding.expected_type = "string";
     auto default_parsed = Das::Utils::ParseYyjsonFromString(R"("hello")");
     ASSERT_TRUE(default_parsed.has_value());
-    broadcast.default_value = std::move(*default_parsed);
-    plan.binding_plan.bindings.push_back(std::move(broadcast));
+    boundary_binding.default_value = std::move(*default_parsed);
+    plan.binding_plan.bindings.push_back(std::move(boundary_binding));
 
     const auto shell = BuildCompiledPlanShell(yyjson::object(plan));
     const auto shell_text = Das::Utils::SerializeYyjsonValue(shell);
@@ -2431,11 +2429,11 @@ TEST(GraphRuntimeTest, ExecuteWithTypedIOExceptionPathClearsGraphInputs)
     EXPECT_EQ(hr, DAS_S_OK);
 }
 
-// 广播覆盖层不得命中调用方协议保留键 executionInput：子图执行直传整个输
+// 边界覆盖层不得命中调用方协议保留键 executionInput：子图执行直传整个输
 // 入表时该键携带编译产物文本——悬空的同名声明口（图内放一个未连线的子
 // 图执行节点）若经覆盖层收到它，父图编译产物字符串会被当作该节点的执行
 // 输入注入。保留键回落默认物化。
-TEST(GraphRuntimeTest, BroadcastOverlaySkipsReservedExecutionInputKey)
+TEST(GraphRuntimeTest, BoundaryOverlaySkipsReservedExecutionInputKey)
 {
     using namespace GraphRuntimeTestMock;
 
@@ -2444,17 +2442,16 @@ TEST(GraphRuntimeTest, BroadcastOverlaySkipsReservedExecutionInputKey)
     plan.node_snapshots.push_back(MakeSnapshot(NODE_A, COMP_A));
     plan.execution_order = {NODE_A};
 
-    PortBindingDto broadcast;
-    broadcast.source_node_id = "$graph_input";
-    broadcast.source_port_id = "executionInput";
-    broadcast.target_node_id = NODE_A;
-    broadcast.target_port_id = "executionInput";
-    broadcast.expected_type = "string";
+    PortBindingDto boundary_binding;
+    boundary_binding.kind = PortBindingKind::Boundary;
+    boundary_binding.target_node_id = NODE_A;
+    boundary_binding.target_port_id = "executionInput";
+    boundary_binding.expected_type = "string";
     auto default_parsed =
         Das::Utils::ParseYyjsonFromString(R"("declared-default")");
     ASSERT_TRUE(default_parsed.has_value());
-    broadcast.default_value = std::move(*default_parsed);
-    plan.binding_plan.bindings.push_back(std::move(broadcast));
+    boundary_binding.default_value = std::move(*default_parsed);
+    plan.binding_plan.bindings.push_back(std::move(boundary_binding));
 
     BoundaryPortDto boundary_output;
     boundary_output.port_id = "executionInput";

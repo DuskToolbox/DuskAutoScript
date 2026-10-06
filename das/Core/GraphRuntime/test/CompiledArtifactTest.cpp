@@ -69,6 +69,57 @@ TEST(CompiledArtifactTest, PortBindingDtoRoundTrip)
     EXPECT_EQ(round_tripped.target_node_id, "node_2");
     EXPECT_EQ(round_tripped.target_port_id, "input_data");
     EXPECT_EQ(round_tripped.expected_type, "image");
+    EXPECT_EQ(round_tripped.kind, PortBindingKind::Edge);
+}
+
+// ---------------------------------------------------------------------------
+// PortBindingDto — kind two-state wire form (edge | boundary)
+// ---------------------------------------------------------------------------
+TEST(CompiledArtifactTest, PortBindingDtoKindRoundsTripAsLowercaseName)
+{
+    PortBindingDto edge_binding;
+    edge_binding.kind = PortBindingKind::Edge;
+    edge_binding.source_node_id = "node_1";
+    edge_binding.source_port_id = "out";
+    edge_binding.target_node_id = "node_2";
+    edge_binding.target_port_id = "in";
+
+    auto edge_serialized = yyjson::object(edge_binding);
+    ASSERT_TRUE(edge_serialized.contains(std::string_view("kind")));
+    EXPECT_EQ(
+        yyjson::cast<PortBindingDto>(edge_serialized).kind,
+        PortBindingKind::Edge);
+    const auto edge_reparsed =
+        yyjson::read(std::string(edge_serialized.write())).as_object();
+    ASSERT_TRUE(edge_reparsed.has_value());
+    EXPECT_EQ(
+        (*edge_reparsed)[std::string_view("kind")].as_string().value_or(""),
+        std::string_view("edge"));
+
+    PortBindingDto boundary_binding;
+    boundary_binding.kind = PortBindingKind::Boundary;
+    boundary_binding.target_node_id = "node_2";
+    boundary_binding.target_port_id = "seed";
+    boundary_binding.default_value = yyjson::value(int64_t{42});
+
+    auto boundary_serialized = yyjson::object(boundary_binding);
+    ASSERT_TRUE(boundary_serialized.contains(std::string_view("kind")));
+    const auto boundary_reparsed =
+        yyjson::read(std::string(boundary_serialized.write())).as_object();
+    ASSERT_TRUE(boundary_reparsed.has_value());
+    EXPECT_EQ(
+        (*boundary_reparsed)[std::string_view("kind")].as_string().value_or(""),
+        std::string_view("boundary"));
+    const auto boundary_round_tripped =
+        yyjson::cast<PortBindingDto>(boundary_serialized);
+    EXPECT_EQ(boundary_round_tripped.kind, PortBindingKind::Boundary);
+    EXPECT_TRUE(boundary_round_tripped.source_node_id.empty());
+    EXPECT_TRUE(boundary_round_tripped.source_port_id.empty());
+
+    // Unknown kind text must fail closed instead of parsing into either
+    // state.
+    const auto tampered = yyjson::read(R"({"kind":"mangled"})");
+    EXPECT_THROW(yyjson::cast<PortBindingKind>(tampered), yyjson::bad_cast);
 }
 
 // ---------------------------------------------------------------------------
@@ -122,11 +173,26 @@ TEST(CompiledArtifactTest, PortBindingPlanDtoMultipleBindings)
 {
     PortBindingPlanDto plan;
     plan.bindings.push_back(
-        {"node_1", "output_a", "node_2", "input_x", "string"});
+        {PortBindingKind::Edge,
+         "node_1",
+         "output_a",
+         "node_2",
+         "input_x",
+         "string"});
     plan.bindings.push_back(
-        {"node_1", "output_b", "node_3", "input_y", "image"});
+        {PortBindingKind::Edge,
+         "node_1",
+         "output_b",
+         "node_3",
+         "input_y",
+         "image"});
     plan.bindings.push_back(
-        {"node_3", "output_c", "node_4", "input_z", "float"});
+        {PortBindingKind::Edge,
+         "node_3",
+         "output_c",
+         "node_4",
+         "input_z",
+         "float"});
 
     auto serialized = yyjson::object(plan);
 
@@ -213,7 +279,7 @@ TEST(CompiledArtifactTest, CompiledGraphPlanDtoRoundTrip)
                 yyjson::value(),
                 {}}}});
     plan.binding_plan.bindings.push_back(
-        {"node_1", "out_1", "node_2", "in_1", "image"});
+        {PortBindingKind::Edge, "node_1", "out_1", "node_2", "in_1", "image"});
     plan.execution_order = {"node_1", "node_2", "node_3"};
     plan.diagnostics.push_back(
         MakeDiagnosticObject("warning", "Node node_3 has no connections"));

@@ -39,17 +39,14 @@ namespace
         return b;
     }
 
-    // Broadcast (graph-level input) binding: the source is the "$graph_input"
-    // sentinel rather than a real node, and the value comes from
-    // default_value.
-    Dto::PortBindingDto MakeBroadcastBinding(
-        const std::string& graph_input_port,
+    // Boundary (graph-level input) binding: kind=Boundary — no producer
+    // site, the value comes from default_value or the typed caller overlay.
+    Dto::PortBindingDto MakeBoundaryBinding(
         const std::string& tgt_port,
         yyjson::value      default_value)
     {
         Dto::PortBindingDto b;
-        b.source_node_id = "$graph_input";
-        b.source_port_id = graph_input_port;
+        b.kind = Dto::PortBindingKind::Boundary;
         b.target_node_id = TARGET_NODE;
         b.target_port_id = tgt_port;
         b.expected_type = "";
@@ -425,18 +422,18 @@ TEST(DoAdapterTest, BuildInputPortMap_NullValueSkipped)
 }
 
 // ===========================================================================
-// BuildInputPortMap — broadcast (graph-level input) bindings
+// BuildInputPortMap — boundary (graph-level input) bindings
 //
-// A broadcast binding carries no upstream node; its default_value must be
+// A Boundary binding carries no producer site; its default_value must be
 // materialised directly into the input PortMap so graph-level settings reach
 // the component (MAA global_option semantics).
 // ===========================================================================
 
-TEST(DoAdapterTest, BuildInputPortMap_BroadcastIntDefault)
+TEST(DoAdapterTest, BuildInputPortMap_BoundaryIntDefault)
 {
     const PortFrame frame; // intentionally empty — value comes from the default
 
-    auto bindings = {MakeBroadcastBinding("threshold", "in", ParseJson("42"))};
+    auto bindings = {MakeBoundaryBinding("in", ParseJson("42"))};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -447,11 +444,11 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastIntDefault)
     EXPECT_EQ(val, 42);
 }
 
-TEST(DoAdapterTest, BuildInputPortMap_BroadcastBoolDefault)
+TEST(DoAdapterTest, BuildInputPortMap_BoundaryBoolDefault)
 {
     const PortFrame frame;
 
-    auto bindings = {MakeBroadcastBinding("flag", "in", ParseJson("true"))};
+    auto bindings = {MakeBoundaryBinding("in", ParseJson("true"))};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -462,12 +459,11 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastBoolDefault)
     EXPECT_TRUE(val);
 }
 
-TEST(DoAdapterTest, BuildInputPortMap_BroadcastStringDefault)
+TEST(DoAdapterTest, BuildInputPortMap_BoundaryStringDefault)
 {
     const PortFrame frame;
 
-    auto bindings = {
-        MakeBroadcastBinding("name", "in", ParseJson(R"("greeting")"))};
+    auto bindings = {MakeBoundaryBinding("in", ParseJson(R"("greeting")"))};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -482,11 +478,11 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastStringDefault)
     p_str->Release();
 }
 
-TEST(DoAdapterTest, BuildInputPortMap_BroadcastFloatDefault)
+TEST(DoAdapterTest, BuildInputPortMap_BoundaryFloatDefault)
 {
     const PortFrame frame;
 
-    auto bindings = {MakeBroadcastBinding("ratio", "in", ParseJson("3.14"))};
+    auto bindings = {MakeBoundaryBinding("in", ParseJson("3.14"))};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -497,11 +493,11 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastFloatDefault)
     EXPECT_DOUBLE_EQ(val, 3.14);
 }
 
-TEST(DoAdapterTest, BuildInputPortMap_BroadcastNullDefaultSkipped)
+TEST(DoAdapterTest, BuildInputPortMap_BoundaryNullDefaultSkipped)
 {
     const PortFrame frame;
 
-    auto bindings = {MakeBroadcastBinding("opt", "in", ParseJson("null"))};
+    auto bindings = {MakeBoundaryBinding("in", ParseJson("null"))};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -513,13 +509,12 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastNullDefaultSkipped)
     EXPECT_FALSE(has);
 }
 
-TEST(DoAdapterTest, BuildInputPortMap_BroadcastNonScalarSkipped)
+TEST(DoAdapterTest, BuildInputPortMap_BoundaryNonScalarSkipped)
 {
     const PortFrame frame;
 
     // Object defaults are not scalar options — skipped with a warning.
-    auto bindings = {
-        MakeBroadcastBinding("cfg", "in", ParseJson(R"({"a":1})"))};
+    auto bindings = {MakeBoundaryBinding("in", ParseJson(R"({"a":1})"))};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -530,16 +525,16 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastNonScalarSkipped)
     EXPECT_FALSE(has);
 }
 
-TEST(DoAdapterTest, BuildInputPortMap_BroadcastAndPointToPointCoexist)
+TEST(DoAdapterTest, BuildInputPortMap_BoundaryAndPointToPointCoexist)
 {
-    // A node may receive both a normal data edge and a graph-input broadcast;
-    // both must land in the input map.
+    // A node may receive both a normal data edge and a graph-level boundary
+    // input; both must land in the input map.
     PortFrame frame;
     frame.Set(SOURCE_NODE, "out", PortValue(int64_t{7}));
 
     const std::vector<Dto::PortBindingDto> bindings = {
         MakeBinding(SOURCE_NODE, "out", "in_data"),
-        MakeBroadcastBinding("threshold", "in_opt", ParseJson("99")),
+        MakeBoundaryBinding("in_opt", ParseJson("99")),
     };
 
     DAS::DasPtr<IDasPortMap> map;
@@ -559,17 +554,17 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastAndPointToPointCoexist)
 // ===========================================================================
 // BuildInputPortMap — graph-input typed pass-through overlay (D-18)
 //
-// A broadcast binding whose target port is present in graph_inputs takes
+// A Boundary binding whose target port is present in graph_inputs takes
 // the typed call-site value verbatim (the declared default is never
 // materialised); a missing key falls back to the default; null graph_inputs
 // keeps the default-only behaviour.
 // ===========================================================================
 
-TEST(DoAdapterTest, BuildInputPortMap_GraphInputOverrideBeatsSentinelDefault)
+TEST(DoAdapterTest, BuildInputPortMap_GraphInputOverrideBeatsBoundaryDefault)
 {
     const PortFrame frame;
 
-    auto bindings = {MakeBroadcastBinding("p1", "in", ParseJson("9"))};
+    auto bindings = {MakeBoundaryBinding("in", ParseJson("9"))};
 
     DAS::DasPtr<IDasPortMap> graph_inputs;
     ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
@@ -593,7 +588,7 @@ TEST(DoAdapterTest, BuildInputPortMap_GraphInputMissingKeyFallsBackToDefault)
 {
     const PortFrame frame;
 
-    auto bindings = {MakeBroadcastBinding("p1", "in", ParseJson("9"))};
+    auto bindings = {MakeBoundaryBinding("in", ParseJson("9"))};
 
     // graph_inputs carries an unrelated key only — "in" is absent, so the
     // declared default must still be materialised.
@@ -621,7 +616,7 @@ TEST(DoAdapterTest, BuildInputPortMap_GraphInputOverrideCarriesImageReference)
 
     const PortFrame frame;
 
-    auto bindings = {MakeBroadcastBinding("p1", "in", ParseJson("null"))};
+    auto bindings = {MakeBoundaryBinding("in", ParseJson("null"))};
 
     DAS::DasPtr<IDasPortMap> graph_inputs;
     ASSERT_EQ(CreateIDasPortMap(graph_inputs.Put()), DAS_S_OK);
@@ -643,8 +638,8 @@ TEST(DoAdapterTest, BuildInputPortMap_GraphInputOverrideCarriesImageReference)
 
 TEST(DoAdapterTest, BuildInputPortMap_GraphInputOverrideLeavesPlainEdgesAlone)
 {
-    // Non-sentinel bindings must never consult graph_inputs — a same-keyed
-    // entry there must not shadow the frame value of a real data edge.
+    // Edge bindings must never consult graph_inputs — a same-keyed entry
+    // there must not shadow the frame value of a real data edge.
     PortFrame frame;
     frame.Set(SOURCE_NODE, "out", PortValue(int64_t{7}));
 

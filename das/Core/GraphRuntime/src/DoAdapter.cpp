@@ -222,15 +222,8 @@ namespace
         return DAS_S_OK;
     }
 
-    // Sentinel source marking a broadcast (graph-level input) binding — not
-    // a real node, so there is no upstream PortFrame entry to read. Must
-    // match GraphCompiler::GRAPH_INPUT_BROADCAST_SOURCE and
-    // GraphRuntime::BROADCAST_SOURCE. The binding targets are the derived
-    // dangling input ports (the graph's boundary inputs).
-    constexpr std::string_view BROADCAST_SOURCE = "$graph_input";
-
     /// 子图执行直传整个调用方输入表作 graph_inputs，其中 executionInput
-    /// 键是协议保留键（携带编译产物文本，非图级输入值）——广播覆盖层按
+    /// 键是协议保留键（携带编译产物文本，非图级输入值）——边界覆盖层按
     /// 口 id 裸键匹配，悬空的同名声明口不得命中它，回落声明默认。
     constexpr std::string_view TYPED_IO_RESERVED_INPUT_KEY = "executionInput";
 
@@ -546,11 +539,10 @@ DasResult BuildInputPortMap(
 
     for (const auto& binding : bindings)
     {
-        // Broadcast (graph-level input) binding: the typed call-site value
-        // (graph_inputs) wins over the declared default — the sentinel
-        // source marks no real upstream node, so there is no frame entry to
-        // read either way.
-        if (binding.source_node_id == std::string{BROADCAST_SOURCE})
+        // Boundary binding (graph-level input): the typed call-site value
+        // (graph_inputs) wins over the declared default — the record has no
+        // producer site, so there is no frame entry to read either way.
+        if (binding.kind == Dto::PortBindingKind::Boundary)
         {
             if (binding.target_port_id != TYPED_IO_RESERVED_INPUT_KEY
                 && HasTypedPort(graph_inputs, binding.target_port_id))

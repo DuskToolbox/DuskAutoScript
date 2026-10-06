@@ -172,8 +172,8 @@ public:
 
     /// Generate port binding plan from edges + manifest port type info.
     /// Each edge becomes one PortBindingDto with expected_type from source.
-    /// Dangling input ports additionally derive $graph_input broadcast
-    /// bindings (the graph's boundary inputs).
+    /// Dangling input ports additionally derive kind=Boundary bindings (the
+    /// graph's boundary inputs).
     Dto::PortBindingPlanDto GeneratePortBindingPlan(
         const Dto::GraphDocumentDto& document);
 

@@ -3336,12 +3336,12 @@ TEST_F(E2EGraphFlowTest, ReferenceRecordFieldsRoundTripThroughPlanJson)
 
 // ===========================================================================
 // 引用闭包真实链的类型化值流 E2E：绑条目 GraphTask 节点的口面=被引条目文
-// 档根 ports 自述（编译期注入 pass 现算），编译产物经 $graph_input 广播绑
-// 定物化到节点 executionInput 口；执行期 GraphTask 形替身组件消费产物、
-// 经 GraphRuntime 类型化 IO 跑子图（graph_inputs=节点输入 map 的类型化直
-// 传覆盖层）、逐口回写类型化边界输出——image 引用全程同一实例 + 多值分
-// 型输出口各达各点（跨子图值流语义在注入链上的重建：调用中介组件退役
-// 后，调用节点=类型自身节点）。
+// 档根 ports 自述（编译期口面 pass 现算），子图 Boundary 绑定物化悬空输
+// 入口；执行期 GraphTask 形替身组件消费执行时编译产物、经 GraphRuntime
+// 类型化 IO 跑子图（graph_inputs=节点输入 map 的类型化直传覆盖层）、逐
+// 口回写类型化边界输出——image 引用全程同一实例 + 多值分型输出口各达各
+// 点（跨子图值流语义在执行时编译链上的重建：调用中介组件退役后，调用
+// 节点=类型自身节点）。
 // ===========================================================================
 namespace
 {
@@ -4300,7 +4300,7 @@ TEST_F(E2EGraphFlowTest, ReferenceClosureTypedImageFlowKeepsIdentity)
     const auto typed_state = std::make_shared<TypedChainState>();
     typed_state->source_image = E2ECountingFakeImage::Make();
 
-    // 子图产物：单节点中继子图——p1 口的 $graph_input 广播声明（类型化直
+    // 子图产物：单节点中继子图——p1 口的 kind=Boundary 声明（类型化直
     // 传覆盖层命中父图喂入的 image 引用），p2 出口（boundaryPorts.outputs
     // 声明）。
     std::string child_shell_text;
@@ -4313,13 +4313,12 @@ TEST_F(E2EGraphFlowTest, ReferenceClosureTypedImageFlowKeepsIdentity)
         child_plan.node_snapshots.push_back(std::move(child_node));
         child_plan.execution_order = {"n_relay"};
 
-        PortBindingDto input_broadcast;
-        input_broadcast.source_node_id = "$graph_input";
-        input_broadcast.source_port_id = "p1";
-        input_broadcast.target_node_id = "n_relay";
-        input_broadcast.target_port_id = "p1";
-        input_broadcast.expected_type = "image";
-        child_plan.binding_plan.bindings.push_back(std::move(input_broadcast));
+        PortBindingDto input_boundary;
+        input_boundary.kind = PortBindingKind::Boundary;
+        input_boundary.target_node_id = "n_relay";
+        input_boundary.target_port_id = "p1";
+        input_boundary.expected_type = "image";
+        child_plan.binding_plan.bindings.push_back(std::move(input_boundary));
 
         BoundaryPortDto child_boundary_output;
         child_boundary_output.port_id = "p2";

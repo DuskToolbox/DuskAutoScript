@@ -913,11 +913,10 @@ TEST(MaapiGraphE2ETest, MaapiRunNodePropagatesChildFailureToGraph)
 // 2026-09-22：真实 loadMode=ipc 跨进程链工作量过重，跨进程真实链由统一
 // IPC 测试规划承接，todo: 2026-09-22-ipc-crossprocess-test-unification）。
 // 链路（WINDOWS #8 闭合的进程内证据半边）：
-//   主进程侧编译（真实 Core 会话 + 注入 pass）→ 绑条目 maapi.run 节点
-//   收到 $graph_input → executionInput 广播绑定（default_value=被引条目
-//   compile 段 envelope 原文）→ GraphRuntime 执行 → worker 侧组件
-//   （真实 MaapiRunTaskComponent，进程内同构替身）Do 只吃
-//   executionInput → FakeMaaApiBoundary 观测执行绿灯。
+//   主进程侧编译（真实 Core 会话）→ 绑条目 maapi.run 节点在执行期经
+//   creator 现编、产物写进 executionInput 协议保留键 → GraphRuntime
+//   执行 → worker 侧组件（真实 MaapiRunTaskComponent，进程内同构替身）
+//   Do 只吃 executionInput → FakeMaaApiBoundary 观测执行绿灯。
 // 全程零 das.scheduler/具名服务查询：接口本体与具名注册已整删
 // （115-10 四词 grep 全零——删除后想查也没有），组件供数无回退（缺
 //   executionInput 即具名错，见 Test 4）。

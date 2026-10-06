@@ -3047,8 +3047,8 @@ namespace
         EXPECT_TRUE(BoundaryEntriesOf(doc, "n_begin").empty());
     }
 
-    // 名字规则：空名/超长（>100 UTF-8 字节）/保留前缀 "$"（哨兵源命名
-    // 空间防伪造）/同节点重名全部拒绝。
+    // 名字规则：空名/超长（>100 UTF-8 字节）/保留前缀 "$"（机制内部命
+    // 名空间，防伪造）/同节点重名全部拒绝。
     TEST(AuthoringDocContractTest, NodePort_AddRejectsInvalidNames)
     {
         GraphDocumentDto doc;
@@ -3060,7 +3060,7 @@ namespace
 
         auto r_reserved = ApplyAuthoringChange(
             doc,
-            MakeAddNodePort("n_begin", "$graph_input", "input", "int"));
+            MakeAddNodePort("n_begin", "$reserved", "input", "int"));
         EXPECT_FALSE(r_reserved.Ok());
         EXPECT_EQ(r_reserved.error_kind, ChangeErrorKind::InvalidOp);
 

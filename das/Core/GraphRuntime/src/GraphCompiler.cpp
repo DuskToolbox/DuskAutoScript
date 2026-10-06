@@ -27,17 +27,6 @@
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
 // ---------------------------------------------------------------------------
-// Sentinel source_node_id marking a broadcast (graph-level input) binding in
-// the port binding plan, as opposed to an ordinary point-to-point data edge.
-// The binding targets are the derived dangling input ports — the graph's
-// boundary inputs.
-// ---------------------------------------------------------------------------
-namespace
-{
-    constexpr std::string_view GRAPH_INPUT_BROADCAST_SOURCE = "$graph_input";
-}
-
-// ---------------------------------------------------------------------------
 // Known port types for the DAS type system
 // ---------------------------------------------------------------------------
 
@@ -2327,6 +2316,7 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
     for (const auto& edge : document.edges)
     {
         Dto::PortBindingDto binding;
+        binding.kind = Dto::PortBindingKind::Edge;
         binding.source_node_id = edge.source_node_id;
         binding.source_port_id = edge.source_port_id;
         binding.target_node_id = edge.target_node_id;
@@ -2406,6 +2396,7 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
                 continue;
             }
             Dto::PortBindingDto binding;
+            binding.kind = Dto::PortBindingKind::Edge;
             binding.source_node_id = node.node_id;
             binding.source_port_id = output_port.port_id;
             binding.target_node_id = node.node_id;
@@ -2416,21 +2407,20 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
         }
     }
 
-    // Derived broadcast bindings: every dangling input port (no incoming
-    // edge) is a boundary input of this graph — it receives the same
-    // $graph_input sentinel binding carrying the port's declared default (the
-    // manifest channel carries no default, so the value is null there and the
-    // runtime null branch leaves the port to the component default), so the
-    // runtime materialises it and the caller-side value forwarding has a
-    // patch target.
+    // Derived Boundary bindings: every dangling input port (no incoming
+    // edge) is a boundary input of this graph — it receives a kind=Boundary
+    // record carrying the port's declared default (the manifest channel
+    // carries no default, so the value is null there and the runtime null
+    // branch leaves the port to the component default), so the runtime
+    // materialises it and the caller-side value forwarding has a patch
+    // target.
     Dto::BoundaryPortsDto boundary = DeriveBoundaryPorts(document);
     for (const auto& boundary_input : boundary.inputs)
     {
         for (const auto& node_id : boundary_input.node_ids)
         {
             Dto::PortBindingDto binding;
-            binding.source_node_id = std::string(GRAPH_INPUT_BROADCAST_SOURCE);
-            binding.source_port_id = boundary_input.port_id;
+            binding.kind = Dto::PortBindingKind::Boundary;
             binding.target_node_id = node_id;
             binding.target_port_id = boundary_input.port_id;
             binding.expected_type = boundary_input.port_type;
@@ -2532,7 +2522,7 @@ Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
         // 声明端口面解析次序与 ResolveDeclaredPorts 一致（manifest 优先、
         // 注入 provider 兜底），但注入通道直接透传完整端口定义——
         // ComponentPortSurface 携带默认值等元数据，经 ManifestPorts 归一
-        // 会丢字段（broadcast 绑定的 default 物化依赖它）。
+        // 会丢字段（Boundary 绑定的 default 物化依赖它）。
         provider = [this](const std::string& component_guid)
             -> std::optional<ComponentPortSurface>
         {
@@ -3146,7 +3136,7 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     }
 
     // 推导边界口清单入编译产物：输入侧（悬空声明输入）已由
-    // GeneratePortBindingPlan 落成 broadcast 绑定；输出侧（声明面输出口
+    // GeneratePortBindingPlan 落成 Boundary 绑定；输出侧（声明面输出口
     // 全量）是执行侧 graphOutputs 导出的依据。
     plan.boundary_ports = DeriveBoundaryPorts(document);
 

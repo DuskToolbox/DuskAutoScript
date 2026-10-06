@@ -1100,25 +1100,27 @@ TEST(PortBindingPlanTest, MultiEdgeBindings)
     doc.edges.push_back(MakeEdge("e4", "C", "out1", "D", "in1"));
 
     auto plan = compiler.GeneratePortBindingPlan(doc);
-    // 四条点对点边 + 一条推导 broadcast（A.in1 悬空——B/C/D 的 in1 均有
+    // 四条点对点边 + 一条推导 Boundary（A.in1 悬空——B/C/D 的 in1 均有
     // 入边，只有链头的 A 缺值来源）。
     ASSERT_EQ(plan.bindings.size(), 5u);
-    const PortBindingDto* broadcast = nullptr;
+    const PortBindingDto* boundary_binding = nullptr;
     for (const auto& binding : plan.bindings)
     {
-        if (binding.source_node_id == "$graph_input")
+        if (binding.kind == PortBindingKind::Boundary)
         {
-            broadcast = &binding;
+            boundary_binding = &binding;
         }
     }
-    ASSERT_NE(broadcast, nullptr);
-    EXPECT_EQ(broadcast->source_port_id, "in1");
-    EXPECT_EQ(broadcast->target_node_id, "A");
-    EXPECT_EQ(broadcast->target_port_id, "in1");
-    EXPECT_EQ(broadcast->expected_type, "int");
-    // broadcast 绑定的目标口类型来自边界推导的声明类型（与源侧同源）。
-    EXPECT_EQ(broadcast->target_type, "int");
-    EXPECT_TRUE(broadcast->default_value.is_null());
+    ASSERT_NE(boundary_binding, nullptr);
+    // Boundary 记录无生产者位点（口 id 即目标口 id）。
+    EXPECT_TRUE(boundary_binding->source_node_id.empty());
+    EXPECT_TRUE(boundary_binding->source_port_id.empty());
+    EXPECT_EQ(boundary_binding->target_node_id, "A");
+    EXPECT_EQ(boundary_binding->target_port_id, "in1");
+    EXPECT_EQ(boundary_binding->expected_type, "int");
+    // Boundary 绑定的目标口类型来自边界推导的声明类型（与源侧同源）。
+    EXPECT_EQ(boundary_binding->target_type, "int");
+    EXPECT_TRUE(boundary_binding->default_value.is_null());
 }
 
 TEST(PortBindingPlanTest, ExpectedTypeFromSource)
@@ -1194,7 +1196,7 @@ TEST(PortBindingPlanTest, TargetTypeEmptyWhenTargetPortUnresolvable)
     doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in_unknown"));
 
     auto plan = compiler.GeneratePortBindingPlan(doc);
-    // 边绑定 + B.in1 悬空推导的 broadcast 绑定（in_unknown 占走了入边）。
+    // 边绑定 + B.in1 悬空推导的 Boundary 绑定（in_unknown 占走了入边）。
     ASSERT_EQ(plan.bindings.size(), 2u);
     const PortBindingDto* edge_binding = nullptr;
     for (const auto& binding : plan.bindings)
@@ -1223,11 +1225,10 @@ TEST(PortBindingPlanTest, NoEdgesGraph)
         MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
 
     auto plan = compiler.GeneratePortBindingPlan(doc);
-    // 无边图：唯一的绑定是悬空声明输入 in1 的 $graph_input broadcast
+    // 无边图：唯一的绑定是悬空声明输入 in1 的 kind=Boundary 记录
     // （声明通道不携带默认值 → default 通道 null，运行时按口未设处理）。
     ASSERT_EQ(plan.bindings.size(), 1u);
-    EXPECT_EQ(plan.bindings[0].source_node_id, "$graph_input");
-    EXPECT_EQ(plan.bindings[0].source_port_id, "in1");
+    EXPECT_EQ(plan.bindings[0].kind, PortBindingKind::Boundary);
     EXPECT_EQ(plan.bindings[0].target_node_id, "A");
     EXPECT_EQ(plan.bindings[0].target_port_id, "in1");
     EXPECT_EQ(plan.bindings[0].expected_type, "int");
@@ -2100,11 +2101,11 @@ TEST(PortCleanedSurfaceTest, EdgeIntoRemovedDeclarationPortFailsClosed)
     EXPECT_EQ(legacy_diagnostics[0].port_id, "in");
 }
 
-TEST(SignalAwareCompileTest, DanglingInputsBroadcastBoundToMatchingPorts)
+TEST(SignalAwareCompileTest, DanglingInputsBoundToBoundaryKind)
 {
     StubFactoryManager mgr;
-    // 节点声明两个输入口，均无入边——都推导为边界入参（$graph_input
-    // 绑定；声明通道不携带默认值 → default 通道 null，运行时按口未设
+    // 节点声明两个输入口，均无入边——都推导为边界入参（kind=Boundary
+    // 记录；声明通道不携带默认值 → default 通道 null，运行时按口未设
     // 处理）。
     auto node_def =
         MakeDefinition({{"threshold", "int"}, {"private", "int"}}, {});
@@ -2133,18 +2134,17 @@ TEST(SignalAwareCompileTest, DanglingInputsBroadcastBoundToMatchingPorts)
         }
     }
     ASSERT_NE(threshold_binding, nullptr);
-    EXPECT_EQ(threshold_binding->source_node_id, "$graph_input");
-    EXPECT_EQ(threshold_binding->source_port_id, "threshold");
+    EXPECT_EQ(threshold_binding->kind, PortBindingKind::Boundary);
     EXPECT_EQ(threshold_binding->target_node_id, "N");
     EXPECT_EQ(threshold_binding->target_port_id, "threshold");
     EXPECT_EQ(threshold_binding->expected_type, "int");
     EXPECT_TRUE(threshold_binding->default_value.is_null());
     ASSERT_NE(private_binding, nullptr);
-    EXPECT_EQ(private_binding->source_node_id, "$graph_input");
+    EXPECT_EQ(private_binding->kind, PortBindingKind::Boundary);
     EXPECT_TRUE(private_binding->default_value.is_null());
 }
 
-TEST(SignalAwareCompileTest, DanglingInputsBroadcastToOneToManyNodes)
+TEST(SignalAwareCompileTest, DanglingInputsBoundaryToOneToManyNodes)
 {
     StubFactoryManager mgr;
     auto               node_def = MakeDefinition({{"threshold", "int"}}, {});
@@ -2161,14 +2161,15 @@ TEST(SignalAwareCompileTest, DanglingInputsBroadcastToOneToManyNodes)
         MakeComponentNode("N2", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
 
     auto plan = compiler.GeneratePortBindingPlan(doc);
-    // 同名悬空输入广播到两个节点（one-to-many by-name 合并）。
+    // 同名悬空输入扇出到两个节点（one-to-many by-name 合并——每消费者
+    // 一条独立 Boundary 记录）。
     ASSERT_EQ(plan.bindings.size(), 2u);
     EXPECT_EQ(plan.bindings[0].target_node_id, "N1");
     EXPECT_EQ(plan.bindings[1].target_node_id, "N2");
     for (const auto& binding : plan.bindings)
     {
-        EXPECT_EQ(binding.source_node_id, "$graph_input");
-        EXPECT_EQ(binding.source_port_id, "threshold");
+        EXPECT_EQ(binding.kind, PortBindingKind::Boundary);
+        EXPECT_EQ(binding.target_port_id, "threshold");
         EXPECT_TRUE(binding.default_value.is_null());
     }
 }
@@ -2715,12 +2716,12 @@ TEST(PortBindingPlanTest, ExpectedTypeResolvesFromInjectedPortSurface)
 }
 
 // ===================================================================
-// 推导悬空输入的 broadcast 集成：编译产物为悬空输入生成 $graph_input
-// 哨兵绑定（default_value 取该口声明默认值——注入端口面通道可携带默认，
+// 推导悬空输入的 Boundary 集成：编译产物为悬空输入生成 kind=Boundary
+// 记录（default_value 取该口声明默认值——注入端口面通道可携带默认，
 // manifest 通道不携带即为 null）；边界口清单写入编译产物。
 // ===================================================================
 
-TEST(SignalAwareCompileTest, DerivedDanglingInputsGenerateBroadcastBindings)
+TEST(SignalAwareCompileTest, DerivedDanglingInputsGenerateBoundaryBindings)
 {
     GraphCompiler::ComponentPortSurface surface;
     surface.inputs.push_back(MakePortDefinition("p1", "int", "42"));
@@ -2747,7 +2748,7 @@ TEST(SignalAwareCompileTest, DerivedDanglingInputsGenerateBroadcastBindings)
     const PortBindingDto* declared_binding = nullptr;
     for (const auto& binding : plan.binding_plan.bindings)
     {
-        if (binding.source_node_id != "$graph_input")
+        if (binding.kind != PortBindingKind::Boundary)
         {
             continue;
         }
@@ -2761,8 +2762,8 @@ TEST(SignalAwareCompileTest, DerivedDanglingInputsGenerateBroadcastBindings)
         }
     }
     ASSERT_NE(p1_binding, nullptr);
-    EXPECT_EQ(p1_binding->source_port_id, "p1");
     EXPECT_EQ(p1_binding->target_node_id, "N");
+    EXPECT_EQ(p1_binding->target_port_id, "p1");
     EXPECT_EQ(p1_binding->expected_type, "int");
     EXPECT_EQ(p1_binding->default_value.write(), std::string("42"));
     // 无声明默认的悬空输入同样推导（default 通道为 null，运行时按口未设）。
@@ -3131,10 +3132,10 @@ TEST(StaleEdgeReviewTest, CompileEmitsWarningsWithoutMutatingDocument)
 }
 
 // ===================================================================
-// 引用闭包注入 pass（编译期现算新链）：绑条目节点 → creator 开被引条目会话
-// → GetDocument 现算口面 + Compile 产物广播绑定（$graph_input→
-// executionInput）。fake creator 走 manager 后端注入（执行编译路径形状：
-// SetFactoryManager + SetBackendResolvers）。
+// 引用闭包口面 pass（编译期只算口面）：绑条目节点 → creator 开被引条目会话
+// → GetDocument 现算口面（产物投递归执行时编译段）。fake creator 走
+// manager 后端注入（执行编译路径形状：SetFactoryManager +
+// SetBackendResolvers）。
 // ===================================================================
 namespace
 {
@@ -3402,13 +3403,13 @@ namespace
         return false;
     }
 
-    const PortBindingDto* FindBroadcastBinding(
+    const PortBindingDto* FindBoundaryExecutionInputBinding(
         const Dto::CompiledGraphPlanDto& plan,
         const std::string&               target_node_id)
     {
         for (const auto& binding : plan.binding_plan.bindings)
         {
-            if (binding.source_node_id == "$graph_input"
+            if (binding.kind == Dto::PortBindingKind::Boundary
                 && binding.target_node_id == target_node_id
                 && binding.target_port_id == "executionInput")
             {
@@ -3451,7 +3452,7 @@ TEST(
     ASSERT_EQ(plan.reference_entries.size(), 1u);
     EXPECT_EQ(plan.reference_entries[0].node_id, "n_bound");
     EXPECT_EQ(plan.reference_entries[0].entry_id, 42);
-    EXPECT_EQ(FindBroadcastBinding(plan, "n_bound"), nullptr);
+    EXPECT_EQ(FindBoundaryExecutionInputBinding(plan, "n_bound"), nullptr);
 
     // ② 编译期对绑条目节点零 Compile 调用（口面半段只 GetDocument——
     // 产物投递归执行时编译段）。
@@ -3497,7 +3498,7 @@ TEST(
         plan,
         CompileDiagnosticKind::ReferenceDocumentMissing));
     EXPECT_TRUE(plan.execution_order.empty());
-    EXPECT_EQ(FindBroadcastBinding(plan, "n_bound"), nullptr);
+    EXPECT_EQ(FindBoundaryExecutionInputBinding(plan, "n_bound"), nullptr);
 }
 
 TEST(
@@ -3562,8 +3563,8 @@ TEST(
     EXPECT_EQ(plan.reference_entries[0].entry_id, 42);
     EXPECT_EQ(plan.reference_entries[1].node_id, "n_bound_b");
     EXPECT_EQ(plan.reference_entries[1].entry_id, 42);
-    EXPECT_EQ(FindBroadcastBinding(plan, "n_bound_a"), nullptr);
-    EXPECT_EQ(FindBroadcastBinding(plan, "n_bound_b"), nullptr);
+    EXPECT_EQ(FindBoundaryExecutionInputBinding(plan, "n_bound_a"), nullptr);
+    EXPECT_EQ(FindBoundaryExecutionInputBinding(plan, "n_bound_b"), nullptr);
 
     // 两个节点各开一次子会话（同层复用各自独立取口面），编译期零
     // Compile 调用。
@@ -3644,7 +3645,7 @@ TEST(
         plan,
         CompileDiagnosticKind::ReferenceContextEncodeFailed));
     EXPECT_TRUE(plan.execution_order.empty());
-    EXPECT_EQ(FindBroadcastBinding(plan, "n_bound"), nullptr);
+    EXPECT_EQ(FindBoundaryExecutionInputBinding(plan, "n_bound"), nullptr);
 }
 
 TEST(
@@ -3652,9 +3653,9 @@ TEST(
     FailedPassKeepsBindingPlanIdenticalToNoInjectionBaseline)
 {
     // 硬不变量：pass 失败 ⇒ binding_plan 与无注入 pass 完全一致——零
-    // 派生广播删除。用可强制的失败（fake creator 会话开启失败）驱动；
-    // 节点声明 executionInput 输入口使基线携带派生悬空广播（失败态必须
-    // 原样保留）。
+    // 派生 Boundary 删除。用可强制的失败（fake creator 会话开启失败）驱动；
+    // 节点声明 executionInput 输入口使基线携带派生悬空 Boundary（失败态
+    // 必须原样保留）。
     ReferencePassFixture fixture{
         R"({"document":{"ports":[]}})",
         R"({"compile":{"executionInput":"x"}})",
@@ -3675,12 +3676,14 @@ TEST(
     EXPECT_TRUE(plan.execution_order.empty());
 
     // 基线：同一编译器装配但不声明仓库字段（pass 对本文档无绑条目节点
-    // 可见，等价无注入 pass）；派生悬空广播在场，失败态原样保留。
+    // 可见，等价无注入 pass）；派生悬空 Boundary 在场，失败态原样保留。
     GraphCompiler baseline;
     baseline.SetFactoryManager(&fixture.mgr);
     const auto baseline_plan = baseline.Compile(doc);
-    ASSERT_NE(FindBroadcastBinding(baseline_plan, "n_bound"), nullptr)
-        << "baseline must carry the derived dangling-input broadcast";
+    ASSERT_NE(
+        FindBoundaryExecutionInputBinding(baseline_plan, "n_bound"),
+        nullptr)
+        << "baseline must carry the derived dangling-input Boundary";
 
     ASSERT_EQ(
         plan.binding_plan.bindings.size(),
@@ -3689,6 +3692,7 @@ TEST(
     {
         const auto& actual = plan.binding_plan.bindings[i];
         const auto& expected = baseline_plan.binding_plan.bindings[i];
+        EXPECT_EQ(actual.kind, expected.kind);
         EXPECT_EQ(actual.source_node_id, expected.source_node_id);
         EXPECT_EQ(actual.source_port_id, expected.source_port_id);
         EXPECT_EQ(actual.target_node_id, expected.target_node_id);
@@ -3697,8 +3701,8 @@ TEST(
         EXPECT_EQ(actual.target_type, expected.target_type);
         EXPECT_EQ(actual.default_value.write(), expected.default_value.write());
     }
-    EXPECT_NE(FindBroadcastBinding(plan, "n_bound"), nullptr)
-        << "failed pass must keep the derived broadcast (no erasure)";
+    EXPECT_NE(FindBoundaryExecutionInputBinding(plan, "n_bound"), nullptr)
+        << "failed pass must keep the derived Boundary (no erasure)";
 }
 
 TEST(

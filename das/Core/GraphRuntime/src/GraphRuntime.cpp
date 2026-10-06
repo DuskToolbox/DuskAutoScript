@@ -890,10 +890,6 @@ GraphRuntime::NodeExecutionOutcome GraphRuntime::ExecuteNodeWithComponent(
 
 namespace
 {
-    // Sentinel source marking a broadcast (graph-input) binding — not a real
-    // node, so it creates no data dependency. Must match GraphCompiler.
-    constexpr std::string_view BROADCAST_SOURCE = "$graph_input";
-
     // 可序列化端口值 → JSON（graphOutputs 导出通道）。Base/Component/
     // Image/Signal 不跨结果 JSON 序列化——调用方侧无从物化，跳过（TRACE）。
     std::optional<yyjson::value> PortValueToJson(const PortValue& value)
@@ -980,12 +976,12 @@ DasResult GraphRuntime::RunSignalGated(
     }
 
     // -- data dependencies (point-to-point data edges only) -----------------
-    // Broadcast bindings and signal edges carry no node-level data dependency.
+    // Boundary bindings and signal edges carry no node-level data dependency.
     std::unordered_map<std::string, std::vector<std::string>> data_preds;
     std::unordered_map<std::string, std::vector<std::string>> data_succ;
     for (const auto& b : plan.binding_plan.bindings)
     {
-        if (b.source_node_id == std::string(BROADCAST_SOURCE))
+        if (b.kind == Dto::PortBindingKind::Boundary)
         {
             continue;
         }

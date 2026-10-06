@@ -17,9 +17,25 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 namespace Dto
 {
 
+    // ---- explicit two-state discriminator of a value-flow binding ----
+    // kind is the only thing the runtime interprets to route a record:
+    // Edge bindings copy a frame value from a producer site, Boundary
+    // bindings materialise the graph's boundary input for a dangling
+    // declared port (typed caller value first, declared default
+    // otherwise). The record is self-describing — no sentinel node id
+    // is part of the contract.
+    enum class PortBindingKind
+    {
+        Edge,
+        Boundary
+    };
+
     // ---- data-flow binding between two ports ----
     struct PortBindingDto
     {
+        PortBindingKind kind = PortBindingKind::Edge;
+        // Edge state only — Boundary records carry no producer site (the
+        // boundary port id IS the target port id under by-name merge).
         std::string source_node_id;
         std::string source_port_id;
         std::string target_node_id;
@@ -30,11 +46,12 @@ namespace Dto
         // targets at consumer read time; float sources never truncate
         // into integer targets). Empty when unresolvable: the binding
         // plan never invents a type, mirroring expected_type's
-        // source-side contract.
+        // source-side contract. Carried by both states — the Boundary
+        // default materialisation needs the target-side type.
         std::string target_type;
-        // Broadcast (graph-input) bindings carry the graph input's default so
-        // the runtime can materialise the port even without an explicit value.
-        // Empty for ordinary point-to-point data edges. (DAS-60 Stage 2)
+        // Boundary state only — the boundary input's declared default so
+        // the runtime can materialise the port even without an explicit
+        // caller value. Empty for Edge bindings.
         yyjson::value default_value;
     };
 
@@ -164,9 +181,9 @@ namespace Dto
         // reset sets instead of recomputing reachability.
         std::vector<LoopLayerDto> loop_layers;
         // Derived boundary surface (ports-are-derived). Inputs (dangling
-        // declared inputs) ride the broadcast binding generation
-        // ($graph_input sentinel); outputs (all declared outputs) are the
-        // runtime's graphOutputs export list.
+        // declared inputs) ride the Boundary binding generation; outputs
+        // (all declared outputs) are the runtime's graphOutputs export
+        // list.
         BoundaryPortsDto boundary_ports;
         // Bound-entry record (compile-time knowledge the runtime consumes
         // verbatim): the execution-time compile driver.
@@ -222,6 +239,44 @@ DAS_GRAPHRUNTIME_DTO_CASTER(CompiledGraphPlanDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledSubgraphSnapshotDto);
 
 #undef DAS_GRAPHRUNTIME_DTO_CASTER
+
+// ---------------------------------------------------------------------------
+// Leaf caster for PortBindingKind
+// ---------------------------------------------------------------------------
+// cpp_yyjson's aggregate reflection has no enum branch, so the kind field
+// needs this leaf caster on both directions to keep riding the plain
+// DAS_GRAPHRUNTIME_DTO_CASTER macro above. Wire form is the lowercase state
+// name — a fail-closed throw on anything else (a tampered plan must not
+// silently parse into either state).
+template <>
+struct yyjson::caster<Das::Core::GraphRuntime::Dto::PortBindingKind>
+{
+    using Kind = Das::Core::GraphRuntime::Dto::PortBindingKind;
+
+    template <yyjson::json_value Json>
+    static Kind from_json(const Json& json)
+    {
+        const auto text = json.as_string();
+        if (text.has_value() && *text == std::string_view("edge"))
+        {
+            return Kind::Edge;
+        }
+        if (text.has_value() && *text == std::string_view("boundary"))
+        {
+            return Kind::Boundary;
+        }
+        throw yyjson::bad_cast(
+            "PortBindingKind must be the string \"edge\" or \"boundary\"");
+    }
+
+    static void to_json(yyjson::writer::value_ref& value, Kind kind)
+    {
+        // String literals have static storage duration — no copy_string
+        // pairing needed.
+        value = kind == Kind::Edge ? std::string_view("edge")
+                                   : std::string_view("boundary");
+    }
+};
 
 // ---------------------------------------------------------------------------
 // field_name_rule registrations (snake_case -> camelCase)
