@@ -335,23 +335,16 @@ std::optional<yyjson::value> ReadAcceptedSettings(
 }
 
 // manifest config 声明 repositoryRef（type=taskRepositoryRef，值 = 纯
-// entryId 整数）与 runtimeInputs（object）两键：ApplySettingsChange 接受并
-// 存储两键，acceptedSettings 回显存储值。
-TEST(
-    DasMaaPiRunTaskComponent,
-    ApplySettingsChangeStoresRepositoryRefAndRuntimeInputs)
+// entryId 整数）单键：ApplySettingsChange 接受，acceptedSettings 回显存储
+// 值。
+TEST(DasMaaPiRunTaskComponent, ApplySettingsChangeStoresRepositoryRef)
 {
     MaapiRunTaskComponent    component;
     FakeMaaApiBoundary       fake;
     const ScopedBoundaryHook hook(fake);
 
-    auto runtime_inputs = Utils::MakeYyjsonObject();
-    (*runtime_inputs.as_object())[std::string_view("x")] = 1;
-
     auto settings = Utils::MakeYyjsonObject();
     (*settings.as_object())[std::string_view("repositoryRef")] = 7;
-    (*settings.as_object())[std::string_view("runtimeInputs")] =
-        std::move(runtime_inputs);
 
     const auto request = MakeSettingsChangeRequest(settings);
 
@@ -370,11 +363,6 @@ TEST(
         (*accepted_obj)[std::string_view("repositoryRef")].as_int().value_or(
             -1),
         7);
-    ASSERT_TRUE(accepted_obj->contains(std::string_view("runtimeInputs")));
-    auto inputs_obj =
-        (*accepted_obj)[std::string_view("runtimeInputs")].as_object();
-    ASSERT_TRUE(inputs_obj);
-    EXPECT_EQ((*inputs_obj)[std::string_view("x")].as_int().value_or(-1), 1);
 }
 
 // repositoryRef 非纯整数（旧 {kind,entryId} 包装形状/字符串/布尔）→ 该键
@@ -448,40 +436,6 @@ TEST(
         DAS_E_INVALID_ARGUMENT);
 }
 
-// runtimeInputs 非对象（数组/标量）→ 拒绝；repositoryRef 合法也不落半截。
-TEST(DasMaaPiRunTaskComponent, ApplySettingsChangeRejectsNonObjectRuntimeInputs)
-{
-    MaapiRunTaskComponent    component;
-    FakeMaaApiBoundary       fake;
-    const ScopedBoundaryHook hook(fake);
-
-    DasPtr<ExportInterface::IDasJson> result_json;
-    EXPECT_EQ(
-        component.ApplySettingsChange(
-            MakeSettingsChangeRequestFromText(
-                R"({"repositoryRef": 7, "runtimeInputs": [1, 2]})")
-                .Get(),
-            result_json.Put()),
-        DAS_E_INVALID_ARGUMENT);
-    EXPECT_EQ(
-        component.ApplySettingsChange(
-            MakeSettingsChangeRequestFromText(
-                R"({"repositoryRef": 7, "runtimeInputs": 5})")
-                .Get(),
-            result_json.Put()),
-        DAS_E_INVALID_ARGUMENT);
-
-    // 上一轮整包拒绝后未存储：空投递回显空 accepted。
-    EXPECT_EQ(
-        component.ApplySettingsChange(
-            MakeSettingsChangeRequestFromText(R"({})").Get(),
-            result_json.Put()),
-        DAS_S_OK);
-    const auto accepted = ReadAcceptedSettings(result_json.Get());
-    ASSERT_TRUE(accepted.has_value());
-    EXPECT_EQ(accepted->as_object()->size(), 0u);
-}
-
 // 连续两次投递存储为最新值（幂等覆盖，全量替换语义）。
 TEST(DasMaaPiRunTaskComponent, ApplySettingsChangeOverwritesWithLatestValues)
 {
@@ -509,8 +463,7 @@ TEST(DasMaaPiRunTaskComponent, ApplySettingsChangeOverwritesWithLatestValues)
         (*accepted_obj)[std::string_view("repositoryRef")].as_int().value_or(
             -1),
         9);
-    // 全量替换：第二次投递未携带 runtimeInputs → 不回显。
-    EXPECT_FALSE(accepted_obj->contains(std::string_view("runtimeInputs")));
+    EXPECT_EQ(accepted_obj->size(), 1u);
 }
 
 // 任务执行失败（MaaFW 任务 Failed）：输出口 diagnostics 带失败诊断，
@@ -540,7 +493,7 @@ TEST(DasMaaPiRunTaskComponent, DoPropagatesRuntimeFailureWithDiagnostics)
 }
 
 // settings 携带 repositoryRef 但 executionInput 端口缺线：同样遇缺即错
-// （D-10 后 envelope 唯一来源 = 编译期注入链经输入口喂线，节点不再自查
+// （envelope 唯一来源 = 编排层执行时编译经输入口喂线，节点不再自查
 // 仓库条目）——具名失败码与空 PortMap 情形一致，boundary 零调用。
 TEST(DasMaaPiRunTaskComponent, DoWithRepositoryRefButMissingWireFailsLoudly)
 {
@@ -561,36 +514,6 @@ TEST(DasMaaPiRunTaskComponent, DoWithRepositoryRefButMissingWireFailsLoudly)
 
     EXPECT_EQ(hr, DAS_E_MAAPI_EXECUTION_INPUT_MISSING);
     EXPECT_TRUE(fake.calls.empty());
-}
-
-// runtimeInputs 覆盖合并：envelope 来自 executionInput 端口喂线（编译期
-// 注入链），settings.runtimeInputs 的键级覆盖与 envelope 来源无关——合并
-// 键进 PostTask 的 pipeline_override。
-TEST(DasMaaPiRunTaskComponent, DoMergesRuntimeInputsIntoPortFedEnvelope)
-{
-    MaapiRunTaskComponent    component;
-    FakeMaaApiBoundary       fake;
-    const ScopedBoundaryHook hook(fake);
-
-    DasPtr<ExportInterface::IDasJson> settings_result;
-    ASSERT_EQ(
-        component.ApplySettingsChange(
-            MakeSettingsChangeRequestFromText(
-                R"({"repositoryRef": 5, "runtimeInputs": {"custom_flag": true}})")
-                .Get(),
-            settings_result.Put()),
-        DAS_S_OK);
-
-    DasPtr<ExportInterface::IDasPortMap> input_map =
-        MakeInputPortMap(MakeEnvelopeJson());
-    DasPtr<ExportInterface::IDasPortMap> result;
-    const auto hr = component.Do(nullptr, input_map.Get(), result.Put());
-
-    EXPECT_EQ(hr, DAS_S_OK);
-    EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:"));
-    // 合并语义：runtimeInputs 的键覆盖进任务的 pipeline_override——
-    // boundary 记录的 PostTask 调用携带该键。
-    EXPECT_TRUE(fake.ContainsSubstring("custom_flag"));
 }
 
 // 输入 portmap 携带暴露口键（非保留键，键名 = 口 id = PI 参数名）——
@@ -690,8 +613,8 @@ TEST(DasMaaPiRunTaskComponent, DoSkipsReservedExecutionInputKeyInOverride)
 }
 
 // settings 携带 repositoryRef 且 executionInput 端口喂线：直接消费端口
-// envelope（唯一来源契约锁定——repositoryRef 供编译期注入链识别节点绑定
-// 的条目，运行期不参与供数）。
+// envelope（唯一来源契约锁定——repositoryRef 供编排层执行时编译识别节点
+// 绑定的条目，运行期不参与供数）。
 TEST(DasMaaPiRunTaskComponent, DoWithRepositoryRefConsumesExecutionInputPort)
 {
     MaapiRunTaskComponent    component;

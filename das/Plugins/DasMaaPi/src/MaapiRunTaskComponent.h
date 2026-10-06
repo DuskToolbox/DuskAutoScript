@@ -4,15 +4,8 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentFactory.Implements.hpp>
 
-#include <cassert>
-
-#include <cpp_yyjson.hpp>
-
-#include <cstdint>
 #include <ctime>
 #include <functional>
-#include <mutex>
-#include <string>
 
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das::Plugins::DasMaaPi,
@@ -48,14 +41,15 @@ DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
 {
     // manifest（DasMaaPi.json）声明的执行组件：config 声明 repositoryRef
-    // （type=taskRepositoryRef，值 = 纯 entryId 整数；供编译期注入链识别
-    // 节点绑定的条目，运行期不参与供数）与 runtimeInputs（object）两键、
-    // 输入口 executionInput（object）、输出口
+    // （type=taskRepositoryRef，值 = 纯 entryId 整数；供编排层执行时编译
+    // 识别节点绑定的条目，运行期不参与供数、组件不存储）单键，输出口
     // completedTasks/stopped/diagnostics、信号 succeeded/failed/cancelled。
-    // Do 的 envelope 唯一来源 = 输入口 executionInput 喂线（父图编译期
-    // 注入链送达）；端口缺失遇缺即错返回
+    // Do 的 envelope 唯一来源 = 输入口 executionInput 喂线（编排层在节点
+    // 执行时现编、产物经输入口送达）；端口缺失遇缺即错返回
     // DAS_E_MAAPI_EXECUTION_INPUT_MISSING，运行期零自解析回退、零主进程
-    // 服务查询。
+    // 服务查询。执行期参数覆盖唯一入口 = 暴露口（输入 portmap 非保留键
+    // 恒等映射进 pipelineOverride——连线值 > entry 编译期选项值，口未连线
+    // = 编译期值，无第三来源）。
     class MaapiRunTaskComponent final
         : public PluginInterface::DasTaskComponentImplBase<
               MaapiRunTaskComponent>
@@ -80,13 +74,6 @@ namespace Plugins::DasMaaPi
         void SetClockForTest(ClockFn fn) { now_ = std::move(fn); }
 
     private:
-        // settings 存储锁：ApplySettingsChange（Configure 阶段投递）与 Do
-        // （执行）可能来自不同线程。
-        mutable std::mutex settings_mutex_;
-        // runtimeInputs 存储值（对象级运行时输入覆盖）；null = 未设置。
-        // repositoryRef 不存储：编译期注入链直接读图文档节点的 settings，
-        // 组件运行期不消费条目 id。
-        yyjson::value runtime_inputs_;
         // nextTime 口的计算时钟（D-B5）。
         ClockFn now_ = [] { return std::time(nullptr); };
     };

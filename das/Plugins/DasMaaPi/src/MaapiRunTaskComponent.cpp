@@ -12,9 +12,11 @@
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/abi/IDasStringVector.h>
 
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
 #include <map>
 #include <new>
 #include <optional>
@@ -81,6 +83,134 @@ namespace Plugins::DasMaaPi
                 return std::nullopt;
             }
             return value;
+        }
+
+        // 读单口值并转 JSON 值形态（标量四类——PI 参数的值域）。image/
+        // base/component 无 JSON 值形态、json/signal 非调用方输入面，一律
+        // 返回 nullopt 由调用方跳过（与图侧七类分派抄写的可转移集合对齐）。
+        std::optional<yyjson::value> ReadPortValueAsOverrideJson(
+            ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+            const std::string&                    port_id)
+        {
+            const DasReadOnlyString key{port_id.c_str()};
+
+            ExportInterface::DasVariantType kind =
+                ExportInterface::DAS_VARIANT_TYPE_NULL;
+            if (DAS::IsFailed(p_input_port_map->GetType(key.Get(), &kind)))
+            {
+                return std::nullopt;
+            }
+
+            switch (kind)
+            {
+            case ExportInterface::DAS_VARIANT_TYPE_INT:
+            {
+                int64_t value = 0;
+                if (DAS::IsFailed(p_input_port_map->GetInt(key.Get(), &value)))
+                {
+                    return std::nullopt;
+                }
+                return yyjson::value(value);
+            }
+            case ExportInterface::DAS_VARIANT_TYPE_FLOAT:
+            {
+                double value = 0.0;
+                if (DAS::IsFailed(
+                        p_input_port_map->GetFloat(key.Get(), &value)))
+                {
+                    return std::nullopt;
+                }
+                return yyjson::value(value);
+            }
+            case ExportInterface::DAS_VARIANT_TYPE_BOOL:
+            {
+                bool value = false;
+                if (DAS::IsFailed(p_input_port_map->GetBool(key.Get(), &value)))
+                {
+                    return std::nullopt;
+                }
+                return yyjson::value(value);
+            }
+            case ExportInterface::DAS_VARIANT_TYPE_STRING:
+            {
+                IDasReadOnlyString* p_value = nullptr;
+                if (DAS::IsFailed(
+                        p_input_port_map->GetString(key.Get(), &p_value))
+                    || p_value == nullptr)
+                {
+                    return std::nullopt;
+                }
+                const char* utf8 = nullptr;
+                p_value->GetUtf8(&utf8);
+                yyjson::value value(std::string(utf8 != nullptr ? utf8 : ""));
+                p_value->Release();
+                return value;
+            }
+            default:
+            {
+                spdlog::warn(
+                    "[DasMaaPi] Do: input port '{}' carries a non-scalar "
+                    "value (variant kind {}); skipping override mapping",
+                    port_id,
+                    static_cast<int>(kind));
+                return std::nullopt;
+            }
+            }
+        }
+
+        // 输入 portmap 的非保留键 = 暴露口（键 = 口 id = PI 参数名），值 =
+        // 暴露口连线值/边界默认（编排层绑定抄写落 portmap）。恒等映射进
+        // 执行内核传参通道（maapi.tasks[].pipelineOverride 的对象级覆盖）
+        // ——执行期参数覆盖两层语义：暴露口连线值 > entry 编译期选项值，
+        // 口未连线 = 编译期值生效，无第三来源。保留键 executionInput 不参
+        // 与（产物运输专用）。
+        void CollectWiredExposedInputs(
+            ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+            std::map<std::string, std::string>&   port_map,
+            std::map<std::string, yyjson::value>& inputs)
+        {
+            if (p_input_port_map == nullptr)
+            {
+                return;
+            }
+
+            DasPtr<ExportInterface::IDasStringVector> keys;
+            if (DAS::IsFailed(p_input_port_map->GetKeys(keys.Put())) || !keys)
+            {
+                return;
+            }
+
+            std::uint64_t count = 0;
+            if (DAS::IsFailed(keys->Size(&count)))
+            {
+                return;
+            }
+
+            for (std::uint64_t i = 0; i < count; ++i)
+            {
+                IDasReadOnlyString* p_key = nullptr;
+                if (DAS::IsFailed(keys->At(i, &p_key)) || p_key == nullptr)
+                {
+                    continue;
+                }
+                const char* key_utf8 = nullptr;
+                p_key->GetUtf8(&key_utf8);
+                const std::string port_id(key_utf8 != nullptr ? key_utf8 : "");
+                p_key->Release();
+                if (port_id.empty() || port_id == "executionInput")
+                {
+                    continue;
+                }
+
+                auto value =
+                    ReadPortValueAsOverrideJson(p_input_port_map, port_id);
+                if (!value.has_value())
+                {
+                    continue;
+                }
+                port_map.emplace(port_id, port_id);
+                inputs.emplace(port_id, std::move(*value));
+            }
         }
 
         // GraphRuntime Configure 阶段的 settings 投递包装：请求体形如
@@ -158,13 +288,11 @@ namespace Plugins::DasMaaPi
         *pp_out_result_json = nullptr;
 
         // manifest config 声明 repositoryRef（type=taskRepositoryRef，值 =
-        // 纯 entryId 整数）与 runtimeInputs（object）两键。Configure 投递是
-        // 全量替换语义；形状非法整包拒绝（不落半截状态）——项目未发布，
-        // 无 legacy 值需要宽容。
+        // 纯 entryId 整数）单键。Configure 投递是全量替换语义；形状非法
+        // 整包拒绝（不落半截状态）——项目未发布，无 legacy 值需要宽容。
         auto                   settings = ReadDeliveredSettings(p_request_json);
         auto                   settings_obj = settings.as_object();
         std::optional<int64_t> accepted_entry_id;
-        std::optional<yyjson::value> accepted_runtime_inputs;
 
         if (settings_obj.has_value()
             && settings_obj->contains(std::string_view("repositoryRef")))
@@ -186,33 +314,6 @@ namespace Plugins::DasMaaPi
             }
         }
 
-        if (settings_obj.has_value()
-            && settings_obj->contains(std::string_view("runtimeInputs")))
-        {
-            const auto& runtime_inputs =
-                (*settings_obj)[std::string_view("runtimeInputs")];
-            if (!runtime_inputs.is_null())
-            {
-                if (!runtime_inputs.is_object())
-                {
-                    spdlog::error(
-                        "[DasMaaPi] ApplySettingsChange: runtimeInputs must "
-                        "be an object");
-                    return DAS_E_INVALID_ARGUMENT;
-                }
-                accepted_runtime_inputs =
-                    Das::Utils::CloneYyjsonValue(runtime_inputs);
-            }
-        }
-
-        {
-            const std::scoped_lock lock(settings_mutex_);
-            runtime_inputs_ =
-                accepted_runtime_inputs.has_value()
-                    ? Das::Utils::CloneYyjsonValue(*accepted_runtime_inputs)
-                    : yyjson::value{};
-        }
-
         // acceptedSettings 回显本轮实际接受的键（存储值）。
         auto accepted = Das::Utils::MakeYyjsonObject();
         auto accepted_object = accepted.as_object();
@@ -220,11 +321,6 @@ namespace Plugins::DasMaaPi
         {
             (*accepted_object)[std::string_view("repositoryRef")] =
                 *accepted_entry_id;
-        }
-        if (accepted_runtime_inputs.has_value())
-        {
-            (*accepted_object)[std::string_view("runtimeInputs")] =
-                Das::Utils::CloneYyjsonValue(*accepted_runtime_inputs);
         }
 
         auto result = Das::Utils::MakeYyjsonObject();
@@ -260,36 +356,20 @@ namespace Plugins::DasMaaPi
         }
         const std::string envelope_source = std::move(*execution_input_json);
 
-        // settings 的 runtimeInputs 运行时输入覆盖与 envelope 来源无关：
-        // 键恒等映射进 envelope 运行时输入段（maapi.tasks[].pipelineOverride
-        // 的对象级覆盖）——复用执行内核既有的传参通道。
-        yyjson::value runtime_inputs;
-        {
-            const std::scoped_lock lock(settings_mutex_);
-            runtime_inputs = Das::Utils::CloneYyjsonValue(runtime_inputs_);
-        }
-
         auto envelope_json = Das::Utils::ParseYyjsonFromString(envelope_source);
         if (!envelope_json.has_value())
         {
             return DAS_E_INVALID_JSON;
         }
 
-        // runtimeInputs 键恒等映射进执行内核传参通道（语义见读取处注释）。
+        // 执行期参数覆盖唯一入口 = 暴露口：输入 portmap 非保留键恒等映射
+        // 进执行内核传参通道（语义见 CollectWiredExposedInputs 注释）。
         std::map<std::string, std::string>   runtime_input_port_map;
         std::map<std::string, yyjson::value> runtime_input_values;
-        if (auto runtime_inputs_object = runtime_inputs.as_object())
-        {
-            for (const auto& [input_name, input_value] : *runtime_inputs_object)
-            {
-                runtime_input_port_map.emplace(
-                    std::string(input_name),
-                    std::string(input_name));
-                runtime_input_values.emplace(
-                    std::string(input_name),
-                    Das::Utils::CloneYyjsonValue(input_value));
-            }
-        }
+        CollectWiredExposedInputs(
+            p_input_port_map,
+            runtime_input_port_map,
+            runtime_input_values);
 
         MaaRuntimeResult run_result;
         const DasResult  execute_result = ExecuteEnvelope(
