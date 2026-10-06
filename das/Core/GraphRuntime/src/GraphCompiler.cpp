@@ -392,6 +392,7 @@ void GraphCompiler::RunReferenceClosurePass(
     reference_faces_.clear();
     reference_artifacts_.clear();
     reference_diagnostics_.clear();
+    reference_entries_.clear();
     reference_pass_failed_ = false;
 
     // creator 解析次序：显式绑定 → factory manager host。
@@ -467,6 +468,11 @@ void GraphCompiler::RunReferenceClosurePass(
             }
             continue;
         }
+
+        // 绑条目记档（顺带填充）：执行时编译段照单驱动，运行期零
+        // catalog/repository 解析。
+        reference_entries_.push_back(
+            Dto::ReferenceEntryDto{node.node_id, *bound_entry_id});
 
         // entryId 在途栈环检测：栈上重现=引用环（本节点子编译链的在途
         // 祖先 entryId 被深层绑回）。同层兄弟节点绑同一条目合法（前一节
@@ -3038,6 +3044,11 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     {
         plan.diagnostics.push_back(Das::Utils::CloneYyjsonValue(diagnostic));
     }
+    // 绑条目记档与本图闭包栈随 plan 带出（沿 loop_layers「编译期算好、
+    // 运行期照单消费」先例——闭包栈含本图自身条目 id：子层编译经 context
+    // 闭包栈键恢复的初始栈天然携带自身 id）。
+    plan.reference_entries = reference_entries_;
+    plan.closure_entry_ids = closure_entry_ids_;
 
     // Edge port validation（顺带收集规范口 signal 源边坐标——manifest 知
     // 识只在 ValidateEdgePorts 的成员路径可达，拓扑阶段无此访问面）

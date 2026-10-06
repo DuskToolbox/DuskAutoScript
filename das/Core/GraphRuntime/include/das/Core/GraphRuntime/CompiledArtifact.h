@@ -136,6 +136,17 @@ namespace Dto
         std::vector<BoundaryPortDto> outputs;
     };
 
+    // ---- bound repository reference recorded at compile time ----
+    // One node bound to a repository entry (the compiler's business-neutral
+    // taskRepositoryRef judgment). The runtime consumes the list verbatim as
+    // the execution-time compile driver — it never re-derives the binding
+    // from catalogs or repository stores.
+    struct ReferenceEntryDto
+    {
+        std::string node_id;
+        int64_t     entry_id = 0;
+    };
+
     // ---- compiled plan for an entire graph ----
     struct CompiledGraphPlanDto
     {
@@ -157,6 +168,14 @@ namespace Dto
         // ($graph_input sentinel); outputs (all declared outputs) are the
         // runtime's graphOutputs export list.
         BoundaryPortsDto boundary_ports;
+        // Bound-entry record (compile-time knowledge the runtime consumes
+        // verbatim): the execution-time compile driver.
+        std::vector<ReferenceEntryDto> reference_entries;
+        // Closure stack of this graph (ancestor entry ids + this graph's own
+        // entry id; empty for a top-level task graph). Rides the plan so the
+        // execution-time compile hands each child session its inherited
+        // closure — entry-cycle protection spans execution layers.
+        std::vector<int64_t> closure_entry_ids;
     };
 
     // ---- compiled snapshot of a subgraph reference (02-07 serialization) ----
@@ -198,6 +217,7 @@ DAS_GRAPHRUNTIME_DTO_CASTER(PortRefDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(LoopLayerDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(BoundaryPortDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(BoundaryPortsDto);
+DAS_GRAPHRUNTIME_DTO_CASTER(ReferenceEntryDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledGraphPlanDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledSubgraphSnapshotDto);
 
@@ -257,6 +277,12 @@ struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::BoundaryPortDto>
 
 template <>
 struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::BoundaryPortsDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::ReferenceEntryDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

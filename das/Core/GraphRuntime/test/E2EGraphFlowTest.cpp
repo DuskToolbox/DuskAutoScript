@@ -3416,6 +3416,34 @@ TEST_F(E2EGraphFlowTest, ExecutionTimeReferenceCompileReachesComponentPort)
     EXPECT_EQ(state->execution_input_text, child_shell_text);
 }
 
+// 记档字段序列化往返：referenceEntries 与 closureEntryIds 经
+// DAS_GRAPHRUNTIME_DTO_CASTER 序列化/反序列化存活（DasGraphTask 的 plan
+// JSON 通路钉住——全字段键由序列化侧产出保证齐备）。
+TEST_F(E2EGraphFlowTest, ReferenceRecordFieldsRoundTripThroughPlanJson)
+{
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_reference_record_roundtrip";
+    plan.reference_entries.push_back({"n_bound", 42});
+    plan.reference_entries.push_back({"n_bound_two", 7});
+    plan.closure_entry_ids = {41, 42};
+
+    const auto serialized =
+        Das::Utils::SerializeYyjsonValue(yyjson::object(plan));
+    ASSERT_TRUE(serialized.has_value());
+    const auto parsed = Das::Utils::ParseYyjsonFromString(*serialized);
+    ASSERT_TRUE(parsed.has_value());
+    const auto round_tripped = yyjson::cast<CompiledGraphPlanDto>(*parsed);
+
+    ASSERT_EQ(round_tripped.reference_entries.size(), 2u);
+    EXPECT_EQ(round_tripped.reference_entries[0].node_id, "n_bound");
+    EXPECT_EQ(round_tripped.reference_entries[0].entry_id, 42);
+    EXPECT_EQ(round_tripped.reference_entries[1].node_id, "n_bound_two");
+    EXPECT_EQ(round_tripped.reference_entries[1].entry_id, 7);
+    ASSERT_EQ(round_tripped.closure_entry_ids.size(), 2u);
+    EXPECT_EQ(round_tripped.closure_entry_ids[0], 41);
+    EXPECT_EQ(round_tripped.closure_entry_ids[1], 42);
+}
+
 // ===========================================================================
 // 引用闭包真实链的类型化值流 E2E：绑条目 GraphTask 节点的口面=被引条目文
 // 档根 ports 自述（编译期注入 pass 现算），编译产物经 $graph_input 广播绑

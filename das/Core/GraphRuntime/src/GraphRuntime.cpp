@@ -16,6 +16,7 @@
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasSettingsChangeBuilder.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
+#include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/header/IDasSettingsChangeBuilder.generated.h>
@@ -51,6 +52,115 @@ namespace
             return std::nullopt;
         }
         return result;
+    }
+
+    // IDasJson → yyjson（失败/空返回 nullopt）：经 ToString 序列化再解
+    // 析，跨 ABI 边界的通用读法（GraphCompiler 同款）。
+    std::optional<yyjson::value> JsonInterfaceToYyjson(
+        Das::ExportInterface::IDasJson* json)
+    {
+        if (json == nullptr)
+        {
+            return std::nullopt;
+        }
+        DAS::DasPtr<IDasReadOnlyString> text;
+        if (DAS::IsFailed(json->ToString(0, text.Put())) || !text)
+        {
+            return std::nullopt;
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(text->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return std::nullopt;
+        }
+        auto parsed = Das::Utils::ParseYyjsonFromString(utf8);
+        if (!parsed.has_value())
+        {
+            return std::nullopt;
+        }
+        return std::move(*parsed);
+    }
+
+    // 会话 Compile 响应 → compile 段 executionInput 原文（string 为正形
+    // 态、非 string 按序列化消费——与组件侧 GetString 读法对齐）。
+    std::optional<std::string> ParseCompileExecutionArtifact(
+        const yyjson::value& response)
+    {
+        auto obj = response.as_object();
+        if (!obj.has_value() || !obj->contains(std::string_view("compile")))
+        {
+            return std::nullopt;
+        }
+        auto compile_obj = (*obj)[std::string_view("compile")].as_object();
+        if (!compile_obj.has_value()
+            || !compile_obj->contains(std::string_view("executionInput")))
+        {
+            return std::nullopt;
+        }
+        const auto& execution_input =
+            (*compile_obj)[std::string_view("executionInput")];
+        if (const auto text = execution_input.as_string())
+        {
+            return std::string(*text);
+        }
+        auto serialized = Das::Utils::SerializeYyjsonValue(
+            Das::Utils::CloneYyjsonValue(execution_input));
+        if (!serialized.has_value())
+        {
+            return std::nullopt;
+        }
+        return std::move(*serialized);
+    }
+
+    // provider compile 段 diagnostics 的 [kind] message 遍历拼接（kind 缺
+    // 席回退 severity/code；畸形条目跳过）——节点失败 detail 的人可读形
+    // 态，与无执行序拒绝段的拼接形态一致。
+    std::string JoinCompileDiagnostics(const yyjson::value& response)
+    {
+        std::string joined;
+        auto        obj = response.as_object();
+        if (!obj.has_value() || !obj->contains(std::string_view("diagnostics")))
+        {
+            return joined;
+        }
+        auto diagnostics = (*obj)[std::string_view("diagnostics")].as_array();
+        if (!diagnostics.has_value())
+        {
+            return joined;
+        }
+        for (const auto& diagnostic : *diagnostics)
+        {
+            auto diagnostic_object = diagnostic.as_object();
+            if (!diagnostic_object.has_value())
+            {
+                continue;
+            }
+            auto message =
+                (*diagnostic_object)[std::string_view("message")].as_string();
+            if (!message.has_value() || message->empty())
+            {
+                continue;
+            }
+            auto kind =
+                (*diagnostic_object)[std::string_view("kind")].as_string();
+            if (!kind.has_value() || kind->empty())
+            {
+                kind = (*diagnostic_object)[std::string_view("severity")]
+                           .as_string();
+            }
+            if (!joined.empty())
+            {
+                joined += "; ";
+            }
+            if (kind.has_value() && !kind->empty())
+            {
+                joined += "[";
+                joined += *kind;
+                joined += "] ";
+            }
+            joined += *message;
+        }
+        return joined;
     }
 } // namespace
 
@@ -295,6 +405,8 @@ DasResult GraphRuntime::Configure(
         return DAS_E_INVALID_POINTER;
     }
 
+    creator_ = p_host;
+
     for (const auto& snapshot : plan.node_snapshots)
     {
         // Parse component_guid string → DasGuid
@@ -418,6 +530,144 @@ DasResult GraphRuntime::Prepare() const
 }
 
 // ===========================================================================
+// CompileReferenceEntryAtExecution — 执行时编译（plan 记档驱动）
+// ===========================================================================
+
+GraphRuntime::ReferenceCompileOutcome
+GraphRuntime::CompileReferenceEntryAtExecution(
+    const Dto::ReferenceEntryDto&    reference_entry,
+    const std::string&               component_guid,
+    const Dto::CompiledGraphPlanDto& plan) const
+{
+    ReferenceCompileOutcome outcome;
+
+    if (creator_ == nullptr)
+    {
+        outcome.hr = DAS_E_FAIL;
+        outcome.failure_detail =
+            "execution-time compile has no creator available";
+        return outcome;
+    }
+
+    // 节点组件 guid 即条目任务类型 guid 的同值域（编译期无 manager 回退
+    // 同款）；条目路由的权威键是 context 的 repositoryEntryId——后端解析
+    // 器按条目自身的 task type 定 capability。
+    DasGuid task_guid{};
+    try
+    {
+        task_guid =
+            Das::Core::ForeignInterfaceHost::MakeDasGuid(component_guid);
+    }
+    catch (const std::exception&)
+    {
+        outcome.hr = DAS_E_INVALID_ARGUMENT;
+        outcome.failure_detail = DAS_FMT_NS::format(
+            "invalid component guid '{}' for execution-time compile",
+            component_guid);
+        return outcome;
+    }
+
+    // context：repositoryEntryId（条目路由权威键）+ closureEntryIds（闭包
+    // 栈=本图栈+本条目——子层编译的环检测经它恢复祖先链，跨执行层生效）。
+    // repo 装配键（properties/actionCatalog 等）由解析后端按条目权威现
+    // 读，调用方不携带。
+    yyjson::value context(Das::Utils::MakeYyjsonObject());
+    {
+        auto ctx_obj = context.as_object();
+        (*ctx_obj)[std::string_view("repositoryEntryId")] =
+            reference_entry.entry_id;
+        yyjson::value closure_ids(Das::Utils::MakeYyjsonArray());
+        auto          ids_arr = closure_ids.as_array();
+        for (const auto stacked_id : plan.closure_entry_ids)
+        {
+            ids_arr->emplace_back(
+                yyjson::value(static_cast<std::int64_t>(stacked_id)));
+        }
+        ids_arr->emplace_back(
+            yyjson::value(static_cast<std::int64_t>(reference_entry.entry_id)));
+        (*ctx_obj)[std::string_view("closureEntryIds")] =
+            std::move(closure_ids);
+    }
+    auto context_json = MakeDasJsonFromYyjsonValue(context);
+    if (!context_json.has_value())
+    {
+        outcome.hr = DAS_E_FAIL;
+        outcome.failure_detail = DAS_FMT_NS::format(
+            "context construction failed for repository entry {}",
+            reference_entry.entry_id);
+        return outcome;
+    }
+
+    DAS::DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+    const auto session_result = creator_->CreateAuthoringSession(
+        task_guid,
+        context_json->Get(),
+        session.Put());
+    if (DAS::IsFailed(session_result) || !session)
+    {
+        outcome.hr =
+            DAS::IsFailed(session_result) ? session_result : DAS_E_FAIL;
+        outcome.failure_detail = DAS_FMT_NS::format(
+            "CreateAuthoringSession failed for entry {}: result={}",
+            reference_entry.entry_id,
+            session_result);
+        return outcome;
+    }
+
+    // 请求声明 purpose=execution：执行产物门控（provider 按 purpose 携带
+    // executionInput 段——缺省请求按 preview 解读会误报产物缺失）。
+    yyjson::value compile_request(Das::Utils::MakeYyjsonObject());
+    (*compile_request.as_object())[std::string_view("purpose")] =
+        std::make_pair(std::string_view("execution"), yyjson::copy_string);
+    auto request_json = MakeDasJsonFromYyjsonValue(compile_request);
+    if (!request_json.has_value())
+    {
+        outcome.hr = DAS_E_FAIL;
+        outcome.failure_detail = DAS_FMT_NS::format(
+            "compile request construction failed for repository entry {}",
+            reference_entry.entry_id);
+        return outcome;
+    }
+
+    DAS::DasPtr<Das::ExportInterface::IDasJson> compile_json;
+    const auto                                  compile_result =
+        session->Compile(request_json->Get(), compile_json.Put());
+    if (DAS::IsFailed(compile_result) || !compile_json)
+    {
+        outcome.hr =
+            DAS::IsFailed(compile_result) ? compile_result : DAS_E_FAIL;
+        outcome.failure_detail = DAS_FMT_NS::format(
+            "Compile failed for repository entry {}: result={}",
+            reference_entry.entry_id,
+            compile_result);
+        return outcome;
+    }
+    auto compile_value = JsonInterfaceToYyjson(compile_json.Get());
+    if (!compile_value.has_value())
+    {
+        outcome.hr = DAS_E_FAIL;
+        outcome.failure_detail = DAS_FMT_NS::format(
+            "compile result of repository entry {} is not parsable JSON",
+            reference_entry.entry_id);
+        return outcome;
+    }
+    auto artifact_text = ParseCompileExecutionArtifact(*compile_value);
+    if (!artifact_text.has_value() || artifact_text->empty())
+    {
+        outcome.hr = DAS_E_FAIL;
+        const auto diagnostics_text = JoinCompileDiagnostics(*compile_value);
+        outcome.failure_detail = DAS_FMT_NS::format(
+            "compile result of repository entry {} carries no "
+            "executionInput segment{}",
+            reference_entry.entry_id,
+            diagnostics_text.empty() ? std::string{} : ": " + diagnostics_text);
+        return outcome;
+    }
+    outcome.artifact_text = std::move(*artifact_text);
+    return outcome;
+}
+
+// ===========================================================================
 // ExecuteNodeWithComponent — direct PortMap call to IDasTaskComponent::Do
 // ===========================================================================
 
@@ -478,6 +728,50 @@ GraphRuntime::NodeExecutionOutcome GraphRuntime::ExecuteNodeWithComponent(
         {
             return {hr, {}};
         }
+    }
+
+    // 3.5 执行时编译段（plan 记档驱动）：绑条目节点在 Do 前经 creator 现
+    // 编，产物写进该节点 input portmap 的协议保留键（与 DoAdapter 的
+    // TYPED_IO_RESERVED_INPUT_KEY 同名），组件 Do 照旧读取。编译失败/响
+    // 应缺 executionInput=该节点失败（遇缺即错，零兜底）——可编译性问
+    // 题到节点 Do 才报。
+    for (const auto& reference_entry : plan.reference_entries)
+    {
+        if (reference_entry.node_id != node_id)
+        {
+            continue;
+        }
+        const auto compile_outcome = CompileReferenceEntryAtExecution(
+            reference_entry,
+            it->second.component_guid,
+            plan);
+        if (DAS_S_OK != compile_outcome.hr)
+        {
+            DAS_CORE_LOG_ERROR(
+                "execution-time compile failed for node = {}, entry = {}: "
+                "hr = {}",
+                node_id,
+                reference_entry.entry_id,
+                static_cast<int>(compile_outcome.hr));
+            return {
+                compile_outcome.hr,
+                std::move(compile_outcome.failure_detail)};
+        }
+        const DasReadOnlyString reserved_key{"executionInput"};
+        const DasReadOnlyString artifact_value{
+            compile_outcome.artifact_text.c_str()};
+        const DasResult set_result =
+            input_portmap->SetString(reserved_key.Get(), artifact_value.Get());
+        if (DAS_S_OK != set_result)
+        {
+            DAS_CORE_LOG_ERROR(
+                "execution-time compile artifact write failed for node = {}: "
+                "hr = {}",
+                node_id,
+                static_cast<int>(set_result));
+            return {set_result, {}};
+        }
+        break;
     }
 
     // 4. Call Do() directly with PortMap — no JSON conversion

@@ -142,6 +142,12 @@ private:
     // Per-node component cache populated by Configure().
     std::unordered_map<std::string, NodeComponentEntry> node_components_;
 
+    // creator（TaskComponentCreator）借用指针：Configure 由 p_host 赋值，
+    // 执行时编译段经它开绑条目节点的 authoring 会话（语义与
+    // GraphCompiler::creator_ 同形——借用不拥有，生命周期由 RunWithHost
+    // 的调用方保证）。
+    Das::PluginInterface::IDasTaskComponentCreator* creator_ = nullptr;
+
     // True after Configure() has been called at least once.
     bool configured_ = false;
 
@@ -167,6 +173,25 @@ private:
         DasResult   hr = DAS_S_OK;
         std::string failure_detail;
     };
+
+    // 执行时编译结果（内部 C++ 形态）：hr 非 S_OK 时 failure_detail 携带
+    // provider compile 段 diagnostics 的 [kind] message 拼接（人可读）。
+    struct ReferenceCompileOutcome
+    {
+        DasResult   hr = DAS_S_OK;
+        std::string artifact_text;
+        std::string failure_detail;
+    };
+
+    // 绑条目节点 Do 前现编（plan 记档驱动）：经 creator 通道开条目干净会话
+    // （context 携 repositoryEntryId 与闭包栈——环防护跨执行层）→
+    // Compile({purpose:"execution"}) → 产物文本（compile 段 executionInput
+    // 原文，string 为正形态、非 string 按序列化消费）。失败/缺
+    // executionInput 即错，零兜底。
+    ReferenceCompileOutcome CompileReferenceEntryAtExecution(
+        const Dto::ReferenceEntryDto&    reference_entry,
+        const std::string&               component_guid,
+        const Dto::CompiledGraphPlanDto& plan) const;
 
     // Execute a node using its pre-configured IDasTaskComponent.
     // Converts PortMap ↔ JSON for the IDasTaskComponent::Do() ABI.

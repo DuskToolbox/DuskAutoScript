@@ -480,7 +480,10 @@ private:
                                                      reference_faces_;
     std::vector<std::pair<std::string, std::string>> reference_artifacts_;
     std::vector<yyjson::value>                       reference_diagnostics_;
-    bool reference_pass_failed_ = false;
+    // 绑条目记档清单（pass 判定点顺带填充——执行时编译段的驱动数据，
+    // Compile 出口随 plan 记档字段带出）。
+    std::vector<Dto::ReferenceEntryDto> reference_entries_;
+    bool                                reference_pass_failed_ = false;
 
     /// Resolve port entries from a manifest definition yyjson::value.
     static std::vector<PortEntry> PortsFromDefinitionList(
