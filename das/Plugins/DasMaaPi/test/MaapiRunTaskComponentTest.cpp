@@ -30,8 +30,11 @@ namespace
     // 的 default_caster 经 PFR 对每个字段调 obj[key]，缺 key（如
     // focusTranslationsPath/schedule 即便为空也必须显式存在）在 cast 前抛
     // std::out_of_range，手搓 JSON 字符串极易漏键。schedule 由参数注入
-    // （默认 off：kind=""）。
-    std::string MakeEnvelopeJson(const MaaScheduleConfigDto& schedule = {})
+    // （默认 off：kind=""）；pipeline_override 由参数注入（默认空对象 =
+    // entry 编译期选项值形态）。
+    std::string MakeEnvelopeJson(
+        const MaaScheduleConfigDto& schedule = {},
+        const yyjson::value&        pipeline_override = {})
     {
         ExecutionEnvelopeDto envelope;
         envelope.maapi.interface_directory = "C:/maa";
@@ -59,7 +62,10 @@ namespace
         MaaTaskExecutionDto task;
         task.task_name = "E2ETestTask";
         task.entry = "StartE2E";
-        task.pipeline_override = Utils::MakeYyjsonObject();
+        task.pipeline_override =
+            pipeline_override.is_object()
+                ? Utils::CloneYyjsonValue(pipeline_override)
+                : Utils::MakeYyjsonObject();
         envelope.maapi.tasks.push_back(std::move(task));
 
         const auto serialized = Utils::SerializeYyjsonValue(
@@ -585,6 +591,102 @@ TEST(DasMaaPiRunTaskComponent, DoMergesRuntimeInputsIntoPortFedEnvelope)
     // 合并语义：runtimeInputs 的键覆盖进任务的 pipeline_override——
     // boundary 记录的 PostTask 调用携带该键。
     EXPECT_TRUE(fake.ContainsSubstring("custom_flag"));
+}
+
+// 输入 portmap 携带暴露口键（非保留键，键名 = 口 id = PI 参数名）——
+// 恒等映射进 envelope 运行时输入段（maapi.tasks[].pipelineOverride 的
+// 对象级覆盖）：标量四类（string/int/bool/float）全部经 PostTask 的
+// override 串可观测。
+TEST(DasMaaPiRunTaskComponent, DoMapsWiredExposedInputsToPipelineOverride)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    DasPtr<ExportInterface::IDasPortMap> input_map =
+        MakeInputPortMap(MakeEnvelopeJson());
+    input_map->SetString(
+        DasReadOnlyString("exposed_text").Get(),
+        DasReadOnlyString("wired-text").Get());
+    input_map->SetInt(DasReadOnlyString("exposed_count").Get(), 7);
+    input_map->SetBool(DasReadOnlyString("exposed_flag").Get(), true);
+    input_map->SetFloat(DasReadOnlyString("exposed_ratio").Get(), 0.25);
+
+    DasPtr<ExportInterface::IDasPortMap> result;
+    const auto hr = component.Do(nullptr, input_map.Get(), result.Put());
+
+    EXPECT_EQ(hr, DAS_S_OK);
+    EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:"));
+    EXPECT_TRUE(fake.ContainsSubstring("wired-text"));
+    EXPECT_TRUE(fake.ContainsSubstring("exposed_count"));
+    EXPECT_TRUE(fake.ContainsSubstring("exposed_flag"));
+    EXPECT_TRUE(fake.ContainsSubstring("exposed_ratio"));
+}
+
+// 同一参数键既有暴露口连线值又有 entry 编译期选项值 → 连线值胜出（覆盖
+// 通道天然实现）——执行期参数覆盖两层语义：暴露口连线值 > entry 编译期
+// 选项值，无第三来源。
+TEST(DasMaaPiRunTaskComponent, DoWiredValueOverridesCompileTimeOption)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    auto compile_time_override = Utils::MakeYyjsonObject();
+    (*compile_time_override.as_object())[std::string_view("target")] =
+        yyjson::value(std::string("compile-time-value"));
+
+    DasPtr<ExportInterface::IDasPortMap> input_map =
+        MakeInputPortMap(MakeEnvelopeJson({}, compile_time_override));
+    input_map->SetString(
+        DasReadOnlyString("target").Get(),
+        DasReadOnlyString("wired-value").Get());
+
+    DasPtr<ExportInterface::IDasPortMap> result;
+    const auto hr = component.Do(nullptr, input_map.Get(), result.Put());
+
+    EXPECT_EQ(hr, DAS_S_OK);
+    EXPECT_TRUE(fake.ContainsSubstring("wired-value"));
+    EXPECT_FALSE(fake.ContainsSubstring("compile-time-value"));
+}
+
+// 口未连线（portmap 无该键）→ 编译期选项值生效（两层语义的另一半）。
+TEST(DasMaaPiRunTaskComponent, DoUnwiredPortKeepsCompileTimeOption)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    auto compile_time_override = Utils::MakeYyjsonObject();
+    (*compile_time_override.as_object())[std::string_view("target")] =
+        yyjson::value(std::string("compile-time-value"));
+
+    DasPtr<ExportInterface::IDasPortMap> input_map =
+        MakeInputPortMap(MakeEnvelopeJson({}, compile_time_override));
+
+    DasPtr<ExportInterface::IDasPortMap> result;
+    const auto hr = component.Do(nullptr, input_map.Get(), result.Put());
+
+    EXPECT_EQ(hr, DAS_S_OK);
+    EXPECT_TRUE(fake.ContainsSubstring("compile-time-value"));
+}
+
+// 保留键 executionInput（产物运输专用）不参与映射：override 不携带该键
+// （空 override 即证据——envelope 原文串未泄漏进传参通道）。
+TEST(DasMaaPiRunTaskComponent, DoSkipsReservedExecutionInputKeyInOverride)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    DasPtr<ExportInterface::IDasPortMap> input_map =
+        MakeInputPortMap(MakeEnvelopeJson());
+
+    DasPtr<ExportInterface::IDasPortMap> result;
+    const auto hr = component.Do(nullptr, input_map.Get(), result.Put());
+
+    EXPECT_EQ(hr, DAS_S_OK);
+    EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:{}"));
 }
 
 // settings 携带 repositoryRef 且 executionInput 端口喂线：直接消费端口
