@@ -65,9 +65,8 @@ namespace
 
     TEST(LoadPluginSessionTest, V1Payload_Utf8Path_RoundTrips)
     {
-        const std::string path =
-            "/plugins/\xe3\x83\x97\xe3\x83\xa9\xe3\x82\xb0\xe3\x82\xa4\xe3\x83\xb3/manifest.json";
-        auto payload = BuildV1Payload(path);
+        const std::string path = "/plugins/プラグイン/manifest.json";
+        auto              payload = BuildV1Payload(path);
 
         std::string parsed;
         ASSERT_TRUE(ParseV1Payload(payload, parsed));

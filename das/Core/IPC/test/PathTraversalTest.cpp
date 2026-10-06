@@ -232,13 +232,11 @@ namespace
 
     TEST_F(PathTraversalTest, Utf8PathNotRejected)
     {
-        auto utf8_dir = tmp_dir_ / DAS_PATH_LITERAL("subdir")
-                        / u8"\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e";
+        auto utf8_dir = tmp_dir_ / DAS_PATH_LITERAL("subdir") / u8"日本語";
         std::filesystem::create_directories(utf8_dir);
 
         IpcCommandResponse resp{};
-        const std::string  relative =
-            "subdir/\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e";
+        const std::string  relative = "subdir/日本語";
         EXPECT_EQ(CallListFile(relative, resp), DAS_S_OK);
     }
 

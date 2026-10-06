@@ -593,9 +593,8 @@ namespace
         // bit 11 UTF-8 文件名条目：非 ASCII 名必须按 UTF-8 字节原样落盘
         // （断言经 u8string 逐字节比对，内容完整）。
         TempPluginDir     plugin_dir;
-        const std::string utf8_entry_name =
-            "MyPlugin/\xE6\x8F\x92\xE4\xBB\xB6.txt"; // 插件.txt（UTF-8 字节）
-        const auto zip = BuildTestZip({
+        const std::string utf8_entry_name = "MyPlugin/插件.txt";
+        const auto        zip = BuildTestZip({
             TestZipEntry{
                 .filename = "MyPlugin/manifest.json",
                 .content = ManifestJson("1")},
@@ -613,7 +612,7 @@ namespace
             std::filesystem::exists(
                 installed / DAS_PATH_LITERAL("manifest.json")));
 
-        const std::string expected_bytes = "\xE6\x8F\x92\xE4\xBB\xB6.txt";
+        const std::string expected_bytes = "插件.txt";
         bool              found = false;
         for (const auto& entry : std::filesystem::directory_iterator(installed))
         {

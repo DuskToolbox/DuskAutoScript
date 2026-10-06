@@ -1848,7 +1848,7 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
     const double throughput = static_cast<double>(num_iterations) / total_s;
 
     PrintBenchmarkResult(
-        "ReverseIPC_QueryMainProcessString [Host \xE2\x86\x92 MainProcess]",
+        "ReverseIPC_QueryMainProcessString [Host → MainProcess]",
         num_iterations,
         "queryMainProcessString — Reverse IPC: Host queries MainProcess string",
         mean,

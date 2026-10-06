@@ -1407,7 +1407,7 @@ TEST(AcpTextToUtf8, PreservesAsciiTailInMixedText)
 // 编译为空，保双平台可编译）。
 TEST(AcpTextToUtf8, PassesThroughBytesOnPosix)
 {
-    const std::string arbitrary_bytes = "caf\xC3\xA9 \xE4\xB8\xAD";
+    const std::string arbitrary_bytes = "café 中";
     EXPECT_EQ(Das::Utils::AcpTextToUtf8(arbitrary_bytes), arbitrary_bytes);
 }
 #endif

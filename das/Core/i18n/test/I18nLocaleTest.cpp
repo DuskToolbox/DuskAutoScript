@@ -122,9 +122,7 @@ TEST_F(I18nLocaleTest, TranslateHitsCurrentGlobalLocale)
     DAS::DasPtr<IDasReadOnlyString> p_text;
     ASSERT_EQ(i18n->Translate(key.Get(), p_text.Put()), DAS_S_OK);
     ASSERT_NE(p_text.Get(), nullptr);
-    EXPECT_EQ(
-        ToUtf8(p_text.Get()),
-        "\xE6\xAD\xA3\xE5\x9C\xA8\xE4\xB8\x8B\xE8\xBD\xBD\xE2\x80\xA6");
+    EXPECT_EQ(ToUtf8(p_text.Get()), "正在下载…");
 }
 
 TEST_F(I18nLocaleTest, TranslatePassesThroughPositionalPlaceholders)
@@ -277,7 +275,7 @@ TEST(I18nMutable, AddTranslationAddsEntryTranslatableAfterwards)
 
     auto locale = MakeLocaleName("zh-CN");
     auto key = MakeLocaleName("new.key");
-    auto text = MakeLocaleName("\xE6\x96\xB0\xE5\x80\xBC"); // "新值" UTF-8
+    auto text = MakeLocaleName("新值");
     ASSERT_EQ(
         i18n->AddTranslation(locale.Get(), key.Get(), text.Get()),
         DAS_S_OK);
@@ -287,7 +285,7 @@ TEST(I18nMutable, AddTranslationAddsEntryTranslatableAfterwards)
         i18n->TranslateWithLocale(locale.Get(), key.Get(), p_out.Put()),
         DAS_S_OK);
     ASSERT_NE(p_out.Get(), nullptr);
-    EXPECT_EQ(ToUtf8(p_out.Get()), "\xE6\x96\xB0\xE5\x80\xBC");
+    EXPECT_EQ(ToUtf8(p_out.Get()), "新值");
 }
 
 TEST(I18nMutable, AddTranslationOverwritesExistingKey)

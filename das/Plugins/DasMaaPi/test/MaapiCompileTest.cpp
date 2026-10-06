@@ -900,8 +900,7 @@ namespace
     PiCatalog MakeSingleLangCatalog()
     {
         PiCatalog catalog;
-        catalog.translations["zh_cn"]["ctrl.label"] = "\xE6\x8E\xA7\xE5\x88\xB6"
-                                                      "\xE5\x99\xA8"; // 控制器
+        catalog.translations["zh_cn"]["ctrl.label"] = "控制器";
         return catalog;
     }
 
@@ -913,9 +912,7 @@ TEST(I18nResolverJson, OnDollarString_Resolves)
     const auto          catalog = MakeSingleLangCatalog();
     const yyjson::value input(std::string("$ctrl.label"));
     const auto          out = ResolveI18nJson(input, catalog, "zh_cn");
-    EXPECT_EQ(
-        std::string(out.as_string().value_or("")),
-        "\xE6\x8E\xA7\xE5\x88\xB6\xE5\x99\xA8"); // 控制器
+    EXPECT_EQ(std::string(out.as_string().value_or("")), "控制器");
 }
 
 TEST(I18nResolverJson, OnNonDollarString_PreservesValue)
@@ -938,7 +935,7 @@ TEST(I18nResolverJson, OnNestedObject_RecursesValues)
     EXPECT_EQ(
         std::string(
             (*out_o)[std::string_view("name")].as_string().value_or("")),
-        "\xE6\x8E\xA7\xE5\x88\xB6\xE5\x99\xA8"); // 控制器
+        "控制器");
     EXPECT_EQ(
         std::string(
             (*out_o)[std::string_view("type")].as_string().value_or("")),
@@ -955,9 +952,7 @@ TEST(I18nResolverJson, OnArray_ResolvesElements)
     const auto out_a = out.as_array();
     ASSERT_TRUE(out_a.has_value());
     ASSERT_EQ(out_a->size(), 2u);
-    EXPECT_EQ(
-        std::string((*out_a)[0].as_string().value_or("")),
-        "\xE6\x8E\xA7\xE5\x88\xB6\xE5\x99\xA8"); // 控制器
+    EXPECT_EQ(std::string((*out_a)[0].as_string().value_or("")), "控制器");
     EXPECT_EQ(std::string((*out_a)[1].as_string().value_or("")), "plain");
 }
 
@@ -981,9 +976,7 @@ TEST(I18nResolverJson, OnMissingLanguage_FallsBackToFirstAvailable)
     const yyjson::value input(std::string("$ctrl.label"));
     // Request en_us which is absent; helper must fall back to zh_cn.
     const auto out = ResolveI18nJson(input, catalog, "en_us");
-    EXPECT_EQ(
-        std::string(out.as_string().value_or("")),
-        "\xE6\x8E\xA7\xE5\x88\xB6\xE5\x99\xA8"); // 控制器
+    EXPECT_EQ(std::string(out.as_string().value_or("")), "控制器");
 }
 
 TEST(I18nResolverJson, OnEmptyCatalog_ReturnsKeyWithoutDollar)
