@@ -1975,6 +1975,131 @@ TEST(SignalAwareCompileTest, CanonicalSignalPortsSkipPortNotFoundViaProvider)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Manifest 端口面清理后的三态语义（执行输入口删除、报告口保留）
+// ---------------------------------------------------------------------------
+
+// 执行输入口从声明面删除后，触发线落规范 signal_in 隐式豁免——豁免只认
+// wire 层坐标名，不依赖组件声明任何信号口。
+TEST(PortCleanedSurfaceTest, SignalEdgeIntoCleanedComponentCompiles)
+{
+    StubFactoryManager mgr;
+    // 模拟口面清理后的执行组件形态：零声明输入口、报告输出口在位。
+    auto cleaned_def = MakeDefinition(
+        {},
+        {{"completedTasks", "array<string>"},
+         {"stopped", "bool"},
+         {"diagnostics", "array<object>"},
+         {"nextTime", "string"}});
+    mgr.AddDefinition("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", cleaned_def);
+    mgr.AddDefinition(
+        "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD",
+        MakeDefinition({}, {}));
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("trigger", "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD"));
+    doc.nodes.push_back(
+        MakeComponentNode("run", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+    doc.edges.push_back(
+        MakeSignalEdge("e_sig", "trigger", "signal_out", "run", "signal_in"));
+
+    EXPECT_TRUE(compiler.ValidateEdgePorts(doc).empty());
+
+    auto plan = compiler.Compile(doc);
+    ASSERT_EQ(plan.execution_order.size(), 2u);
+    const std::string port_not_found_kind =
+        std::to_string(static_cast<int>(CompileDiagnosticKind::PortNotFound));
+    for (const auto& diag : plan.diagnostics)
+    {
+        auto obj = diag.as_object();
+        ASSERT_TRUE(obj.has_value());
+        auto kind = (*obj)[std::string_view("kind")].as_string();
+        EXPECT_NE(kind.value_or(""), port_not_found_kind)
+            << "canonical signal_in must stay exempt after port removal";
+    }
+}
+
+// 声明面收缩直达边界推导：已删输入口不再派生边界输入（无悬空可言），
+// 报告输出口仍全量导出（报告口=动作契约静态，不随清理收缩）。
+TEST(PortCleanedSurfaceTest, BoundaryFollowsShrunkDeclarationSurface)
+{
+    StubFactoryManager mgr;
+    auto               cleaned_def = MakeDefinition(
+        {},
+        {{"completedTasks", "array<string>"},
+         {"stopped", "bool"},
+         {"diagnostics", "array<object>"},
+         {"nextTime", "string"}});
+    mgr.AddDefinition("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", cleaned_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("run", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+
+    auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(plan.boundary_ports.inputs.empty());
+    bool next_time_exported = false;
+    for (const auto& output : plan.boundary_ports.outputs)
+    {
+        if (output.port_id == "nextTime")
+        {
+            next_time_exported = true;
+        }
+    }
+    EXPECT_TRUE(next_time_exported);
+}
+
+// 连到已删口的边（非规范口名）fail-closed 拒绝——豁免救不了已删的声明
+// 口（数据口 executionInput 与遗留信号口名 in 同判）。
+TEST(PortCleanedSurfaceTest, EdgeIntoRemovedDeclarationPortFailsClosed)
+{
+    StubFactoryManager mgr;
+    auto               cleaned_def = MakeDefinition(
+        {},
+        {{"completedTasks", "array<string>"},
+         {"stopped", "bool"},
+         {"diagnostics", "array<object>"},
+         {"nextTime", "string"}});
+    mgr.AddDefinition("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", cleaned_def);
+    mgr.AddDefinition(
+        "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD",
+        MakeDefinition({}, {{"out", "int"}}));
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("trigger", "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD"));
+    doc.nodes.push_back(
+        MakeComponentNode("run", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+    doc.edges.push_back(
+        MakeEdge("e_data", "trigger", "out", "run", "executionInput"));
+
+    auto diagnostics = compiler.ValidateEdgePorts(doc);
+    ASSERT_FALSE(diagnostics.empty());
+    EXPECT_EQ(diagnostics[0].kind, CompileDiagnosticKind::PortNotFound);
+    EXPECT_EQ(diagnostics[0].node_id, "run");
+    EXPECT_EQ(diagnostics[0].port_id, "executionInput");
+
+    GraphDocumentDto legacy_doc = doc;
+    legacy_doc.edges.clear();
+    legacy_doc.edges.push_back(
+        MakeSignalEdge("e_legacy", "trigger", "signal_out", "run", "in"));
+    auto legacy_diagnostics = compiler.ValidateEdgePorts(legacy_doc);
+    ASSERT_FALSE(legacy_diagnostics.empty());
+    EXPECT_EQ(legacy_diagnostics[0].kind, CompileDiagnosticKind::PortNotFound);
+    EXPECT_EQ(legacy_diagnostics[0].node_id, "run");
+    EXPECT_EQ(legacy_diagnostics[0].port_id, "in");
+}
+
 TEST(SignalAwareCompileTest, DanglingInputsBroadcastBoundToMatchingPorts)
 {
     StubFactoryManager mgr;

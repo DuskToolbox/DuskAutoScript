@@ -876,6 +876,56 @@ namespace
             std::string_view("result"));
     }
 
+    // 口面清理后的 catalog 声明面在会话编译通道同样收缩：报告输出口保留
+    // 投影、零输入声明不再派生边界输入。
+    TEST(
+        GraphAuthoringSessionTest,
+        CompileDerivesNoBoundaryInputsFromPortCleanedCatalog)
+    {
+        const SessionHandle s{WithActionCatalog(
+            "",
+            R"json([{"actionId":"{g1}","ports":[{"portId":"nextTime","portType":"string","direction":"output"},{"portId":"stopped","portType":"bool","direction":"output"}]}])json")};
+        ASSERT_NE(
+            Compact(
+                JsonToUtf8(
+                    ApplyChange(
+                        s.p,
+                        WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"))
+                        .Get()))
+                .find("\"revision\":1"),
+            std::string::npos);
+
+        DasPtr<Das::ExportInterface::IDasJson> plan_json;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(s.p, nullptr, plan_json.Put()),
+            DAS_S_OK);
+        ASSERT_NE(plan_json.Get(), nullptr);
+
+        const auto root = yyjson::read(JsonToUtf8(plan_json.Get())).as_object();
+        ASSERT_TRUE(root.has_value());
+        const auto compile_section =
+            (*root)[std::string_view("compile")].as_object();
+        ASSERT_TRUE(compile_section.has_value());
+        const auto shell =
+            (*compile_section)[std::string_view("executionInput")].as_object();
+        ASSERT_TRUE(shell.has_value());
+        const auto plan_obj = (*shell)[std::string_view("plan")].as_object();
+        ASSERT_TRUE(plan_obj.has_value());
+
+        const auto boundary_ports =
+            (*plan_obj)[std::string_view("boundaryPorts")].as_object();
+        ASSERT_TRUE(boundary_ports.has_value());
+        const auto inputs =
+            (*boundary_ports)[std::string_view("inputs")].as_array();
+        ASSERT_TRUE(inputs.has_value());
+        EXPECT_TRUE(inputs->empty());
+
+        const auto outputs =
+            (*boundary_ports)[std::string_view("outputs")].as_array();
+        ASSERT_TRUE(outputs.has_value());
+        EXPECT_EQ(outputs->size(), 2u);
+    }
+
     TEST(GraphAuthoringSessionTest, E2E_UpgradeIsLossless)
     {
         // Seed linear, capture nodes, upgrade (lossless), and verify the
