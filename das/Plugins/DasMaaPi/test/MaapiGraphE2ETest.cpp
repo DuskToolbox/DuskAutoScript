@@ -67,51 +67,6 @@ namespace
         ~ScopedBoundaryHook() { SetMaaApiBoundaryForTest(nullptr); }
     };
 
-    // ---- MaapiMockHost ----
-    // maapi run 组件为被测对象本体（图内直接消费 executionInput 端口喂线
-    // 的 envelope——引用闭包注入链的产物物化形态，无中间人组件）。
-
-    class MaapiMockHost final
-        : public PluginInterface::DasTaskComponentCreatorImplBase<MaapiMockHost>
-    {
-    public:
-        DasResult CreateTaskComponent(
-            const DasGuid&      component_guid,
-            IDasTaskComponent** pp_out_component) override
-        {
-            if (!pp_out_component)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-
-            auto guid_str = DasGuidToString(component_guid);
-
-            if (guid_str.GetUtf8() == MAAPI_RUN_TASK_GUID)
-            {
-                auto* component = new MaapiRunTaskComponent();
-                component->AddRef();
-                *pp_out_component = component;
-                return DAS_S_OK;
-            }
-
-            *pp_out_component = nullptr;
-            return DAS_E_NOT_FOUND;
-        }
-
-        DasResult CreateAuthoringSession(
-            const DasGuid&                              task_guid,
-            Das::ExportInterface::IDasJson*             p_context_json,
-            PluginInterface::IDasTaskAuthoringSession** pp_out_session) override
-        {
-            if (!pp_out_session)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            *pp_out_session = nullptr;
-            return DAS_E_NO_IMPLEMENTATION;
-        }
-    };
-
     // ---- Plan builders ----
 
     GraphPortDefinitionDto MakePortDef(
@@ -167,6 +122,24 @@ namespace
         const auto serialized = Utils::SerializeYyjsonValue(
             Utils::CloneYyjsonValue(MakeEnvelopeValue()));
         return serialized.value_or("{}");
+    }
+
+    // 被引条目 Compile 响应：{compile:{executionInput:<产物串>},
+    // diagnostics:[]}。
+    std::string MakeEntryCompileResponse(const std::string& artifact_text)
+    {
+        yyjson::value compile_response(Das::Utils::MakeYyjsonObject());
+        auto          response_obj = compile_response.as_object();
+        yyjson::value compile_section(Das::Utils::MakeYyjsonObject());
+        (*compile_section.as_object())[std::string_view("executionInput")] =
+            yyjson::value(std::string(artifact_text));
+        (*response_obj)[std::string_view("compile")] =
+            std::move(compile_section);
+        (*response_obj)[std::string_view("diagnostics")] =
+            Das::Utils::MakeYyjsonArray();
+        return Das::Utils::SerializeYyjsonValue(
+                   Das::Utils::CloneYyjsonValue(compile_response))
+            .value_or("");
     }
 
     // 执行时编译链计划：单 maapi.run 节点 + 绑条目记档（node→entryId——
@@ -386,6 +359,67 @@ namespace
         std::string           document_json_;
         std::string           compile_json_;
         std::atomic<uint32_t> ref_count_{0};
+    };
+
+    // ---- MaapiMockHost ----
+    // maapi run 组件为被测对象本体（图内直接消费 executionInput 端口喂线
+    // 的 envelope——执行时编译链的产物投递形态，无中间人组件）。被引条
+    // 目的 compile 响应由固定 fake 会话承载（host mock 链为指定载体）。
+    class MaapiMockHost final
+        : public PluginInterface::DasTaskComponentCreatorImplBase<MaapiMockHost>
+    {
+    public:
+        explicit MaapiMockHost(std::string compile_json)
+            : compile_json_(std::move(compile_json))
+        {
+        }
+
+        DasResult CreateTaskComponent(
+            const DasGuid&      component_guid,
+            IDasTaskComponent** pp_out_component) override
+        {
+            if (!pp_out_component)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            auto guid_str = DasGuidToString(component_guid);
+
+            if (guid_str.GetUtf8() == MAAPI_RUN_TASK_GUID)
+            {
+                auto* component = new MaapiRunTaskComponent();
+                component->AddRef();
+                *pp_out_component = component;
+                return DAS_S_OK;
+            }
+
+            *pp_out_component = nullptr;
+            return DAS_E_NOT_FOUND;
+        }
+
+        DasResult CreateAuthoringSession(
+            const DasGuid&                              task_guid,
+            Das::ExportInterface::IDasJson*             p_context_json,
+            PluginInterface::IDasTaskAuthoringSession** pp_out_session) override
+        {
+            (void)task_guid;
+            (void)p_context_json;
+            if (!pp_out_session)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            // 根 ports 自述空口面（被引条目文档根 ports 自述——消费文档
+            // 自述的口面通道）。
+            auto* session = new WorkerChainFakeSession(
+                R"({"document":{"viewKind":"graph","ports":[]},"diagnostics":[]})",
+                compile_json_);
+            session->AddRef();
+            *pp_out_session = session;
+            return DAS_S_OK;
+        }
+
+    private:
+        std::string compile_json_;
     };
 
     // worker 链 creator：CreateTaskComponent 造真实 MaapiRunTaskComponent
@@ -832,7 +866,8 @@ TEST(MaapiGraphE2ETest, MaapiRunNodeExecutesInjectedEnvelopeInGraphRuntime)
 
     auto plan = MakeSingleMaapiRunNodePlan();
 
-    auto host = MaapiMockHost::Make();
+    auto host = MaapiMockHost::Make(
+        MakeEntryCompileResponse(MakeEnvelopeArtifactText()));
     auto token = PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     GraphRuntime rt;
@@ -862,7 +897,8 @@ TEST(MaapiGraphE2ETest, MaapiRunNodePropagatesChildFailureToGraph)
 
     auto plan = MakeSingleMaapiRunNodePlan();
 
-    auto host = MaapiMockHost::Make();
+    auto host = MaapiMockHost::Make(
+        MakeEntryCompileResponse(MakeEnvelopeArtifactText()));
     auto token = PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     GraphRuntime rt;
