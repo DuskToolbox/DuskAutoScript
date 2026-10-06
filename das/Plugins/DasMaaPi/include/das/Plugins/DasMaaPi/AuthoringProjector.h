@@ -41,10 +41,11 @@ namespace Das::Plugins::DasMaaPi
     // 候补但字段仍 emit）；非空时按 cache 内容构造 {value=address, label=name}
     // 候补。cache 是 session 内存态，不进 acceptedProperties 不落盘。
     // component_context：图内节点下钻编辑（IDasTaskComponent 语境）标记。
-    // true 时投影暴露开关伴生 bool 字段行与 ports section 推导；false/缺省
-    // 与 standalone（任务编排直开）现状逐字节一致——暴露状态仅 component
-    // 语境可写。请求作用域数据（经 CreateSession context_json 透传），非
-    // 持久化状态，不进 AcceptedSettingsDto。
+    // true 时投影暴露开关伴生 bool 字段行与 ports section 推导，且不投
+    // schedule 段（调度是任务级语义，被图编排的组件执行时机由图编排
+    // 决定）；false/缺省与 standalone（任务编排直开）现状逐字节一致——
+    // 暴露状态仅 component 语境可写。请求作用域数据（经 CreateSession
+    // context_json 透传），非持久化状态，不进 AcceptedSettingsDto。
     yyjson::value ProjectAuthoringDocument(
         const AcceptedSettingsDto&          settings,
         const PiCatalog*                    catalog,

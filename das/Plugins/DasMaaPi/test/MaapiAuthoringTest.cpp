@@ -11152,7 +11152,7 @@ TEST(MaapiProjectionTest, ProjectSchedule_Off_EmitsOnlyKind)
     using namespace Das::Plugins::DasMaaPi;
 
     auto                catalog = MakeNeutralProjectionMockCatalog();
-    AcceptedSettingsDto settings; // schedule_kind 缺失 = "" = off
+    AcceptedSettingsDto settings; // schedule_kind 缺失 = 投影默认 "off"
 
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
     auto validate =
@@ -11170,6 +11170,31 @@ TEST(MaapiProjectionTest, ProjectSchedule_Off_EmitsOnlyKind)
     auto names = LayoutSectionFieldNames(*schedule_section);
     ASSERT_EQ(names.size(), 1u);
     EXPECT_EQ(names[0], "schedule.kind");
+}
+
+// 组件语境（图内节点下钻编辑）不投 schedule 段：调度是任务级语义，被图
+// 编排的组件执行时机由图编排决定（engaged 的存储值也不投）。
+TEST(MaapiProjectionTest, ProjectSchedule_HiddenInComponentContext)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+    settings.pi.schedule_kind = "daily";
+    settings.pi.schedule_daily_time = "08:30";
+
+    auto document = ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0,
+        nullptr,
+        nullptr,
+        /*component_context=*/true);
+
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.kind"), 0u);
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.dailyTime"), 0u);
+    EXPECT_FALSE(FindLayoutSection(document, "schedule").has_value());
 }
 
 // kind 驱动 fieldLayout 重投影：kind=interval → schedule section 只含

@@ -3414,9 +3414,14 @@ namespace Das::Plugins::DasMaaPi
         // 按 kind 重投影——fields[] 只含当前 kind 的字段，fieldLayout schedule
         // section 经前缀分桶自然匹配（服务端重投影，前端零条件可见性）。
         // dailyCatchUp 缺失默认 true（补跑倾向），与 PiCompiler 编译默认一致。
+        // 调度是任务级语义：仅 standalone 任务语境投影；被图编排的组件语境
+        // （component_context）执行时机由图编排决定，不投此段。
+        if (!component_context)
         {
+            // 存储契约缺失 = nullopt = off；投影默认钉为 "off" 使 select
+            // 当前值与 candidates 对齐（空串不匹配任何候选，UI 显示空白）。
             const std::string schedule_kind =
-                settings.pi.schedule_kind.value_or("");
+                settings.pi.schedule_kind.value_or("off");
             // kind select：candidates off/interval/daily。value 保持存储值
             // 原文（寻址语义），label 经 host i18n 词条本地化（缺译回退
             // value 原文——与字段 label 同一回退链）。
