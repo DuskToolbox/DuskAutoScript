@@ -30,7 +30,7 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 /// looked up in @p frame; the value is inserted with the target_port_id as
 /// key (v44: string-keyed, never by index).
 ///
-/// A broadcast (graph-level input) binding first consults @p graph_inputs:
+/// A Boundary (graph-level input) binding first consults @p graph_inputs:
 /// when it holds the binding's target_port_id as a typed entry, that value
 /// is transferred verbatim (the declared default is not materialised) —
 /// the value precedence is call-site input > port default > component

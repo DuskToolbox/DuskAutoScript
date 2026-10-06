@@ -571,8 +571,8 @@ namespace Contract
         }
 
         /// 口名规则（add/rename 共用）：非空、UTF-8 字节数 ≤100、不以
-        /// "$" 开头（哨兵源命名空间保留——伪造 $ 前缀口名会污染绑定计
-        /// 划的 source 判定）。返回违规描述，nullopt = 合法。
+        /// "$" 开头（前缀保留给机制内部命名空间，用户口名不得占用）。
+        /// 返回违规描述，nullopt = 合法。
         std::optional<std::string> NodePortNameViolation(std::string_view name)
         {
             if (name.empty())

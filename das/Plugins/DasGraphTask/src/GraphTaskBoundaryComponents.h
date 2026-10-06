@@ -54,8 +54,8 @@ namespace Das::Plugins::DasGraphTask
     constexpr std::string_view GRAPH_END_KIND = "das.graph.end";
 
     // begin/end 边界组件：单类 kind 分派（manifest 双组件共用一个实现）。
-    // Do 只做全类型同名 in→out 转写——值流不进组件代码，不感知哨兵绑定、
-    // 不复制 $graph_input 常量；图的边界语义全部由编译层与预置承载。
+    // Do 只做全类型同名 in→out 转写——值流不进组件代码，不感知绑定记
+    // 形态；图的边界语义全部由编译层与预置承载。
     class GraphTaskBoundaryComponent final
         : public Das::PluginInterface::DasTaskComponentImplBase<
               GraphTaskBoundaryComponent>

@@ -110,7 +110,7 @@ public:
         Das::PluginInterface::IDasTaskComponentCreator* p_host,
         Das::ExportInterface::IDasPortMap** pp_out_typed_outputs = nullptr);
 
-    // Typed graph-level inputs consulted by the broadcast-binding overlay
+    // Typed graph-level inputs consulted by the Boundary-binding overlay
     // during execution (keys are boundary port ids). Non-owning: the caller
     // (ExecuteWithTypedIO) keeps the PortMap alive across the call and
     // clears the member on return. Null keeps the default-only behaviour.

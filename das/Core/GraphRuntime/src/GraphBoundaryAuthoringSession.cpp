@@ -39,9 +39,10 @@ namespace
 
     constexpr std::size_t kMaxPortIdUtf8Bytes = 100;
 
-    // 口 id 纪律（非空 / UTF-8 字节数 ≤100 / 不以 "$" 开头——哨兵源命名
-    // 空间保留）。与 AuthoringDocContract.cpp 的 NodePortNameViolation 同
-    // 语义 lockstep（该函数在匿名命名空间不可达，镜像并同步演化）。
+    // 口 id 纪律（非空 / UTF-8 字节数 ≤100 / 不以 "$" 开头——前缀保留给
+    // 机制内部命名空间）。与 AuthoringDocContract.cpp 的
+    // NodePortNameViolation 同语义 lockstep（该函数在匿名命名空间不可
+    // 达，镜像并同步演化）。
     std::optional<std::string> PortIdViolation(std::string_view id)
     {
         if (id.empty())

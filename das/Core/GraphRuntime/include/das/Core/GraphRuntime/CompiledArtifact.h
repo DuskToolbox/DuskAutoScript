@@ -134,8 +134,8 @@ namespace Dto
     // edge projects as a boundary input (the "value needs a source" minimum
     // set); every declared output port projects as a boundary output
     // (internal consumption and external export are not mutually exclusive).
-    // Same-name sites merge under one boundary port (by-name broadcast
-    // semantics) and `node_ids` carries every location so both the broadcast
+    // Same-name sites merge under one boundary port (by-name boundary
+    // semantics) and `node_ids` carries every location so both the Boundary
     // binding generation and the runtime frame export can address them.
     struct BoundaryPortDto
     {

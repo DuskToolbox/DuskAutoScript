@@ -2750,8 +2750,8 @@ namespace Das::Core::TaskScheduler
         // 口名/注册名纪律：与 GraphRuntime 模块 AuthoringDocContract.cpp
         // 的 NodePortNameViolation 同语义 lockstep（该函数在 GraphRuntime
         // 匿名命名空间内不可达，此处为同语义私有镜像，两处须同步演化）：
-        // 非空、UTF-8 字节数 ≤100、不以 "$" 开头（哨兵源命名空间保留）。
-        // 返回违规描述，nullopt = 合法。
+        // 非空、UTF-8 字节数 ≤100、不以 "$" 开头（前缀保留给机制内部命
+        // 名空间）。返回违规描述，nullopt = 合法。
         std::optional<std::string> PortNameDisciplineViolation(
             std::string_view name)
         {

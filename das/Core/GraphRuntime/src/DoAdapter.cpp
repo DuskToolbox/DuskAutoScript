@@ -227,13 +227,13 @@ namespace
     /// 口 id 裸键匹配，悬空的同名声明口不得命中它，回落声明默认。
     constexpr std::string_view TYPED_IO_RESERVED_INPUT_KEY = "executionInput";
 
-    /// Materialise a broadcast (graph-level input) binding's @p default_value
+    /// Materialise a Boundary (graph-level input) binding's @p default_value
     /// directly into @p map under @p port_id. Unlike a point-to-point data edge
     /// there is no upstream node to read from the frame; the value comes from
     /// the port's declared default. Scalars (bool/int/float/string) are
     /// set by JSON value kind; null leaves the port unset (the component keeps
     /// its own default); other kinds (object/array) are skipped with a warning
-    /// — broadcast inputs are scalar options, mirroring MAA global_option.
+    /// — boundary inputs are scalar options, mirroring MAA global_option.
     DasResult SetDefaultFromYyjson(
         IDasPortMap*         map,
         const std::string&   port_id,
@@ -266,7 +266,7 @@ namespace
 
         DAS_CORE_LOG_WARN(
             "Graph-input default for port_id = {} is a non-scalar JSON value; "
-            "skipping broadcast injection.",
+            "skipping boundary default materialisation.",
             port_id);
         return DAS_S_OK;
     }

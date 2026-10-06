@@ -6737,7 +6737,7 @@ namespace Das::Core::TaskScheduler
             // faces 预备 pass（执行链编译宿主与 HTTP 管线外圈同源）：进程
             // 重启后调度器自动跑图任务（无任何 UI Get 预热）时，图编译口
             // 面的动态口（begin/end 边界口、绑条目文档口）经 context 注
-            // 入——$graph_input 广播绑定与嵌套调用边界输入不因冷启动丢
+            // 入——kind=boundary 绑定与嵌套调用边界输入不因冷启动丢
             // 失。混合 stamp 作缓存失效键 + enforce_fresh=true：执行编译
             // 恒用最新口面（缓存会话创建戳过期即重建）。
             auto ontick_context = MakeAuthoringContextJson(

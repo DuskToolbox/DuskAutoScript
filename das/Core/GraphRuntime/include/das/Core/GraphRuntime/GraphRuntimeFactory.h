@@ -137,8 +137,9 @@ GraphAuthoringSessionUpgradeToGraph(GraphAuthoringSessionState* p);
 
 /// Derive the boundary port surface of a graph document (ports are derived,
 /// never authored): dangling input ports (no incoming edge, no same-name
-/// explicit graph_input) project as boundary inputs, dangling output ports as
-/// boundary outputs. `p_document_json` is a GraphDocumentDto JSON. The
+/// typed graph-level input) project as boundary inputs, dangling output
+/// ports as boundary outputs. `p_document_json` is a GraphDocumentDto JSON.
+/// The
 /// declared-port-surface channel reads the session state's action catalog
 /// (`p->action_entries`, seeded from the context `actionCatalog` key by
 /// SeedFromContext) — the catalog's per-entry declared port surface resolves

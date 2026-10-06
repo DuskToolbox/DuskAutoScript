@@ -370,7 +370,7 @@ public:
     /// while EVERY declared output port projects as a boundary output
     /// (internal consumption and external export are not mutually exclusive
     /// — fan-out is legal, so half-boundary ports survive extraction).
-    /// Same-name sites merge under one boundary port (by-name broadcast
+    /// Same-name sites merge under one boundary port (by-name boundary
     /// semantics); the first occurrence contributes the port metadata.
     static Dto::BoundaryPortsDto DeriveBoundaryPorts(
         const Dto::GraphDocumentDto&        document,
