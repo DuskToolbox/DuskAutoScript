@@ -244,8 +244,8 @@ namespace Plugins::DasMaaPi
         }
         *pp_out_port_map = nullptr;
 
-        // envelope 来源唯一：executionInput 端口喂线（父图编译期注入链经
-        // 输入口送达——快照随编译产物传递）。端口缺失（含 settings 携带
+        // envelope 来源唯一：executionInput 端口喂线（编排层在节点执行
+        // 时现编、产物经输入口送达）。端口缺失（含 settings 携带
         // repositoryRef 但口未喂线的情形）遇缺即错：具名失败码，运行期零
         // 自解析回退、零主进程服务查询。
         const auto execution_input_json =
@@ -254,8 +254,8 @@ namespace Plugins::DasMaaPi
         {
             spdlog::error(
                 "[DasMaaPi] Do: executionInput port is missing — the "
-                "envelope must be delivered via the compile-time injection "
-                "chain");
+                "envelope must be delivered by the orchestration layer's "
+                "execution-time compile");
             return DAS_E_MAAPI_EXECUTION_INPUT_MISSING;
         }
         const std::string envelope_source = std::move(*execution_input_json);

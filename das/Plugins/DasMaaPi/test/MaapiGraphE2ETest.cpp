@@ -154,7 +154,6 @@ namespace
         snap.node_id = NODE_ID;
         snap.component_guid = MAAPI_RUN_TASK_GUID;
         snap.resolved_ports = {
-            MakePortDef("executionInput", "object"),
             MakePortDef("status", "string"),
             MakePortDef("completedTasks", "array<string>"),
             MakePortDef("stopped", "bool"),
@@ -565,8 +564,7 @@ namespace
         const std::string context =
             std::string(R"({"actionCatalog":[{"actionId":")")
             + MAAPI_RUN_TASK_GUID
-            + R"(","ports":[{"portId":"executionInput","portType":"object","direction":"input"}],)"
-              R"("config":[{"name":"repositoryRef","type":"taskRepositoryRef","taskGuid":")"
+            + R"(","config":[{"name":"repositoryRef","type":"taskRepositoryRef","taskGuid":")"
             + MAAPI_RUN_TASK_GUID + R"("}]}]})";
 
         GraphAuthoringSessionState* session_state = nullptr;

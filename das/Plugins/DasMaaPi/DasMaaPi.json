@@ -40,18 +40,7 @@
           "label": { "en": "Maa Run", "zh-cn": "Maa 执行" },
           "componentGuid": "69F20008-0000-4000-8000-000000000001",
           "settings": [],
-          "inputs": [
-            {
-              "id": "in",
-              "type": "signal",
-              "label": { "en": "Input Signal", "zh-cn": "输入信号" }
-            },
-            {
-              "id": "executionInput",
-              "type": "object",
-              "label": { "en": "Execution Input", "zh-cn": "执行输入" }
-            }
-          ],
+          "inputs": [],
           "outputs": [
             {
               "id": "completedTasks",

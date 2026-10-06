@@ -68,13 +68,7 @@
           "kind": "das.graph.execute",
           "label": { "en": "Execute Graph", "zh-cn": "执行子图" },
           "componentGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3",
-          "inputs": [
-            {
-              "id": "executionInput",
-              "type": "object",
-              "label": { "en": "Execution Input", "zh-cn": "执行输入" }
-            }
-          ],
+          "inputs": [],
           "outputs": [
             {
               "id": "result",
