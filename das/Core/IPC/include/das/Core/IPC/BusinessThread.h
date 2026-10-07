@@ -7,7 +7,9 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/DasExport.h>
 #include <functional>
+#include <map>
 #include <memory>
+#include <set>
 #include <string_view>
 #include <thread>
 
@@ -114,6 +116,25 @@ public:
 
 private:
     /**
+     * @brief 活跃同步等待键的全序比较子
+     *
+     * CallKey 只定义了 operator==（IpcRunLoop.h 为跨模块共享头，
+     * 不为有序容器补 operator<），有序容器经本比较子获得全序。
+     */
+    struct ActiveSyncKeyOrder
+    {
+        bool operator()(const CallKey& left, const CallKey& right)
+            const noexcept
+        {
+            if (left.source_session_id != right.source_session_id)
+            {
+                return left.source_session_id < right.source_session_id;
+            }
+            return left.call_id < right.call_id;
+        }
+    };
+
+    /**
      * @brief 线程主循环
      */
     void Run();
@@ -144,6 +165,15 @@ private:
 
     /// 运行状态
     std::atomic<bool> running_{false};
+
+    /// 本线程栈上正在等待的同步调用键。同步等待只发生在 BT 线程
+    /// 栈上（PumpUntilResponse 的调用方全部被 BT 线程身份守卫），
+    /// 仅 BT 线程读写，故零锁零 cv
+    std::set<CallKey, ActiveSyncKeyOrder> active_sync_keys_;
+
+    /// 暂存信箱：嵌套泵期间到达的活跃同步调用响应（值含完整
+    /// header）。与 active_sync_keys_ 同理仅 BT 线程读写，零锁
+    std::map<CallKey, InboundMessage, ActiveSyncKeyOrder> stashed_responses_;
 };
 
 DAS_CORE_IPC_NS_END

@@ -34,6 +34,40 @@ namespace
     private:
         BusinessThread* previous_ = nullptr;
     };
+
+    // 活跃同步键登记守卫：构造登记键、析构注销键并清信箱内该键条目。
+    // 等待者的全部出口（应答返回与取消返回）与异常穿透共用这一条
+    // 注销路径，杜绝键残留与孤儿信箱消息滞留。
+    template <typename ActiveKeys, typename StashedResponses>
+    class ActiveSyncKeyGuard
+    {
+    public:
+        ActiveSyncKeyGuard(
+            ActiveKeys&       active_keys,
+            StashedResponses& stashed_responses,
+            const CallKey&    call_key)
+            : active_keys_(active_keys), stashed_responses_(stashed_responses),
+              call_key_(call_key)
+        {
+            active_keys_.insert(call_key_);
+        }
+
+        ~ActiveSyncKeyGuard()
+        {
+            active_keys_.erase(call_key_);
+            stashed_responses_.erase(call_key_);
+        }
+
+        ActiveSyncKeyGuard(const ActiveSyncKeyGuard&) = delete;
+        ActiveSyncKeyGuard& operator=(const ActiveSyncKeyGuard&) = delete;
+        ActiveSyncKeyGuard(ActiveSyncKeyGuard&&) = delete;
+        ActiveSyncKeyGuard& operator=(ActiveSyncKeyGuard&&) = delete;
+
+    private:
+        ActiveKeys&       active_keys_;
+        StashedResponses& stashed_responses_;
+        CallKey           call_key_;
+    };
 } // namespace
 
 bool IsCurrentBusinessThread() noexcept
@@ -146,10 +180,21 @@ void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
 
     if (header.GetMessageType() == MessageType::Response)
     {
-        // RESPONSE: 调用 CompletePendingCall
         const CallKey call_key{
             .source_session_id = header.GetSourceSessionId(),
             .call_id = header.GetCallId()};
+
+        // 嵌套泵期间到达的外层同步调用响应：同步等待者不登记在
+        // pending_calls_（异步回调表）里，走 CompletePendingCall 落空
+        // 即被静默丢弃、外层永久挂起——改投暂存信箱，由属主等待者
+        // 在自己的泵循环顶取回
+        if (active_sync_keys_.count(call_key) != 0U)
+        {
+            stashed_responses_.emplace(call_key, std::move(msg));
+            return;
+        }
+
+        // RESPONSE: 调用 CompletePendingCall
         const DasResult result =
             header.HasError() ? static_cast<DasResult>(header.GetErrorCode())
                               : DAS_S_OK;
@@ -258,11 +303,50 @@ DasResult BusinessThread::PumpUntilResponse(
         my_call_key.source_session_id,
         my_call_key.call_id);
 
-    // 泵入循环
-    while (running_.load())
-    {
-        auto msg_opt = inbound_.Pop();
+    // 登记本等待键：期间任何泵（含嵌套）收到的本键 Response 都投信箱
+    const ActiveSyncKeyGuard active_key_guard(
+        active_sync_keys_,
+        stashed_responses_,
+        my_call_key);
 
+    for (;;)
+    {
+        // 已到达并投箱的响应属于本等待者已持有的消息，关队列/停机
+        // 不应吞掉它——取件检查先于停机判定
+        auto stash_node = stashed_responses_.extract(my_call_key);
+        if (!stash_node.empty())
+        {
+            InboundMessage stashed = std::move(stash_node.mapped());
+            out_response = std::move(stashed.body);
+            if (out_flags)
+            {
+                *out_flags = stashed.header.GetFlags();
+            }
+            // 检查 RESPONSE header 中的 error_code
+            if (stashed.header.HasError())
+            {
+                DAS_CORE_LOG_DEBUG(
+                    "PumpUntilResponse: error response for call_id = {}, "
+                    "error_code = {}",
+                    my_call_key.call_id,
+                    stashed.header.GetErrorCode());
+                return static_cast<DasResult>(stashed.header.GetErrorCode());
+            }
+
+            DAS_CORE_LOG_DEBUG(
+                "PumpUntilResponse: matched, call_id = {}",
+                my_call_key.call_id);
+            return DAS_S_OK;
+        }
+
+        if (!running_.load())
+        {
+            DAS_CORE_LOG_DEBUG(
+                "PumpUntilResponse: thread stopped, returning CANCELED");
+            return DAS_E_IPC_CANCELED;
+        }
+
+        auto msg_opt = inbound_.Pop();
         if (!msg_opt.has_value())
         {
             // 队列已关闭
@@ -271,53 +355,10 @@ DasResult BusinessThread::PumpUntilResponse(
             return DAS_E_IPC_CANCELED;
         }
 
-        InboundMessage msg = std::move(msg_opt.value());
-
-        if (msg.header.GetMessageType() == MessageType::Response)
-        {
-            const CallKey call_key{
-                .source_session_id = msg.header.GetSourceSessionId(),
-                .call_id = msg.header.GetCallId()};
-
-            if (call_key == my_call_key)
-            {
-                // 匹配我的响应
-                out_response = std::move(msg.body);
-                if (out_flags)
-                {
-                    *out_flags = msg.header.GetFlags();
-                }
-                // 检查 RESPONSE header 中的 error_code
-                if (msg.header.HasError())
-                {
-                    DAS_CORE_LOG_DEBUG(
-                        "PumpUntilResponse: error response for call_id = {}, "
-                        "error_code = {}",
-                        my_call_key.call_id,
-                        msg.header.GetErrorCode());
-                    return static_cast<DasResult>(msg.header.GetErrorCode());
-                }
-
-                DAS_CORE_LOG_DEBUG(
-                    "PumpUntilResponse: matched, call_id = {}",
-                    my_call_key.call_id);
-                return DAS_S_OK;
-            }
-            else
-            {
-                // 不是我的响应，走通用分发处理（可能是嵌套调用的响应）
-                ProcessInboundMessage(msg);
-            }
-        }
-        else
-        {
-            // REQUEST/EVENT: 分发处理（可能触发嵌套 pump）
-            ProcessInboundMessage(msg);
-        }
+        // 弹出消息一律走通用分发：Response 命中活跃键进信箱，
+        // REQUEST/EVENT 触发 handler（可能嵌套泵）
+        ProcessInboundMessage(msg_opt.value());
     }
-
-    // 线程已停止
-    return DAS_E_IPC_CANCELED;
 }
 
 DasResult BusinessThread::PumpUntilPredicate(
