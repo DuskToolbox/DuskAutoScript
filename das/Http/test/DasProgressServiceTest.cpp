@@ -351,32 +351,80 @@ TEST(DasProgressServiceTest, KeyEmptyNotifiesAllCallbacks)
     raw_cb->Release();
 }
 
+// 坏字段（GetFieldByIndex 越界）安全跳过；对象值放行（按钮 disabled 对象
+// merge 依赖此放宽——ParseYyjsonFromString 已保证入口合法 JSON）。
 TEST(DasProgressServiceTest, ReportSkipsBadFieldsWithoutCrashing)
 {
     ServiceFixture fixture;
     auto session = std::make_shared<FakeSession>(fixture.ioc, "bad-key");
     fixture.hub->Register(session, "bad-key");
 
-    // 坏字段：nullopt（GetFieldByIndex 越界）+ 非法值（JSON 对象）。
     std::vector<std::optional<FakeProgressUpdate::Field>> fields;
     fields.emplace_back(
         std::make_pair(std::string("goodField"), MakeJsonValue("ok")));
     fields.emplace_back(std::nullopt);
     fields.emplace_back(
         std::make_pair(
-            std::string("badField"),
-            MakeJsonDocumentValue(R"({"nested":1})")));
+            std::string("checkUpdate"),
+            MakeJsonDocumentValue(R"({"disabled":false})")));
 
     auto entry = FakeProgressUpdate::Make("bad-key", std::move(fields));
 
     ASSERT_EQ(fixture.service->Report(entry.Get()), DAS_S_OK);
     fixture.ioc.poll();
 
-    ASSERT_EQ(session->messages_.size(), 1u);
+    ASSERT_EQ(session->messages_.size(), 2u);
     auto parsed = ParsePayload(*session->messages_[0]);
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->field_name, "goodField");
     EXPECT_EQ(parsed->value_text, "\"ok\"");
+    auto object_value = ParsePayload(*session->messages_[1]);
+    ASSERT_TRUE(object_value.has_value());
+    EXPECT_EQ(object_value->field_name, "checkUpdate");
+    EXPECT_EQ(object_value->target_kind, "document");
+    EXPECT_EQ(object_value->value_text, R"({"disabled":false})");
+}
+
+// 对象/null/数组值全放行：按钮 disabled 对象 merge 依赖对象帧不被安全
+// 跳过；null 与数组同样构造完整 setValue payload 广播。
+TEST(DasProgressServiceTest, ReportBroadcastsObjectNullAndArrayValues)
+{
+    ServiceFixture fixture;
+    auto session = std::make_shared<FakeSession>(fixture.ioc, "wide-key");
+    fixture.hub->Register(session, "wide-key");
+
+    std::vector<std::optional<FakeProgressUpdate::Field>> fields;
+    fields.emplace_back(
+        std::make_pair(
+            std::string("applyUpdate"),
+            MakeJsonDocumentValue(R"({"disabled":true})")));
+    fields.emplace_back(
+        std::make_pair(std::string("nullField"), MakeJsonDocumentValue("null")));
+    fields.emplace_back(
+        std::make_pair(
+            std::string("arrayField"),
+            MakeJsonDocumentValue(R"([1,2])")));
+    auto entry = FakeProgressUpdate::Make("wide-key", std::move(fields));
+
+    ASSERT_EQ(fixture.service->Report(entry.Get()), DAS_S_OK);
+    fixture.ioc.poll();
+
+    ASSERT_EQ(session->messages_.size(), 3u);
+    auto object_value = ParsePayload(*session->messages_[0]);
+    ASSERT_TRUE(object_value.has_value());
+    EXPECT_EQ(object_value->field_name, "applyUpdate");
+    EXPECT_EQ(object_value->target_kind, "document");
+    EXPECT_EQ(object_value->value_text, R"({"disabled":true})");
+
+    auto null_value = ParsePayload(*session->messages_[1]);
+    ASSERT_TRUE(null_value.has_value());
+    EXPECT_EQ(null_value->field_name, "nullField");
+    EXPECT_EQ(null_value->value_text, "null");
+
+    auto array_value = ParsePayload(*session->messages_[2]);
+    ASSERT_TRUE(array_value.has_value());
+    EXPECT_EQ(array_value->field_name, "arrayField");
+    EXPECT_EQ(array_value->value_text, "[1,2]");
 }
 
 // 无订阅者时 Report 的帧不被任何人消费，但快照必须记录最后状态

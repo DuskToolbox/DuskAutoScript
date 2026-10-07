@@ -48,6 +48,7 @@
     "command.applyUpdate": "Update",
     "command.discoverAdbDevices": "Scan Devices",
     "diagnostic.valueMustBeString": "{0} value must be string",
+    "diagnostic.progressPatchKeyRejected": "Progress field patch key not in whitelist, dropped: {0}",
     "diagnostic.valueMustBeBool": "{0} value must be bool",
     "diagnostic.valueMustBeNonEmpty": "{0} value must be non-empty",
     "diagnostic.valueMustBeOneOfTwo": "{0} must be '{1}' or '{2}'",

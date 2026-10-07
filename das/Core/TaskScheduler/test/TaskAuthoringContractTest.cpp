@@ -1195,9 +1195,9 @@ TEST(TaskAuthoringContractTest, FieldLayoutSectionRecursiveCoverage)
     EXPECT_TRUE(r.valid) << r.message;
 }
 
-// {commandId} 叶子在 section.entries 内引用 commands[] 已声明的 id
-// → PASS。commands 必须含 apply.kind:"invokeCommand" + payload.commandId。
-TEST(TaskAuthoringContractTest, FieldLayoutCommandLeafValid)
+// {commandId} 叶子形态退役：按钮统一为 inputType=9 FieldDescriptor，layout
+// 只认 {fieldName} 叶子（含 row 内）——{commandId} 叶子以未知叶子形态被拒。
+TEST(TaskAuthoringContractTest, FieldLayoutCommandLeafShapeRejected)
 {
     auto document = ParseJson(R"json({
         "contractVersion": 1,
@@ -1215,51 +1215,11 @@ TEST(TaskAuthoringContractTest, FieldLayoutCommandLeafValid)
                     {"commandId": "checkUpdate"}
                 ]
             }
-        ],
-        "commands": [
-            {
-                "id": "checkUpdate",
-                "label": "Check Update",
-                "apply": {"kind": "invokeCommand", "payload": {"commandId": "checkUpdate"}}
-            }
-        ]
-    })json");
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_TRUE(r.valid) << r.message;
-}
-
-// commandId 引用不在 commands[] 的 id → FAIL
-// layoutCommandNotInContainer。
-TEST(TaskAuthoringContractTest, FieldLayoutCommandLeafNotInCommands)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "fields": [
-            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""}
-        ],
-        "fieldLayout": [
-            {
-                "id": "section-1",
-                "label": "Section",
-                "entries": [
-                    {"fieldName": "a"},
-                    {"commandId": "ghost"}
-                ]
-            }
-        ],
-        "commands": [
-            {
-                "id": "checkUpdate",
-                "label": "Check Update",
-                "apply": {"kind": "invokeCommand", "payload": {"commandId": "checkUpdate"}}
-            }
         ]
     })json");
     auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
     EXPECT_FALSE(r.valid);
-    EXPECT_EQ(r.error_kind, "layoutCommandNotInContainer");
+    EXPECT_EQ(r.error_kind, "invalidLayoutNode");
 }
 
 // row 横向容器在 section.entries 内合法 → PASS。横排两个 fieldName
@@ -1305,74 +1265,6 @@ TEST(TaskAuthoringContractTest, FieldLayoutRowAtTopLevelRejected)
     auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
     EXPECT_FALSE(r.valid);
     EXPECT_EQ(r.error_kind, "rowOutsideSection");
-}
-
-// 同一 commandId 被多次引用 → FAIL layoutDuplicateCommandRef。
-TEST(TaskAuthoringContractTest, FieldLayoutDuplicateCommandRef)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "fields": [
-            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""}
-        ],
-        "fieldLayout": [
-            {
-                "id": "section-1",
-                "label": "Section",
-                "entries": [
-                    {"fieldName": "a"},
-                    {"commandId": "checkUpdate"},
-                    {"commandId": "checkUpdate"}
-                ]
-            }
-        ],
-        "commands": [
-            {
-                "id": "checkUpdate",
-                "label": "Check Update",
-                "apply": {"kind": "invokeCommand", "payload": {"commandId": "checkUpdate"}}
-            }
-        ]
-    })json");
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_FALSE(r.valid);
-    EXPECT_EQ(r.error_kind, "layoutDuplicateCommandRef");
-}
-
-// layout 同时含 fieldName 叶子和 commandId 叶子，
-// fieldName 全覆盖断言仍成立（commandId 不污染 referenced_names）。
-TEST(TaskAuthoringContractTest, FieldLayoutMixedLeavesPreservesFieldCoverage)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "fields": [
-            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""},
-            {"name": "b", "label": "B", "valueType": 4, "inputType": 0, "value": ""}
-        ],
-        "fieldLayout": [
-            {
-                "id": "section-1",
-                "label": "Section",
-                "entries": [
-                    {"row": [{"fieldName": "a"}, {"fieldName": "b"}]},
-                    {"commandId": "checkUpdate"}
-                ]
-            }
-        ],
-        "commands": [
-            {
-                "id": "checkUpdate",
-                "label": "Check Update",
-                "apply": {"kind": "invokeCommand", "payload": {"commandId": "checkUpdate"}}
-            }
-        ]
-    })json");
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_TRUE(r.valid) << r.message;
 }
 
 TEST(TaskAuthoringContractTest, FormSequenceItemStrictShape)
@@ -4342,10 +4234,12 @@ TEST(TaskAuthoringContractTest, CompileResultRequiresCompileAndDiagnostics)
 }
 
 // =============================================================================
-// Tracer 3: CommandDescriptor XOR apply/openView + apply template shape
+// 根级/字段级 commands 通道退役：按钮统一为 inputType=9 FieldDescriptor
+// （apply 模板形状沿用 CommandApplyTemplate 校验）
 // =============================================================================
 
-TEST(TaskAuthoringContractTest, CommandDescriptorApplyOnlyPasses)
+// document 根级 commands 键退役 → 未知字段拒绝。
+TEST(TaskAuthoringContractTest, RootCommandsKeyRejected)
 {
     auto document = ParseJson(R"json({
         "contractVersion": 1,
@@ -4361,199 +4255,12 @@ TEST(TaskAuthoringContractTest, CommandDescriptorApplyOnlyPasses)
     })json");
 
     auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_TRUE(r.valid) << r.message;
-}
-
-TEST(TaskAuthoringContractTest, CommandDescriptorOpenViewOnlyPasses)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [
-            {"id": "open", "label": "目录", "openView": "actionCatalog"}
-        ]
-    })json");
-
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_TRUE(r.valid) << r.message;
-}
-
-TEST(TaskAuthoringContractTest, CommandDescriptorRequiresXorAction)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [{"id": "noop", "label": "Noop"}]
-    })json");
-
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_FALSE(r.valid);
-    EXPECT_EQ(r.error_kind, "commandActionXorRequired");
-}
-
-TEST(TaskAuthoringContractTest, CommandDescriptorRejectsBothApplyAndOpenView)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [{
-            "id": "x", "label": "X",
-            "apply": {"kind": "setValue", "payload": {}},
-            "openView": "actionCatalog"
-        }]
-    })json");
-
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_FALSE(r.valid);
-    EXPECT_EQ(r.error_kind, "commandActionXorRequired");
-}
-
-TEST(TaskAuthoringContractTest, CommandDescriptorConfirmationOnlyWithApply)
-{
-    auto with_apply = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [{
-            "id": "x", "label": "X",
-            "confirmation": "确认删除？",
-            "apply": {"kind": "setValue", "payload": {}}
-        }]
-    })json");
-    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(with_apply);
-    EXPECT_TRUE(r1.valid) << r1.message;
-
-    auto with_open_view = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [{
-            "id": "x", "label": "X",
-            "confirmation": "不应允许",
-            "openView": "actionCatalog"
-        }]
-    })json");
-    auto r2 =
-        Das::Core::TaskScheduler::ValidateAuthoringDocument(with_open_view);
-    EXPECT_FALSE(r2.valid);
-    EXPECT_EQ(r2.error_kind, "confirmationRequiresApply");
-}
-
-TEST(TaskAuthoringContractTest, CommandDescriptorConfirmationMustBeNonEmpty)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [{
-            "id": "x", "label": "X",
-            "confirmation": "",
-            "apply": {"kind": "setValue", "payload": {}}
-        }]
-    })json");
-
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_FALSE(r.valid);
-    EXPECT_EQ(r.error_kind, "invalidConfirmation");
-}
-
-TEST(
-    TaskAuthoringContractTest,
-    CommandDescriptorApplyTemplateRejectsBaseRevision)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [{
-            "id": "x", "label": "X",
-            "apply": {"baseRevision": 0, "kind": "setValue", "payload": {}}
-        }]
-    })json");
-
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_FALSE(r.valid);
-    EXPECT_EQ(r.error_kind, "applyTemplateHasBaseRevision");
-}
-
-TEST(
-    TaskAuthoringContractTest,
-    CommandDescriptorApplyTemplateRequiresKindAndPayload)
-{
-    auto no_kind = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [{"id": "x", "label": "X", "apply": {"payload": {}}}]
-    })json");
-    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(no_kind);
-    EXPECT_FALSE(r1.valid);
-    EXPECT_EQ(r1.error_kind, "missingField");
-
-    auto no_payload = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [{"id": "x", "label": "X", "apply": {"kind": "setValue"}}]
-    })json");
-    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringDocument(no_payload);
-    EXPECT_FALSE(r2.valid);
-    EXPECT_EQ(r2.error_kind, "missingField");
-}
-
-TEST(TaskAuthoringContractTest, CommandDescriptorOpenViewMustBeActionCatalog)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [{"id": "x", "label": "X", "openView": "custom"}]
-    })json");
-
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_FALSE(r.valid);
-    EXPECT_EQ(r.error_kind, "unsupportedOpenView");
-}
-
-TEST(TaskAuthoringContractTest, CommandDescriptorIdUniqueInContainer)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [
-            {"id": "dup", "label": "A", "openView": "actionCatalog"},
-            {"id": "dup", "label": "B", "openView": "actionCatalog"}
-        ]
-    })json");
-
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_FALSE(r.valid);
-    EXPECT_EQ(r.error_kind, "duplicateCommandId");
-}
-
-TEST(TaskAuthoringContractTest, CommandDescriptorRejectsUnknownField)
-{
-    auto document = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "formSequence",
-        "revision": 0,
-        "commands": [{
-            "id": "x", "label": "X",
-            "apply": {"kind": "setValue", "payload": {}},
-            "buttonStyle": "primary"
-        }]
-    })json");
-
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
     EXPECT_FALSE(r.valid);
     EXPECT_EQ(r.error_kind, "unknownField");
 }
 
-TEST(TaskAuthoringContractTest, FieldDescriptorCommandsValidated)
+// FieldDescriptor.commands 键退役 → 未知字段拒绝。
+TEST(TaskAuthoringContractTest, FieldDescriptorCommandsKeyRejected)
 {
     auto document = ParseJson(R"json({
         "contractVersion": 1,
@@ -4567,7 +4274,109 @@ TEST(TaskAuthoringContractTest, FieldDescriptorCommandsValidated)
 
     auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
     EXPECT_FALSE(r.valid);
-    EXPECT_EQ(r.error_kind, "commandActionXorRequired");
+    EXPECT_EQ(r.error_kind, "unknownField");
+}
+
+// FormSequenceItem 级 commands 键退役 → 未知字段拒绝。
+TEST(TaskAuthoringContractTest, FormSequenceItemCommandsKeyRejected)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "formSequence": {
+            "items": [
+                {
+                    "id": "task-1",
+                    "commands": [
+                        {"id": "c", "label": "C", "apply": {"kind": "setValue", "payload": {}}}
+                    ]
+                }
+            ]
+        }
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "unknownField");
+}
+
+// GraphNode 级 commands 键退役 → 未知字段拒绝。
+TEST(TaskAuthoringContractTest, GraphNodeCommandsKeyRejected)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {
+            "nodes": [
+                {
+                    "id": "n",
+                    "commands": [
+                        {"id": "c", "label": "C", "apply": {"kind": "setValue", "payload": {}}}
+                    ]
+                }
+            ]
+        }
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "unknownField");
+}
+
+// 按钮字段 apply 模板形状（CommandApplyTemplate 校验经按钮字段复用）：
+// 携带 baseRevision → 拒绝。
+TEST(
+    TaskAuthoringContractTest,
+    ButtonFieldApplyTemplateRejectsBaseRevision)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "b", "label": "按钮", "valueType": 4,
+            "inputType": 9, "value": null,
+            "apply": {"baseRevision": 0, "kind": "invokeCommand", "payload": {"commandId": "b"}}
+        }]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "applyTemplateHasBaseRevision");
+}
+
+// 按钮字段 apply 模板缺 kind / 缺 payload → missingField。
+TEST(
+    TaskAuthoringContractTest,
+    ButtonFieldApplyTemplateRequiresKindAndPayload)
+{
+    auto no_kind = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "b", "label": "按钮", "valueType": 4,
+            "inputType": 9, "value": null,
+            "apply": {"payload": {}}
+        }]
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(no_kind);
+    EXPECT_FALSE(r1.valid);
+    EXPECT_EQ(r1.error_kind, "missingField");
+
+    auto no_payload = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "b", "label": "按钮", "valueType": 4,
+            "inputType": 9, "value": null,
+            "apply": {"kind": "invokeCommand"}
+        }]
+    })json");
+    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringDocument(no_payload);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "missingField");
 }
 
 // =============================================================================

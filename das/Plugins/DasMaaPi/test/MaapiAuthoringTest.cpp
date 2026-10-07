@@ -546,7 +546,9 @@ namespace
         return "";
     }
 
-    // 在 document.fieldLayout[] 中按 section.id 查找 section。
+    // 在 document.fieldLayout[] 中按 section.id 查找 section。layout 顶层可
+    // 含 {fieldName} 叶子（newPreset 按钮字段置顶）——operator[] 对缺失 key
+    // 抛异常，必须先 contains 检查。
     std::optional<yyjson::value> FindLayoutSection(
         const yyjson::value& document,
         std::string_view     id)
@@ -564,7 +566,7 @@ namespace
         for (auto it = layout->begin(); it != layout->end(); ++it)
         {
             auto section = it->as_object();
-            if (!section)
+            if (!section || !section->contains(std::string_view("id")))
             {
                 continue;
             }
@@ -577,9 +579,9 @@ namespace
         return std::nullopt;
     }
 
-    // 收集 section.entries[] 所有叶子 fieldName（保持声明顺序）。跳过非
-    // fieldName 叶子（{commandId} 叶子、{row:[...]} 容器等）— cpp_yyjson
-    // operator[] 对缺失 key 抛异常，必须先 contains 检查。
+    // 收集 section.entries[] 所有直接叶子 fieldName（保持声明顺序）。跳过
+    // {row:[...]} 容器等非叶子形态 — cpp_yyjson operator[] 对缺失 key 抛
+    // 异常，必须先 contains 检查。
     std::vector<std::string> LayoutSectionFieldNames(
         const yyjson::value& section)
     {
@@ -635,8 +637,9 @@ namespace
         return names;
     }
 
-    // 遍历 document.fieldLayout[] 各 section.entries[]，收集所有叶子
-    // fieldName。跳过非 fieldName 叶子（{commandId} 叶子、{row:[...]} 容器）。
+    // 递归遍历 document.fieldLayout[]（顶层 fieldName 叶子 + section.entries
+    // + row 嵌套），收集所有 fieldName 叶子（按钮字段化后 layout 只有
+    // {fieldName} 叶子）。
     std::vector<std::string> LayoutLeafFieldNames(const yyjson::value& document)
     {
         std::vector<std::string> names;
@@ -650,66 +653,23 @@ namespace
         {
             return names;
         }
-        for (auto it = layout->begin(); it != layout->end(); ++it)
-        {
-            auto section = it->as_object();
-            if (!section || !section->contains(std::string_view("entries")))
-            {
-                continue;
-            }
-            auto entries = (*section)[std::string_view("entries")].as_array();
-            if (!entries)
-            {
-                continue;
-            }
-            for (auto eit = entries->begin(); eit != entries->end(); ++eit)
-            {
-                auto leaf = eit->as_object();
-                if (!leaf || !leaf->contains(std::string_view("fieldName")))
-                {
-                    continue;
-                }
-                names.emplace_back(
-                    (*leaf)[std::string_view("fieldName")].as_string().value_or(
-                        ""));
-            }
-        }
-        return names;
-    }
-
-    // 递归收集一个 section.entries[] 内（含 row 嵌套）的 commandId 叶子。
-    // 用于断言 update section 含 checkUpdate/applyUpdate 命令叶子。
-    std::vector<std::string> LayoutSectionCommandIds(
-        const yyjson::value& section)
-    {
-        std::vector<std::string> ids;
-        auto                     section_obj = section.as_object();
-        if (!section_obj || !section_obj->contains(std::string_view("entries")))
-        {
-            return ids;
-        }
-        auto entries = (*section_obj)[std::string_view("entries")].as_array();
-        if (!entries)
-        {
-            return ids;
-        }
         std::function<void(const yyjson::value&)> walk =
             [&](const yyjson::value& node)
         {
-            auto obj = node.as_object();
-            if (!obj)
+            auto node_obj = node.as_object();
+            if (!node_obj)
             {
                 return;
             }
-            if (obj->contains(std::string_view("commandId")))
+            if (node_obj->contains(std::string_view("fieldName")))
             {
-                ids.emplace_back(
-                    (*obj)[std::string_view("commandId")].as_string().value_or(
-                        ""));
+                names.emplace_back((*node_obj)[std::string_view("fieldName")]
+                                       .as_string()
+                                       .value_or(""));
             }
-            if (obj->contains(std::string_view("row")))
+            if (node_obj->contains(std::string_view("row")))
             {
-                if (auto row = (*obj)[std::string_view("row")].as_array())
+                if (auto row = (*node_obj)[std::string_view("row")].as_array())
                 {
                     for (auto row_it = row->begin(); row_it != row->end();
                          ++row_it)
@@ -718,12 +678,25 @@ namespace
                     }
                 }
             }
+            if (node_obj->contains(std::string_view("entries")))
+            {
+                if (auto entries =
+                        (*node_obj)[std::string_view("entries")].as_array())
+                {
+                    for (auto entry_it = entries->begin();
+                         entry_it != entries->end();
+                         ++entry_it)
+                    {
+                        walk(*entry_it);
+                    }
+                }
+            }
         };
-        for (auto it = entries->begin(); it != entries->end(); ++it)
+        for (auto it = layout->begin(); it != layout->end(); ++it)
         {
             walk(*it);
         }
-        return ids;
+        return names;
     }
 } // namespace
 
@@ -3729,8 +3702,9 @@ TEST(MaapiProjectionTest, MissingTranslationYieldsGenericFallbackAndDiagnostic)
     EXPECT_TRUE(found_missing);
 }
 
-// Tracer 5: 根级 commands + item debugInfo。D-84-26/27/28/46.
-TEST(MaapiProjectionTest, RootCommandsAndItemDebugInfoProjected)
+// Tracer 5: 按钮字段投影 + item debugInfo（按钮统一为 inputType=9
+// FieldDescriptor，name==commandId，apply 模板挂字段描述符）。
+TEST(MaapiProjectionTest, ButtonFieldsAndItemDebugInfoProjected)
 {
     using namespace Das::Plugins::DasMaaPi;
 
@@ -3753,30 +3727,51 @@ TEST(MaapiProjectionTest, RootCommandsAndItemDebugInfoProjected)
     auto obj = document.as_object();
     ASSERT_TRUE(obj.has_value());
 
-    ASSERT_TRUE(obj->contains(std::string_view("commands")));
-    auto commands = (*obj)[std::string_view("commands")].as_array();
-    ASSERT_TRUE(commands.has_value());
-    std::set<std::string> command_ids;
-    for (auto it = commands->begin(); it != commands->end(); ++it)
+    // 根级 commands 键退役：按钮字段化后不再投影。
+    EXPECT_FALSE(obj->contains(std::string_view("commands")));
+
+    // newPreset 是无条件 emit 的按钮字段（inputType=9 + apply 模板）。
+    auto new_preset = FindRootField(document, "newPreset");
+    ASSERT_TRUE(new_preset.has_value());
     {
-        auto cmd = it->as_object();
-        ASSERT_TRUE(cmd.has_value());
-        auto id_opt = (*cmd)[std::string_view("id")].as_string().value_or("");
-        auto label_opt =
-            (*cmd)[std::string_view("label")].as_string().value_or("");
-        EXPECT_FALSE(id_opt.empty());
-        EXPECT_FALSE(label_opt.empty());
-        command_ids.emplace(id_opt);
-        ASSERT_TRUE(cmd->contains(std::string_view("apply")));
-        auto apply = (*cmd)[std::string_view("apply")].as_object();
+        auto field_obj = new_preset->as_object();
+        ASSERT_TRUE(field_obj.has_value());
+        EXPECT_EQ(
+            (*field_obj)[std::string_view("inputType")].as_sint().value_or(0),
+            9);
+        EXPECT_EQ(
+            (*field_obj)[std::string_view("valueType")].as_sint().value_or(0),
+            4);
+        EXPECT_TRUE((*field_obj)[std::string_view("value")].is_null());
+        EXPECT_FALSE((*field_obj)[std::string_view("label")]
+                         .as_string()
+                         .value_or("")
+                         .empty());
+        auto apply = (*field_obj)[std::string_view("apply")].as_object();
         ASSERT_TRUE(apply.has_value());
         EXPECT_FALSE(apply->contains(std::string_view("baseRevision")));
         EXPECT_EQ(
             (*apply)[std::string_view("kind")].as_string().value_or(""),
             "invokeCommand");
+        auto payload = (*apply)[std::string_view("payload")].as_object();
+        ASSERT_TRUE(payload.has_value());
+        EXPECT_EQ(
+            (*payload)[std::string_view("commandId")].as_string().value_or(""),
+            "newPreset");
     }
-    // D-84.2-04: newPreset 是无条件 emit 的唯一 root command。
-    EXPECT_EQ(command_ids.count("newPreset"), 1u);
+    // 布局落位：newPreset 按钮 field 是 fieldLayout 顶层叶子（置顶无标题
+    // 扁平组，复刻原文档根级命令行位置）。
+    {
+        auto layout = (*obj)[std::string_view("fieldLayout")].as_array();
+        ASSERT_TRUE(layout.has_value());
+        ASSERT_FALSE(layout->empty());
+        auto first = layout->begin()->as_object();
+        ASSERT_TRUE(first.has_value());
+        ASSERT_TRUE(first->contains(std::string_view("fieldName")));
+        EXPECT_EQ(
+            (*first)[std::string_view("fieldName")].as_string().value_or(""),
+            "newPreset");
+    }
 
     auto fs = (*obj)[std::string_view("formSequence")].as_object();
     ASSERT_TRUE(fs.has_value());
@@ -4575,45 +4570,33 @@ TEST_F(MaapiAuthoringFixture, InvokeCommandNewPresetCreatesSnapshot)
         (*snapshot_obj)[std::string_view("language")].as_string().value_or(""),
         "zh_cn");
 
-    // (g) document.commands[] 含 newPreset invokeCommand 条目。
+    // (g) document.fields[] 含 newPreset 按钮字段（inputType=9 + apply
+    // invokeCommand 模板挂字段描述符）。
     auto result_obj = result.as_object();
     ASSERT_TRUE(result_obj.has_value());
     ASSERT_TRUE(result_obj->contains(std::string_view("document")));
     auto document = Das::Utils::CloneYyjsonValue(
         (*result_obj)[std::string_view("document")]);
-    auto doc_obj = document.as_object();
-    ASSERT_TRUE(doc_obj.has_value());
-    ASSERT_TRUE(doc_obj->contains(std::string_view("commands")));
-    auto commands = (*doc_obj)[std::string_view("commands")].as_array();
-    ASSERT_TRUE(commands.has_value());
-    bool found_new_preset = false;
-    for (auto it = commands->begin(); it != commands->end(); ++it)
+    auto new_preset_field = FindRootField(document, "newPreset");
+    ASSERT_TRUE(new_preset_field.has_value())
+        << "document.fields[] missing newPreset button field";
     {
-        auto cmd = it->as_object();
-        if (!cmd)
-        {
-            continue;
-        }
-        if ((*cmd)[std::string_view("id")].as_string().value_or("")
-            == "newPreset")
-        {
-            found_new_preset = true;
-            auto apply = (*cmd)[std::string_view("apply")].as_object();
-            ASSERT_TRUE(apply.has_value());
-            EXPECT_EQ(
-                (*apply)[std::string_view("kind")].as_string().value_or(""),
-                "invokeCommand");
-            auto payload = (*apply)[std::string_view("payload")].as_object();
-            ASSERT_TRUE(payload.has_value());
-            EXPECT_EQ(
-                (*payload)[std::string_view("commandId")].as_string().value_or(
-                    ""),
-                "newPreset");
-            break;
-        }
+        auto field_obj = new_preset_field->as_object();
+        ASSERT_TRUE(field_obj.has_value());
+        EXPECT_EQ(
+            (*field_obj)[std::string_view("inputType")].as_sint().value_or(0),
+            9);
+        auto apply = (*field_obj)[std::string_view("apply")].as_object();
+        ASSERT_TRUE(apply.has_value());
+        EXPECT_EQ(
+            (*apply)[std::string_view("kind")].as_string().value_or(""),
+            "invokeCommand");
+        auto payload = (*apply)[std::string_view("payload")].as_object();
+        ASSERT_TRUE(payload.has_value());
+        EXPECT_EQ(
+            (*payload)[std::string_view("commandId")].as_string().value_or(""),
+            "newPreset");
     }
-    EXPECT_TRUE(found_new_preset)
-        << "document.commands[] missing newPreset entry";
 }
 
 // Tracer 3 RED: convertView 在 MaaPI 必须拒绝（MaaPI 只支持 formSequence）。
@@ -6351,19 +6334,18 @@ TEST(
     EXPECT_EQ(CountFieldsWithName(document, "options.stage"), 0u);
 }
 
-// update section 内含 {row:[{commandId:checkUpdate},{commandId:applyUpdate}]}
-// 横排命令按钮组，与 update 字段同 section 渲染。
-// commands[] 投影仍 emit checkUpdate/applyUpdate/newPreset 三个 id（disabled
-// 状态投影机制保持）。回归守卫：refactor 后 commands 投影 + checkUpdate
-// commandResult 不破。
+// update section 内含 {row:[{fieldName:checkUpdate},{fieldName:applyUpdate}]}
+// 横排按钮字段组，与 update 字段同 section 渲染；按钮统一为 inputType=9
+// FieldDescriptor（根级 commands 通道退役）。回归守卫：refactor 后按钮字段
+// 投影 + checkUpdate commandResult 不破。
 TEST(
     MaapiProjectionTest,
-    UpdateSectionLayoutContainsCommandLeafAndCommandsStillEmitted)
+    UpdateSectionLayoutContainsButtonRowAndButtonsProjectedAsFields)
 {
     using namespace Das::Plugins::DasMaaPi;
 
     auto catalog = MakeNeutralProjectionMockCatalog();
-    // 已配置 project_interface 的 entry（更新命令按配置存在性投影）。
+    // 已配置 project_interface 的 entry（更新按钮按配置存在性投影）。
     AcceptedSettingsDto settings;
     settings.adapter.interface_path =
         "C:/das-authoring-update-commands/interface.json";
@@ -6379,34 +6361,51 @@ TEST(
     auto update_section = FindLayoutSection(document, "update");
     ASSERT_TRUE(update_section.has_value());
 
-    // update section.entries 内的 commandId 叶子集合（含 row 嵌套）。
-    auto command_ids = LayoutSectionCommandIds(*update_section);
-    ASSERT_EQ(command_ids.size(), 2u);
-    EXPECT_EQ(command_ids[0], "checkUpdate");
-    EXPECT_EQ(command_ids[1], "applyUpdate");
-
-    // commands[] 投影仍 emit 三个 id（归位 ≠ 删 commands
-    // 投影，只是改渲染入口）。
-    auto doc_obj = document.as_object();
-    ASSERT_TRUE(doc_obj.has_value());
-    ASSERT_TRUE(doc_obj->contains(std::string_view("commands")));
-    auto commands = (*doc_obj)[std::string_view("commands")].as_array();
-    ASSERT_TRUE(commands.has_value());
-    std::set<std::string> emitted_ids;
-    for (auto it = commands->begin(); it != commands->end(); ++it)
+    // update section.entries 内的 row 叶子集合：按钮字段化后为 fieldName
+    // 叶子 [checkUpdate, applyUpdate]。
     {
-        auto cmd_obj = it->as_object();
-        if (!cmd_obj)
+        auto entries = update_section->as_object()
+                           .value()[std::string_view("entries")]
+                           .as_array();
+        ASSERT_TRUE(entries.has_value());
+        bool found_row = false;
+        for (auto&& entry : *entries)
         {
-            continue;
+            auto entry_obj = entry.as_object();
+            if (!entry_obj || !entry_obj->contains(std::string_view("row")))
+            {
+                continue;
+            }
+            auto row = (*entry_obj)[std::string_view("row")].as_array();
+            ASSERT_TRUE(row.has_value());
+            ASSERT_EQ(row->size(), 2u);
+            EXPECT_EQ(
+                std::string((*row)[0]
+                                .as_object()
+                                .value()[std::string_view("fieldName")]
+                                .as_string()
+                                .value_or("")),
+                "checkUpdate");
+            EXPECT_EQ(
+                std::string((*row)[1]
+                                .as_object()
+                                .value()[std::string_view("fieldName")]
+                                .as_string()
+                                .value_or("")),
+                "applyUpdate");
+            found_row = true;
+            break;
         }
-        emitted_ids.insert(
-            std::string(
-                (*cmd_obj)[std::string_view("id")].as_string().value_or("")));
+        EXPECT_TRUE(found_row);
     }
-    EXPECT_EQ(emitted_ids.count("checkUpdate"), 1u);
-    EXPECT_EQ(emitted_ids.count("applyUpdate"), 1u);
-    EXPECT_EQ(emitted_ids.count("newPreset"), 1u);
+
+    // 按钮字段投影：fields[] 含三个 inputType=9 字段（checkUpdate /
+    // applyUpdate / newPreset），根级 commands 键不再投影。
+    EXPECT_TRUE(FindRootField(document, "checkUpdate").has_value());
+    EXPECT_TRUE(FindRootField(document, "applyUpdate").has_value());
+    EXPECT_TRUE(FindRootField(document, "newPreset").has_value());
+    EXPECT_FALSE(
+        document.as_object().value().contains(std::string_view("commands")));
 }
 
 // catalog 缺席（无 PI 接口）且 project_interface 未配置（新建 entry 的
@@ -6435,7 +6434,8 @@ TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
     EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
 
     // project_interface 未配置 → 更新分区整体省略（fields / fieldLayout
-    // section / commands 三处载体都不预置）。
+    // section 两处载体都不预置）；newPreset 按钮字段仍无条件投影（根级
+    // commands 通道已退役）。
     EXPECT_FALSE(FindLayoutSection(document, "update").has_value());
     for (const std::string_view update_field :
          {"adapter.mirrorchyanCdk",
@@ -6449,27 +6449,11 @@ TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
             << " must not be projected for unconfigured entry";
     }
     {
-        std::set<std::string> emitted_command_ids;
-        auto                  doc_obj = document.as_object();
-        ASSERT_TRUE(doc_obj.has_value());
-        if (auto commands = (*doc_obj)[std::string_view("commands")].as_array())
-        {
-            for (auto it = commands->begin(); it != commands->end(); ++it)
-            {
-                auto cmd_obj = it->as_object();
-                if (!cmd_obj)
-                {
-                    continue;
-                }
-                emitted_command_ids.insert(
-                    std::string(
-                        (*cmd_obj)[std::string_view("id")].as_string().value_or(
-                            "")));
-            }
-        }
-        EXPECT_EQ(emitted_command_ids.count("checkUpdate"), 0u);
-        EXPECT_EQ(emitted_command_ids.count("applyUpdate"), 0u);
-        EXPECT_EQ(emitted_command_ids.count("newPreset"), 1u);
+        EXPECT_FALSE(FindRootField(document, "checkUpdate").has_value());
+        EXPECT_FALSE(FindRootField(document, "applyUpdate").has_value());
+        EXPECT_TRUE(FindRootField(document, "newPreset").has_value());
+        EXPECT_FALSE(document.as_object().value().contains(
+            std::string_view("commands")));
     }
 
     auto                        layout_names = LayoutLeafFieldNames(document);
@@ -7076,7 +7060,7 @@ TEST(MaapiProjectionTest, StandaloneProjectionMatchesPreChangeBaseline)
       "label": "Schedule kind",
       "valueType": 4,
       "inputType": 1,
-      "value": "",
+      "value": "off",
       "candidates": [
         {
           "value": "off",
@@ -7131,9 +7115,25 @@ TEST(MaapiProjectionTest, StandaloneProjectionMatchesPreChangeBaseline)
       "valueType": 8,
       "inputType": 0,
       "value": true
+    },
+    {
+      "name": "newPreset",
+      "label": "New Preset",
+      "valueType": 4,
+      "inputType": 9,
+      "value": null,
+      "apply": {
+        "kind": "invokeCommand",
+        "payload": {
+          "commandId": "newPreset"
+        }
+      }
     }
   ],
   "fieldLayout": [
+    {
+      "fieldName": "newPreset"
+    },
     {
       "id": "schedule",
       "label": "Schedule",
@@ -7248,19 +7248,7 @@ TEST(MaapiProjectionTest, StandaloneProjectionMatchesPreChangeBaseline)
       }
     ],
     "groups": []
-  },
-  "commands": [
-    {
-      "id": "newPreset",
-      "label": "New Preset",
-      "apply": {
-        "kind": "invokeCommand",
-        "payload": {
-          "commandId": "newPreset"
-        }
-      }
-    }
-  ]
+  }
 })maapi";
     EXPECT_EQ(actual, baseline);
 }
@@ -8393,36 +8381,6 @@ namespace
         return local_section + central_section + eocd;
     }
 
-    // 在 document.commands[] 中按 id 找命令（89-03 commands 投影断言）。
-    std::optional<yyjson::value> FindCommand(
-        const yyjson::value& document,
-        std::string_view     id)
-    {
-        auto obj = document.as_object();
-        if (!obj || !obj->contains(std::string_view("commands")))
-        {
-            return std::nullopt;
-        }
-        auto commands = (*obj)[std::string_view("commands")].as_array();
-        if (!commands)
-        {
-            return std::nullopt;
-        }
-        for (auto it = commands->begin(); it != commands->end(); ++it)
-        {
-            auto cmd = it->as_object();
-            if (!cmd)
-            {
-                continue;
-            }
-            if ((*cmd)[std::string_view("id")].as_string().value_or("") == id)
-            {
-                return Das::Utils::CloneYyjsonValue(*it);
-            }
-        }
-        return std::nullopt;
-    }
-
     // 对 owning yyjson::value 按下标取字段（object_ref 才有 operator[]，须先
     // as_object().value()）。仅在键确实存在时使用（缺失 operator[] 抛异常）。
     auto FieldOf(const yyjson::value& value, std::string_view key)
@@ -8430,13 +8388,27 @@ namespace
         return value.as_object().value()[key];
     }
 
-    // 命令是否含顶层 disabled 键（enabled 时后端省略该键，前端"缺失=false"；
-    // 89-04 契约）。
-    bool CommandHasDisabled(const std::optional<yyjson::value>& cmd)
+    // 按钮字段（inputType=9 FieldDescriptor，name==commandId）是否含顶层
+    // disabled 键（enabled 时后端省略该键，前端"缺失=false"契约）。
+    bool FieldHasDisabled(const std::optional<yyjson::value>& field)
     {
-        return cmd.has_value()
-               && cmd->as_object().value().contains(
+        return field.has_value()
+               && field->as_object().value().contains(
                    std::string_view("disabled"));
+    }
+
+    // job 终态的业务字段推送 entry：按钮态恢复 entry 在其后（job 体在
+    // Stop/Finish 收尾前经同一 reporter 推送），故业务字段 entry = 倒数
+    // 第二个；仅一帧（无按钮态推送，如 reporter 降级）时退化为 back。
+    Das::ExportInterface::IDasProgressUpdate* OutcomeEntryOf(
+        const std::vector<DasPtr<Das::ExportInterface::IDasProgressUpdate>>&
+            entries)
+    {
+        if (entries.size() >= 2)
+        {
+            return entries[entries.size() - 2].Get();
+        }
+        return entries.back().Get();
     }
 
     std::string ReadFileText(const std::filesystem::path& path)
@@ -8516,6 +8488,8 @@ namespace
 
     // entry 字段逐字段读回（name + value 文本），镜像
     // MaapiProgressReporterTest 的同名辅助（终态字段增量断言用）。
+    // ToString 的 indent>=0 是 pretty 形态（对象值多行展开）——断言用
+    // 紧凑序列化（-1），对象 value 的形状断言才稳定。
     std::pair<std::string, std::string> ReadEntryField(
         Das::ExportInterface::IDasProgressUpdate* entry,
         size_t                                    index)
@@ -8528,7 +8502,7 @@ namespace
         const char* name_raw = nullptr;
         EXPECT_EQ(name->GetUtf8(&name_raw), DAS_S_OK);
         DasPtr<IDasReadOnlyString> text;
-        EXPECT_EQ(value->ToString(0, text.Put()), DAS_S_OK);
+        EXPECT_EQ(value->ToString(-1, text.Put()), DAS_S_OK);
         const char* text_raw = nullptr;
         EXPECT_EQ(text->GetUtf8(&text_raw), DAS_S_OK);
         return {
@@ -8677,13 +8651,71 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateDispatchesAndEnablesApply)
     auto accept_progress = FindRootField(document, "updateProgress");
     EXPECT_FALSE(
         FieldOf(*accept_progress, "value").as_string().value_or("").empty());
-    // job running：两命令按钮 disabled。
-    auto check_cmd = FindCommand(document, "checkUpdate");
+    // job running：两按钮字段 disabled（inputType=9 按钮字段，disabled 在
+    // 字段对象顶层）。
+    auto check_cmd = FindRootField(document, "checkUpdate");
     ASSERT_TRUE(check_cmd.has_value());
+    EXPECT_EQ(FieldOf(*check_cmd, "inputType").as_sint().value_or(0), 9);
+    EXPECT_EQ(FieldOf(*check_cmd, "valueType").as_sint().value_or(0), 4);
+    EXPECT_TRUE(FieldOf(*check_cmd, "value").is_null());
+    {
+        auto apply_obj = FieldOf(*check_cmd, "apply").as_object();
+        ASSERT_TRUE(apply_obj.has_value());
+        EXPECT_EQ(
+            (*apply_obj)[std::string_view("kind")].as_string().value_or(""),
+            "invokeCommand");
+        auto payload = (*apply_obj)[std::string_view("payload")].as_object();
+        ASSERT_TRUE(payload.has_value());
+        EXPECT_EQ(
+            (*payload)[std::string_view("commandId")].as_string().value_or(""),
+            "checkUpdate");
+    }
     EXPECT_TRUE(FieldOf(*check_cmd, "disabled").as_bool().value_or(false));
-    auto apply_cmd = FindCommand(document, "applyUpdate");
+    auto apply_cmd = FindRootField(document, "applyUpdate");
     ASSERT_TRUE(apply_cmd.has_value());
+    EXPECT_EQ(FieldOf(*apply_cmd, "inputType").as_sint().value_or(0), 9);
     EXPECT_TRUE(FieldOf(*apply_cmd, "disabled").as_bool().value_or(false));
+    // 根级 commands 键退役：按钮统一为字段，commands 不再投影。
+    EXPECT_FALSE(
+        document.as_object().value().contains(std::string_view("commands")));
+    // 布局落位：update section 首 row 为 [checkUpdate, applyUpdate] 两叶子。
+    {
+        auto update_section = FindLayoutSection(document, "update");
+        ASSERT_TRUE(update_section.has_value());
+        auto entries = update_section->as_object()
+                           .value()[std::string_view("entries")]
+                           .as_array();
+        ASSERT_TRUE(entries.has_value());
+        bool found_row = false;
+        for (auto&& entry : *entries)
+        {
+            auto entry_obj = entry.as_object();
+            if (!entry_obj || !entry_obj->contains(std::string_view("row")))
+            {
+                continue;
+            }
+            auto row = (*entry_obj)[std::string_view("row")].as_array();
+            ASSERT_TRUE(row.has_value());
+            ASSERT_EQ(row->size(), 2u);
+            EXPECT_EQ(
+                std::string((*row)[0]
+                                .as_object()
+                                .value()[std::string_view("fieldName")]
+                                .as_string()
+                                .value_or("")),
+                "checkUpdate");
+            EXPECT_EQ(
+                std::string((*row)[1]
+                                .as_object()
+                                .value()[std::string_view("fieldName")]
+                                .as_string()
+                                .value_or("")),
+                "applyUpdate");
+            found_row = true;
+            break;
+        }
+        EXPECT_TRUE(found_row);
+    }
 
     // —— running 拒重段：挂起期间二次 checkUpdate → updateBusy 诊断 + 无
     //    commandResult + store 条目仍为第一次的 Checking（恒等回滚生效）。
@@ -8735,22 +8767,38 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateDispatchesAndEnablesApply)
     {
         EXPECT_EQ(EntryKey(entry.Get()), progress_key);
     }
-    auto& final_entry = fake->entries.back();
+    auto* final_entry = OutcomeEntryOf(fake->entries);
     {
-        const auto [name, value] = ReadEntryField(final_entry.Get(), 0);
+        const auto [name, value] = ReadEntryField(final_entry, 0);
         EXPECT_EQ(name, "updateVersion");
         EXPECT_NE(value.find("1.0.0"), std::string::npos);
         EXPECT_NE(value.find("v1.2.0"), std::string::npos);
     }
     {
-        const auto [name, value] = ReadEntryField(final_entry.Get(), 1);
+        const auto [name, value] = ReadEntryField(final_entry, 1);
         EXPECT_EQ(name, "releaseNote");
         EXPECT_NE(value.find("notes"), std::string::npos);
     }
     {
-        const auto [name, value] = ReadEntryField(final_entry.Get(), 2);
+        const auto [name, value] = ReadEntryField(final_entry, 2);
         EXPECT_EQ(name, "updateProgress");
         EXPECT_NE(value.find("v1.2.0"), std::string::npos);
+    }
+    // 送达链路（回归钉）：job 终态经 progress service 推
+    // fieldName=checkUpdate/applyUpdate 的 {disabled} 对象增量（推送值按
+    // Finish 后状态计算——IsRunning=false，与下方再投影断言一致，本测试
+    // 即为期望值来源）。
+    {
+        auto*  button_entry = fake->entries.back().Get();
+        size_t field_count = 0;
+        ASSERT_EQ(button_entry->GetFieldCount(&field_count), DAS_S_OK);
+        ASSERT_EQ(field_count, 2u);
+        const auto [check_name, check_value] = ReadEntryField(button_entry, 0);
+        EXPECT_EQ(check_name, "checkUpdate");
+        EXPECT_NE(check_value.find("\"disabled\":false"), std::string::npos);
+        const auto [apply_name, apply_value] = ReadEntryField(button_entry, 1);
+        EXPECT_EQ(apply_name, "applyUpdate");
+        EXPECT_NE(apply_value.find("\"disabled\":false"), std::string::npos);
     }
     // 再投影：applyUpdate enabled（FoundUpdate + 有下载链接；缺失
     // disabled == false），checkUpdate enabled（slot idle）。
@@ -8759,12 +8807,14 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateDispatchesAndEnablesApply)
         nullptr,
         {},
         0);
-    auto idle_check = FindCommand(idle_document, "checkUpdate");
+    auto idle_check = FindRootField(idle_document, "checkUpdate");
     ASSERT_TRUE(idle_check.has_value());
-    EXPECT_FALSE(CommandHasDisabled(idle_check));
-    auto idle_apply = FindCommand(idle_document, "applyUpdate");
+    EXPECT_FALSE(FieldHasDisabled(idle_check));
+    auto idle_apply = FindRootField(idle_document, "applyUpdate");
     ASSERT_TRUE(idle_apply.has_value());
-    EXPECT_FALSE(CommandHasDisabled(idle_apply));
+    EXPECT_FALSE(FieldHasDisabled(idle_apply));
+    EXPECT_FALSE(idle_document.as_object().value().contains(
+        std::string_view("commands")));
 }
 
 // checkUpdate 无新版（tag == 当前版本）→ UpToDate 终态：受理响应含五字段
@@ -8834,15 +8884,15 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateNoUpdateDisablesApply)
     {
         EXPECT_EQ(EntryKey(entry.Get()), progress_key);
     }
-    auto& final_entry = fake->entries.back();
+    auto* final_entry = OutcomeEntryOf(fake->entries);
     {
-        const auto [name, value] = ReadEntryField(final_entry.Get(), 0);
+        const auto [name, value] = ReadEntryField(final_entry, 0);
         EXPECT_EQ(name, "updateVersion");
         // IDasJson::ToString(0) 返回紧凑 JSON 序列化——空串值是两字符 ""。
         EXPECT_EQ(value, "\"\"");
     }
     {
-        const auto [name, value] = ReadEntryField(final_entry.Get(), 1);
+        const auto [name, value] = ReadEntryField(final_entry, 1);
         EXPECT_EQ(name, "updateProgress");
         EXPECT_NE(value.find("1.0.0"), std::string::npos);
     }
@@ -8856,12 +8906,12 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateNoUpdateDisablesApply)
         &catalog,
         {},
         0);
-    auto idle_apply = FindCommand(idle_document, "applyUpdate");
+    auto idle_apply = FindRootField(idle_document, "applyUpdate");
     ASSERT_TRUE(idle_apply.has_value());
     EXPECT_TRUE(FieldOf(*idle_apply, "disabled").as_bool().value_or(false));
-    auto idle_check = FindCommand(idle_document, "checkUpdate");
+    auto idle_check = FindRootField(idle_document, "checkUpdate");
     ASSERT_TRUE(idle_check.has_value());
-    EXPECT_FALSE(CommandHasDisabled(idle_check));
+    EXPECT_FALSE(FieldHasDisabled(idle_check));
     // UpToDate 投影：updateVersion 空 + updateProgress 含当前版本。
     auto idle_version = FindRootField(idle_document, "updateVersion");
     ASSERT_TRUE(idle_version.has_value());
@@ -8951,13 +9001,13 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateFailureEmitsError)
     }
     {
         const auto [name, value] =
-            ReadEntryField(fake->entries.back().Get(), 0);
+            ReadEntryField(OutcomeEntryOf(fake->entries), 0);
         EXPECT_EQ(name, "updateVersion");
         EXPECT_EQ(value, "\"\"");
     }
     {
         const auto [name, value] =
-            ReadEntryField(fake->entries.back().Get(), 1);
+            ReadEntryField(OutcomeEntryOf(fake->entries), 1);
         EXPECT_EQ(name, "updateProgress");
         EXPECT_FALSE(value.empty());
     }
@@ -8968,7 +9018,7 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateFailureEmitsError)
         nullptr,
         {},
         0);
-    auto idle_apply = FindCommand(idle_document, "applyUpdate");
+    auto idle_apply = FindRootField(idle_document, "applyUpdate");
     ASSERT_TRUE(idle_apply.has_value());
     EXPECT_TRUE(FieldOf(*idle_apply, "disabled").as_bool().value_or(false));
     auto idle_version = FindRootField(idle_document, "updateVersion");
@@ -9048,7 +9098,7 @@ TEST(
 // D-08（未检查无字段）：无 checkUpdate 历史（store 无条目）的文档投影——
 // 五字段（updateVersion/releaseNote/updateProgress/downloadRate/
 // downloadElapsed）全部不存在；更新 section 常驻字段（CDK/代理/通道/两个
-// 版本只读）照常投影；两命令按钮在 commands[]（applyUpdate disabled——
+// 版本只读）照常投影；两按钮为 inputType=9 字段（applyUpdate disabled——
 // 无条目即无 FoundUpdate；checkUpdate enabled——slot idle）；fieldLayout
 // 更新 section 仍存在但不置顶（无条目时置顶布尔为 false）。
 TEST(
@@ -9091,12 +9141,12 @@ TEST(
 
     // 两命令按钮：applyUpdate disabled（无条目即无 FoundUpdate，按钮不携带
     // 任何更新信息）；checkUpdate enabled（无 job 运行）。
-    auto apply_cmd = FindCommand(document, "applyUpdate");
+    auto apply_cmd = FindRootField(document, "applyUpdate");
     ASSERT_TRUE(apply_cmd.has_value());
     EXPECT_TRUE(FieldOf(*apply_cmd, "disabled").as_bool().value_or(false));
-    auto check_cmd = FindCommand(document, "checkUpdate");
+    auto check_cmd = FindRootField(document, "checkUpdate");
     ASSERT_TRUE(check_cmd.has_value());
-    EXPECT_FALSE(CommandHasDisabled(check_cmd));
+    EXPECT_FALSE(FieldHasDisabled(check_cmd));
 
     // fieldLayout：更新 section 存在（常驻字段仍在）但不置顶（无条目）。
     ASSERT_TRUE(FindLayoutSection(document, "update").has_value());
@@ -9157,9 +9207,9 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateFailedOverwritesStaleFound)
             nullptr,
             {},
             0);
-        auto stale_apply = FindCommand(stale_document, "applyUpdate");
+        auto stale_apply = FindRootField(stale_document, "applyUpdate");
         ASSERT_TRUE(stale_apply.has_value());
-        EXPECT_FALSE(CommandHasDisabled(stale_apply));
+        EXPECT_FALSE(FieldHasDisabled(stale_apply));
         auto stale_version_field =
             FindRootField(stale_document, "updateVersion");
         ASSERT_TRUE(stale_version_field.has_value());
@@ -9196,7 +9246,7 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateFailedOverwritesStaleFound)
         nullptr,
         {},
         0);
-    auto apply_cmd = FindCommand(document, "applyUpdate");
+    auto apply_cmd = FindRootField(document, "applyUpdate");
     ASSERT_TRUE(apply_cmd.has_value());
     EXPECT_TRUE(FieldOf(*apply_cmd, "disabled").as_bool().value_or(false));
     auto version_field = FindRootField(document, "updateVersion");
@@ -9308,13 +9358,18 @@ TEST(MaapiUpdateCommandTest, UpdateSectionTopOrderingAcrossCheckEntryStates)
         {
             return std::string{};
         }
-        auto first = layout->begin()->as_object();
-        if (!first)
+        // 跳过 newPreset 顶层叶子（无 id 键——operator[] 对缺失 key 抛异常）。
+        for (auto it = layout->begin(); it != layout->end(); ++it)
         {
-            return std::string{};
+            auto section = it->as_object();
+            if (!section || !section->contains(std::string_view("id")))
+            {
+                continue;
+            }
+            return std::string(
+                (*section)[std::string_view("id")].as_string().value_or(""));
         }
-        return std::string(
-            (*first)[std::string_view("id")].as_string().value_or(""));
+        return std::string{};
     };
 
     // Checking 变体：受理写入的挂起态也置顶。
@@ -9666,22 +9721,33 @@ TEST(
     {
         EXPECT_EQ(EntryKey(entry.Get()), "accepted-final-key");
     }
-    auto& final_entry = fake->entries.back();
+    auto* final_entry = OutcomeEntryOf(fake->entries);
     {
-        const auto [name, value] = ReadEntryField(final_entry.Get(), 0);
+        const auto [name, value] = ReadEntryField(final_entry, 0);
         EXPECT_EQ(name, "updateProgress");
         EXPECT_NE(value.find("v1.2.0"), std::string::npos);
     }
     {
-        const auto [name, value] = ReadEntryField(final_entry.Get(), 1);
+        const auto [name, value] = ReadEntryField(final_entry, 1);
         EXPECT_EQ(name, "downloadRate");
         // IDasJson::ToString(0) 返回紧凑 JSON 序列化——空串值是两字符 ""。
         EXPECT_EQ(value, "\"\"");
     }
     {
-        const auto [name, value] = ReadEntryField(final_entry.Get(), 2);
+        const auto [name, value] = ReadEntryField(final_entry, 2);
         EXPECT_EQ(name, "downloadElapsed");
         EXPECT_EQ(value, "\"\"");
+    }
+    // 送达链路（apply job）：ReportFinal 之后按钮态对象增量（值按 Finish
+    // 后状态计算——IsRunning=false、条目仍 FoundUpdate → 两键恢复 enabled）。
+    {
+        auto* button_entry = fake->entries.back().Get();
+        const auto [check_name, check_value] = ReadEntryField(button_entry, 0);
+        EXPECT_EQ(check_name, "checkUpdate");
+        EXPECT_NE(check_value.find("\"disabled\":false"), std::string::npos);
+        const auto [apply_name, apply_value] = ReadEntryField(button_entry, 1);
+        EXPECT_EQ(apply_name, "applyUpdate");
+        EXPECT_NE(apply_value.find("\"disabled\":false"), std::string::npos);
     }
 
     // pi_dir 已替换 + 检查结果条目保留。
@@ -9865,7 +9931,7 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateFailureRetainsPending)
     // 终态 entry：失败文案含 DasResult 十进制（下载失败映射 -10008）。
     ASSERT_FALSE(fake->entries.empty());
     const auto [final_name, final_value] =
-        ReadEntryField(fake->entries.back().Get(), 0);
+        ReadEntryField(OutcomeEntryOf(fake->entries), 0);
     EXPECT_EQ(final_name, "updateProgress");
     EXPECT_NE(final_value.find("result=-10008"), std::string::npos);
 
@@ -9897,13 +9963,13 @@ TEST(MaapiProjectionTest, CommandsApplyUpdateDisabledDrivenByPendingState)
 
     // 无条目（未检查）→ applyUpdate disabled。
     auto doc_no_pending = ProjectAuthoringDocument(settings, &catalog, {}, 0);
-    auto apply_no_pending = FindCommand(doc_no_pending, "applyUpdate");
+    auto apply_no_pending = FindRootField(doc_no_pending, "applyUpdate");
     ASSERT_TRUE(apply_no_pending.has_value());
     EXPECT_TRUE(
         FieldOf(*apply_no_pending, "disabled").as_bool().value_or(false));
-    auto check_cmd = FindCommand(doc_no_pending, "checkUpdate");
+    auto check_cmd = FindRootField(doc_no_pending, "checkUpdate");
     ASSERT_TRUE(check_cmd.has_value());
-    EXPECT_FALSE(CommandHasDisabled(check_cmd));
+    EXPECT_FALSE(FieldHasDisabled(check_cmd));
 
     // UpToDate 条目（has_update=false）→ disabled。
     TempUpdateProject up_to_date_project;
@@ -9922,7 +9988,7 @@ TEST(MaapiProjectionTest, CommandsApplyUpdateDisabledDrivenByPendingState)
         &catalog,
         {},
         0);
-    auto apply_no_update = FindCommand(doc_no_update, "applyUpdate");
+    auto apply_no_update = FindRootField(doc_no_update, "applyUpdate");
     ASSERT_TRUE(apply_no_update.has_value());
     EXPECT_TRUE(
         FieldOf(*apply_no_update, "disabled").as_bool().value_or(false));
@@ -9941,9 +10007,9 @@ TEST(MaapiProjectionTest, CommandsApplyUpdateDisabledDrivenByPendingState)
         &catalog,
         {},
         0);
-    auto apply_has_update = FindCommand(doc_has_update, "applyUpdate");
+    auto apply_has_update = FindRootField(doc_has_update, "applyUpdate");
     ASSERT_TRUE(apply_has_update.has_value());
-    EXPECT_FALSE(CommandHasDisabled(apply_has_update));
+    EXPECT_FALSE(FieldHasDisabled(apply_has_update));
 }
 
 // 更新 section 布局：进度三字段（updateProgress/downloadRate/
@@ -10036,10 +10102,10 @@ TEST(MaapiProjectionTest, UpdateCommandsDisabledWhileJobRunningAndIdleAfter)
     auto r1 = ReadJsonInterface(r1_json.Get());
     ASSERT_EQ(CountDiagnosticsBySeverity(r1, "error"), 0u);
     auto document = DocumentFromApplyResult(r1);
-    auto check_cmd = FindCommand(document, "checkUpdate");
+    auto check_cmd = FindRootField(document, "checkUpdate");
     ASSERT_TRUE(check_cmd.has_value());
     EXPECT_TRUE(FieldOf(*check_cmd, "disabled").as_bool().value_or(false));
-    auto apply_cmd = FindCommand(document, "applyUpdate");
+    auto apply_cmd = FindRootField(document, "applyUpdate");
     ASSERT_TRUE(apply_cmd.has_value());
     EXPECT_TRUE(FieldOf(*apply_cmd, "disabled").as_bool().value_or(false));
 
@@ -10056,12 +10122,12 @@ TEST(MaapiProjectionTest, UpdateCommandsDisabledWhileJobRunningAndIdleAfter)
         nullptr,
         {},
         0);
-    auto idle_check = FindCommand(idle_document, "checkUpdate");
+    auto idle_check = FindRootField(idle_document, "checkUpdate");
     ASSERT_TRUE(idle_check.has_value());
-    EXPECT_FALSE(CommandHasDisabled(idle_check));
-    auto idle_apply = FindCommand(idle_document, "applyUpdate");
+    EXPECT_FALSE(FieldHasDisabled(idle_check));
+    auto idle_apply = FindRootField(idle_document, "applyUpdate");
     ASSERT_TRUE(idle_apply.has_value());
-    EXPECT_FALSE(CommandHasDisabled(idle_apply));
+    EXPECT_FALSE(FieldHasDisabled(idle_apply));
 }
 
 // D-89-07 修订：项目设置 section 投影两个只读版本字段。resourceVersion 值 =
@@ -10279,7 +10345,8 @@ TEST(MaapiProjectionTest, WelcomeSectionOrderingBeforeProject)
 
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
 
-    // 枚举 fieldLayout[] section.id 序列。
+    // 枚举 fieldLayout[] section.id 序列（跳过 newPreset 顶层叶子等非
+    // section 形态——operator[] 对缺失 key 抛异常，须先 contains 检查）。
     std::vector<std::string> section_ids;
     {
         auto doc_obj = document.as_object();
@@ -10289,7 +10356,7 @@ TEST(MaapiProjectionTest, WelcomeSectionOrderingBeforeProject)
         for (auto it = layout->begin(); it != layout->end(); ++it)
         {
             auto section = it->as_object();
-            if (!section)
+            if (!section || !section->contains(std::string_view("id")))
             {
                 continue;
             }
@@ -10312,7 +10379,8 @@ TEST(MaapiProjectionTest, WelcomeSectionOrderingBeforeProject)
         << "welcome section must come before project";
 }
 
-// 无 pending_update 时 welcome section 应在 fieldLayout 首位。
+// 无 pending_update 时首个 section 是 welcome（fieldLayout 首元素是
+// newPreset 顶层叶子——按钮字段置顶扁平组，section 序从叶子之后数起）。
 TEST(MaapiProjectionTest, WelcomeTopNoUpdate)
 {
     using namespace Das::Plugins::DasMaaPi;
@@ -10329,11 +10397,18 @@ TEST(MaapiProjectionTest, WelcomeTopNoUpdate)
     auto layout = (*doc_obj)[std::string_view("fieldLayout")].as_array();
     ASSERT_TRUE(layout.has_value());
     ASSERT_FALSE(layout->empty());
-    auto first = layout->begin()->as_object();
-    ASSERT_TRUE(first.has_value());
-    EXPECT_EQ(
-        std::string((*first)[std::string_view("id")].as_string().value_or("")),
-        "welcome");
+    std::string first_section_id;
+    for (auto&& node : *layout)
+    {
+        auto node_obj = node.as_object();
+        if (node_obj && node_obj->contains(std::string_view("id")))
+        {
+            first_section_id = std::string(
+                (*node_obj)[std::string_view("id")].as_string().value_or(""));
+            break;
+        }
+    }
+    EXPECT_EQ(first_section_id, "welcome");
 }
 
 // catalog 无 welcome 时不应 emit 空 welcome section（避免前端渲染空
@@ -10566,8 +10641,8 @@ TEST(
                        .value()[std::string_view("entries")]
                        .as_array();
     ASSERT_TRUE(entries.has_value());
-    // 找到含 row 的 entry，row 应含三叶子：controllerName / adbDevice
-    // （fieldName 叶子）+ discoverAdbDevices （commandId 叶子）。
+    // 找到含 row 的 entry，row 应含三叶子：controllerName / adbDevice /
+    // discoverAdbDevices（按钮字段化后均为 fieldName 叶子）。
     bool found_row = false;
     for (auto&& entry : *entries)
     {
@@ -10596,7 +10671,7 @@ TEST(
             "adbDevice");
         EXPECT_EQ(
             std::string(
-                (*leaf2)[std::string_view("commandId")].as_string().value_or(
+                (*leaf2)[std::string_view("fieldName")].as_string().value_or(
                     "")),
             "discoverAdbDevices");
         found_row = true;
@@ -10604,26 +10679,23 @@ TEST(
     }
     EXPECT_TRUE(found_row);
 
-    // commands[] 应含 discoverAdbDevices（IsCurrentControllerAdb 守卫通过）。
-    auto commands_opt =
-        document.as_object().value()[std::string_view("commands")].as_array();
-    ASSERT_TRUE(commands_opt.has_value());
-    bool found_cmd = false;
-    for (auto&& cmd : *commands_opt)
+    // fields[] 应含 discoverAdbDevices 按钮字段（IsCurrentControllerAdb 守卫
+    // 通过；inputType=9 + apply 模板挂字段描述符）。
+    auto discover_field = FindRootField(document, "discoverAdbDevices");
+    ASSERT_TRUE(discover_field.has_value());
+    EXPECT_EQ(FieldOf(*discover_field, "inputType").as_sint().value_or(0), 9);
     {
-        auto cmd_obj = cmd.as_object();
-        if (!cmd_obj)
-        {
-            continue;
-        }
-        if ((*cmd_obj)[std::string_view("id")].as_string().value_or("")
-            == "discoverAdbDevices")
-        {
-            found_cmd = true;
-            break;
-        }
+        auto apply_obj = FieldOf(*discover_field, "apply").as_object();
+        ASSERT_TRUE(apply_obj.has_value());
+        EXPECT_EQ(
+            (*apply_obj)[std::string_view("kind")].as_string().value_or(""),
+            "invokeCommand");
+        auto payload = (*apply_obj)[std::string_view("payload")].as_object();
+        ASSERT_TRUE(payload.has_value());
+        EXPECT_EQ(
+            (*payload)[std::string_view("commandId")].as_string().value_or(""),
+            "discoverAdbDevices");
     }
-    EXPECT_TRUE(found_cmd);
 }
 
 // ===== discoverAdbDevices command handler 闭环测试（session 级）=====

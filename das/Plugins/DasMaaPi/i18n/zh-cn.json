@@ -48,6 +48,7 @@
     "command.applyUpdate": "更新",
     "command.discoverAdbDevices": "扫描设备",
     "diagnostic.valueMustBeString": "{0} 的值必须是字符串",
+    "diagnostic.progressPatchKeyRejected": "进度字段增量键不在白名单，已丢弃：{0}",
     "diagnostic.valueMustBeBool": "{0} 的值必须是布尔值",
     "diagnostic.valueMustBeNonEmpty": "{0} 的值不能为空",
     "diagnostic.valueMustBeOneOfTwo": "{0} 必须为 '{1}' 或 '{2}'",

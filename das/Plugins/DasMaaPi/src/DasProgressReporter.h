@@ -3,12 +3,15 @@
 #include "PiUpdateService.h"
 
 #include <das/DasPtr.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasI18n.h>
 #include <das/_autogen/idl/abi/IDasProgressService.h>
 
 #include <atomic>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
@@ -67,6 +70,20 @@ namespace Plugins::DasMaaPi
             const PiUpdateInfo& info,
             const std::string&  current_version,
             const std::string&  failure_detail);
+
+        // 字段属性 patch 推送（构造对象 value 字段增量的唯一入口）：patch 逐键
+        // 过白名单，白名单外键丢弃该键 + i18n 报错（推送方是唯一校验位，传输
+        // 侧哑管道不校验）；过滤后仍有键则组装 {key:value} 对象，经序列化往返
+        // 转 IDasJson 上报（照 MakeJsonFieldValue 范式）。全键被丢 / 未 Start /
+        // 已断开时为空操作。
+        void ReportFieldPatch(
+            std::string_view                                   field_name,
+            std::vector<std::pair<std::string, yyjson::value>> patch);
+
+        // 更新按钮态推送：单 entry 双字段（checkUpdate / applyUpdate 各携带
+        // {disabled:bool} 对象 value）。job 终态在 Finish 之后调用（IsRunning
+        // 已复位，推送值与再投影一致——按钮灰死 bug 的修复链）。
+        void ReportUpdateButtonStates(bool check_disabled, bool apply_disabled);
 
         // 该 key 所有 SSE 订阅断开（OnAllSubscribersDisconnected 命中 own
         // key）。

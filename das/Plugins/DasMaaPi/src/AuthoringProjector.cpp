@@ -680,6 +680,38 @@ namespace Das::Plugins::DasMaaPi
             return field;
         }
 
+        // 按钮字段（inputType=9 FieldDescriptor）：name=command_id、apply
+        // 模板挂字段描述符（前端 click 照模板提交，复用既有 invokeCommand
+        // 派发）；disabled 仅 true 时 emit（缺失=false 契约）；value 恒 null
+        // （按钮无字段值语义，态走 disabled）。
+        yyjson::value MakeButtonField(
+            std::string_view command_id,
+            std::string_view label_text,
+            bool             disabled = false)
+        {
+            yyjson::value field(Object());
+            auto          obj = field.as_object();
+            (*obj)[std::string_view("name")] = JsonString(command_id);
+            (*obj)[std::string_view("label")] = JsonString(label_text);
+            (*obj)[std::string_view("valueType")] = 4;
+            (*obj)[std::string_view("inputType")] = 9;
+            (*obj)[std::string_view("value")] = nullptr;
+            if (disabled)
+            {
+                (*obj)[std::string_view("disabled")] = true;
+            }
+            yyjson::value apply(Object());
+            auto          apply_obj = apply.as_object();
+            (*apply_obj)[std::string_view("kind")] =
+                JsonString("invokeCommand");
+            yyjson::value payload(Object());
+            (*payload.as_object())[std::string_view("commandId")] =
+                JsonString(command_id);
+            (*apply_obj)[std::string_view("payload")] = std::move(payload);
+            (*obj)[std::string_view("apply")] = std::move(apply);
+            return field;
+        }
+
         // PropertySchema valueType/inputType mapping from PiOption.dto.type.
         // select→(4,1); checkbox→(32,2); switch→(8,0); input→pipeline_type
         // int→(0,0)/float|double→(2,0)/else→(4,0); fallback→(4,0).
@@ -2391,6 +2423,11 @@ namespace Das::Plugins::DasMaaPi
         std::vector<std::string> project_entries;
         std::vector<std::string> welcome_entries;
         std::vector<std::string> schedule_entries;
+        // 按钮字段（inputType=9）的 layout 落位标志：newPreset 进顶层叶子
+        // （置顶无标题扁平组），discoverAdbDevices 进 controller row——都不
+        // 走 section 分类桶。
+        bool top_level_button = false;
+        bool has_discover_adb_button = false;
         // pretask 分组桶：pretask 首现顺序保持（与投影 emit 顺序一致）。
         std::vector<std::pair<const PiPretask*, std::vector<std::string>>>
                                            pretask_buckets;
@@ -2415,7 +2452,22 @@ namespace Das::Plugins::DasMaaPi
             {
                 continue;
             }
-            if (name == "adapter.mirrorchyanCdk" || name == "adapter.proxyUrl"
+            if (name == "newPreset")
+            {
+                top_level_button = true;
+            }
+            else if (name == "checkUpdate" || name == "applyUpdate")
+            {
+                // 更新按钮字段归 update section（emit_update_section 组成
+                // 按钮 row；两字段同门投影，恒成对出现）。
+                update_entries.emplace_back(name);
+            }
+            else if (name == "discoverAdbDevices")
+            {
+                has_discover_adb_button = true;
+            }
+            else if (
+                name == "adapter.mirrorchyanCdk" || name == "adapter.proxyUrl"
                 || name == "adapter.updateChannel" || name == "resourceVersion"
                 || name == "maafwVersion" || name == "updateVersion"
                 || name == "releaseNote" || name == "updateProgress"
@@ -2537,8 +2589,8 @@ namespace Das::Plugins::DasMaaPi
             // 当 fields[] 同时含 controllerName + adbDevice（adb controller
             // 才会投影 adbDevice 字段），两字段横排成一行：用户在选 controller
             // 之后立刻看到设备 dropdown，扫描/选择/控制器类型形成一个连贯的
-            // 操作组。discoverAdbDevices commandId 叶子由 Plan C Task 2 在
-            // commands[] emit 之后追加进此 row。
+            // 操作组。discoverAdbDevices 按钮字段（仅 adb controller 投影）
+            // 作为 row 横排第三格。
             const bool has_controller_name = std::find(
                                                  project_entries.begin(),
                                                  project_entries.end(),
@@ -2565,17 +2617,14 @@ namespace Das::Plugins::DasMaaPi
                     row_arr.as_array()->emplace_back(
                         make_leaf("controllerName"));
                     row_arr.as_array()->emplace_back(make_leaf("adbDevice"));
-                    // discoverAdbDevices command 叶子：仅 adb controller 投影
-                    // 该 command（ProjectAuthoringDocument 经
-                    // IsCurrentControllerAdb 守卫 emit），此处引用为 row
-                    // 横排第三格，构成 [controllerName, adbDevice,
-                    // discoverAdbDevices] 操作组。 validator
-                    // 引用完整性（commandId in commands[]）保证前端 按 id
-                    // lookup 不会落空。
-                    yyjson::value cmd_leaf(Object());
-                    (*cmd_leaf.as_object())[std::string_view("commandId")] =
-                        JsonString("discoverAdbDevices");
-                    row_arr.as_array()->emplace_back(std::move(cmd_leaf));
+                    // discoverAdbDevices 按钮字段：fields[] 有该字段才引用
+                    // （ProjectAuthoringDocument 经 IsCurrentControllerAdb
+                    // 守卫 emit，fields 与 layout 同门不漂移）。
+                    if (has_discover_adb_button)
+                    {
+                        row_arr.as_array()->emplace_back(
+                            make_leaf("discoverAdbDevices"));
+                    }
                     (*row.as_object())[std::string_view("row")] =
                         std::move(row_arr);
                     entries.as_array()->emplace_back(std::move(row));
@@ -2583,16 +2632,24 @@ namespace Das::Plugins::DasMaaPi
                 }
                 entries.as_array()->emplace_back(make_leaf(name));
             }
+            // 防御位：discoverAdbDevices 按钮字段在场但 controller row 未
+            // 成形（controllerName/adbDevice 缺席）时独立 leaf，保证
+            // fieldLayout 全覆盖不触发 layoutMissingField。
+            if (has_discover_adb_button && !emit_adb_row)
+            {
+                entries.as_array()->emplace_back(
+                    make_leaf("discoverAdbDevices"));
+            }
             (*s_obj)[std::string_view("entries")] = std::move(entries);
             layout_arr->emplace_back(std::move(section));
         };
 
         // 更新 section：CDK / 代理 / 检查更新通道（可编辑）+ 版本只读字段 +
-        // 更新 panel 五字段 + checkUpdate/applyUpdate 命令按钮组（row 横排）。
-        // label 走 host i18n（Translate，DAS chrome），随 GlobalLocale 切换。
-        // defaultExpanded=true，与项目设置 section 一致。checkUpdate/
-        // applyUpdate 命令从根级 commands[] 渲染入口归位到本 section 的 row
-        // 横排成按钮组（与字段共 section，避免"按钮都在顶上"）。
+        // 更新 panel 五字段 + checkUpdate/applyUpdate 按钮字段组（row 横排，
+        // 按钮统一为 inputType=9 FieldDescriptor）。label 走 host i18n
+        // （Translate，DAS chrome），随 GlobalLocale
+        // 切换。defaultExpanded=true， 与项目设置 section
+        // 一致。按钮在上、版本/日志字段在下（复刻面板 布局）。
         auto emit_update_section = [&]()
         {
             yyjson::value section(Object());
@@ -2621,25 +2678,19 @@ namespace Das::Plugins::DasMaaPi
             emit_update_leaf_if_present("updateProgress");
             emit_update_leaf_if_present("downloadRate");
             emit_update_leaf_if_present("downloadElapsed");
-            // 命令按钮组紧随进度：row 横排
-            // [{commandId:checkUpdate}, {commandId:applyUpdate}]。commands 定义
-            // 仍在根级 commands[] 投影 emit（disabled 状态投影机制保持），
-            // 此处只是渲染入口从 doc 根级移到 update section 内。
+            // 按钮字段组紧随进度：row 横排 [checkUpdate, applyUpdate]
+            // fieldName 叶子（按钮字段化后按钮即字段；fields[] 未投影该组
+            // 时 row 不 emit——两侧同 pi_configured 门）。
+            if (std::any_of(
+                    update_entries.begin(),
+                    update_entries.end(),
+                    [](const std::string& entry_name)
+                    { return entry_name == "checkUpdate"; }))
             {
                 yyjson::value row(Object());
                 yyjson::value row_arr(Array());
-                auto          make_command_leaf = [](std::string_view cid)
-                {
-                    yyjson::value leaf(Object());
-                    auto          leaf_obj = leaf.as_object();
-                    (*leaf_obj)[std::string_view("commandId")] =
-                        JsonString(cid);
-                    return leaf;
-                };
-                row_arr.as_array()->emplace_back(
-                    make_command_leaf("checkUpdate"));
-                row_arr.as_array()->emplace_back(
-                    make_command_leaf("applyUpdate"));
+                row_arr.as_array()->emplace_back(make_leaf("checkUpdate"));
+                row_arr.as_array()->emplace_back(make_leaf("applyUpdate"));
                 (*row.as_object())[std::string_view("row")] =
                     std::move(row_arr);
                 entries.as_array()->emplace_back(std::move(row));
@@ -2654,7 +2705,8 @@ namespace Das::Plugins::DasMaaPi
             {
                 if (name == "updateVersion" || name == "releaseNote"
                     || name == "updateProgress" || name == "downloadRate"
-                    || name == "downloadElapsed")
+                    || name == "downloadElapsed" || name == "checkUpdate"
+                    || name == "applyUpdate")
                 {
                     continue;
                 }
@@ -2709,12 +2761,19 @@ namespace Das::Plugins::DasMaaPi
             layout_arr->emplace_back(std::move(section));
         };
 
-        // section emit 顺序：[update(若 top)] → [welcome] → [schedule] →
-        // [project] → [update(非 top)] → [settings]。schedule 置于 project 之前
-        // （定时是任务级配置，置顶于项目设置之上符合 UI 直觉）。welcome 在
-        // update-top 之后，满足面板顺序「检测到更新时更新插到 welcome 之前；
-        // 否则 welcome 在首位」（PI V2 welcome 字段置顶语义）。前端按
-        // fieldLayout 首现顺序数据驱动渲染，后端 emit 顺序即显示顺序。
+        // section emit 顺序：[newPreset 顶层叶子] → [update(若 top)] →
+        // [welcome] → [schedule] → [project] → [update(非 top)] → [settings]。
+        // schedule 置于 project 之前（定时是任务级配置，置顶于项目设置之上
+        // 符合 UI 直觉）。welcome 在 update-top 之后，满足面板顺序「检测到
+        // 更新时更新插到 welcome 之前；否则 welcome 在首位」（PI V2 welcome
+        // 字段置顶语义）。前端按 fieldLayout 首现顺序数据驱动渲染，后端
+        // emit 顺序即显示顺序。
+        // newPreset 按钮字段是顶层叶子且置顶（layout 首位）：前端渲染为
+        // 置顶无标题扁平组（复刻原文档根级命令行位置）。
+        if (top_level_button)
+        {
+            layout_arr->emplace_back(make_leaf("newPreset"));
+        }
         const bool update_first = update_section_top && !update_entries.empty();
         if (update_first)
         {
@@ -2892,6 +2951,21 @@ namespace Das::Plugins::DasMaaPi
     {
         return settings.adapter.interface_path.has_value()
                && !settings.adapter.interface_path->empty();
+    }
+
+    // applyUpdate 按钮禁用门（投影与 job 终态推送同源——推送值必须与再投影
+    // 一致，否则 SSE 恢复态与下次 Get 文档漂移）：检查结果表无条目 / 非
+    // FoundUpdate 态 / 无下载链接均禁用（部分信息路径 has_update=true 但
+    // download_url 为空，后端以 nothing to apply 拒绝——投影必须与后端命令
+    // 可用性一致）。running 位由调用方传入（投影现查 IsRunning，job 终态
+    // 推送在 Finish 之后恒 false）。
+    bool ApplyUpdateButtonDisabled(
+        const std::optional<UpdateCheckEntry>& check_entry,
+        bool                                   update_running)
+    {
+        return !check_entry.has_value()
+               || check_entry->state != UpdateCheckEntry::State::FoundUpdate
+               || check_entry->info.download_url.empty() || update_running;
     }
 
     yyjson::value ProjectAuthoringDocument(
@@ -3556,6 +3630,41 @@ namespace Das::Plugins::DasMaaPi
             }
         }
 
+        // 按钮字段（inputType=9 FieldDescriptor，apply 模板挂字段描述符）：
+        // newPreset 无条件投影（preset 创建入口）；checkUpdate/applyUpdate 仅
+        // project_interface 已配置（未配置时 checkUpdate 受理必失败，投影与
+        // 后端命令可用性一致）；discoverAdbDevices 仅 Adb controller。
+        // disabled 门控：checkUpdate 跟 job running 位；applyUpdate 与
+        // ApplyUpdateButtonDisabled 同源（检查结果表条目 + running）。
+        {
+            fields.as_array()->emplace_back(
+                MakeButtonField("newPreset", Translate("command.newPreset")));
+            bool update_running = false;
+            if (const auto running_pi_dir = ResolvePiDir(settings))
+            {
+                update_running =
+                    UpdateJobRegistry::Instance().IsRunning(*running_pi_dir);
+            }
+            if (pi_configured)
+            {
+                fields.as_array()->emplace_back(MakeButtonField(
+                    "checkUpdate",
+                    Translate("command.checkUpdate"),
+                    update_running));
+                fields.as_array()->emplace_back(MakeButtonField(
+                    "applyUpdate",
+                    Translate("command.applyUpdate"),
+                    ApplyUpdateButtonDisabled(check_entry, update_running)));
+            }
+            if (catalog != nullptr
+                && IsCurrentControllerAdb(settings, *catalog))
+            {
+                fields.as_array()->emplace_back(MakeButtonField(
+                    "discoverAdbDevices",
+                    Translate("command.discoverAdbDevices")));
+            }
+        }
+
         // 根级 fieldLayout 必须在 fields 移走前构建（按 const ref 读 fields）。
         // 检查结果表有条目 → 更新 section 置顶（用户点检查即期待看到反馈，
         // Checking 期置顶是稳定状态——条目无 TTL 不闪烁；与五字段门同源
@@ -3896,90 +4005,6 @@ namespace Das::Plugins::DasMaaPi
         (*ac_obj)[std::string_view("entries")] = std::move(entries);
         (*ac_obj)[std::string_view("groups")] = std::move(groups);
         (*obj)[std::string_view("actionCatalog")] = std::move(action_catalog);
-
-        // D-84.2-04: 根级 commands。newPreset 是 D-84-28 通用 invokeCommand
-        // 在 MaaPI 的落地（无条件 emit —— preset 创建入口）。UI 触发时由
-        // 84-07 注入当前 baseRevision。
-        //
-        // D-89-04: 追加 checkUpdate / applyUpdate 双按钮。checkUpdate 恒可点；
-        // applyUpdate disabled 由后端检查结果表条目（checkUpdate 结果真相源）
-        // 驱动（后端状态驱动 commands 投影，前端只按投影 disabled 渲染，业务
-        // 中立）。wire disabled 位于命令对象顶层（89-04 契约"缺失=false"，故仅
-        // disabled 时 emit）。commandId 拼写 checkUpdate / applyUpdate 与 89-04
-        // DasNativeUI 锁定一致（Pitfall 8 / T-89-03-02）。
-        {
-            yyjson::value commands(Array());
-            auto          emit_command = [&](std::string_view command_id,
-                                             std::string_view label_text,
-                                             bool             disabled = false)
-            {
-                yyjson::value cmd(Object());
-                auto          c_obj = cmd.as_object();
-                (*c_obj)[std::string_view("id")] = JsonString(command_id);
-                (*c_obj)[std::string_view("label")] = JsonString(label_text);
-                if (disabled)
-                {
-                    (*c_obj)[std::string_view("disabled")] = true;
-                }
-                yyjson::value apply(Object());
-                auto          a_obj = apply.as_object();
-                (*a_obj)[std::string_view("kind")] =
-                    JsonString("invokeCommand");
-                yyjson::value payload(Object());
-                (*payload.as_object())[std::string_view("commandId")] =
-                    JsonString(command_id);
-                (*a_obj)[std::string_view("payload")] = std::move(payload);
-                (*c_obj)[std::string_view("apply")] = std::move(apply);
-                commands.as_array()->emplace_back(std::move(cmd));
-            };
-            emit_command("newPreset", Translate("command.newPreset"));
-            // project_interface 未配置时不投影更新命令——checkUpdate 受理对
-            // 未配置 entry 必失败（checkUpdateRequiresInterfacePath），投影
-            // 与后端命令可用性一致；已配置行为不变。
-            if (pi_configured)
-            {
-                // 命令 label 走 host i18n（DAS chrome），随 GlobalLocale
-                // 切换，语言切换时不再硬编码中文。
-                const std::string check_label =
-                    Translate("command.checkUpdate");
-                const std::string apply_label =
-                    Translate("command.applyUpdate");
-                // 后台更新 job 运行中（registry per-pi_dir 状态驱动投影）：两键
-                // 都禁用，防 job 期间重复触发；slot idle 后恢复既有条件。
-                bool update_running = false;
-                if (const auto running_pi_dir = ResolvePiDir(settings))
-                {
-                    update_running = UpdateJobRegistry::Instance().IsRunning(
-                        *running_pi_dir);
-                }
-                emit_command("checkUpdate", check_label, update_running);
-                // applyUpdate 门：检查结果条目为 FoundUpdate
-                // 且有下载链接才可点。 部分信息路径（MirrorChyan code!=0 但
-                // data.version_name 存在）返回 has_update=true 且 download_url
-                // 为空，后端 ApplyApplyUpdateCommand 以 "nothing to apply"
-                // 拒绝——投影必须与 后端命令可用性一致：无下载链接时按钮
-                // disabled，避免可点但必失败。 Failed/UpToDate/Checking 条目 →
-                // disabled（按钮不携带陈旧 has_update/download_url 信息）。
-                const bool apply_update_disabled =
-                    !check_entry.has_value()
-                    || check_entry->state
-                           != UpdateCheckEntry::State::FoundUpdate
-                    || check_entry->info.download_url.empty() || update_running;
-                emit_command("applyUpdate", apply_label, apply_update_disabled);
-            }
-            const std::string discover_label =
-                Translate("command.discoverAdbDevices");
-            // discoverAdbDevices：仅 Adb controller 投影（win32/gamepad 不需
-            // 要扫描 ADB 设备）。命令被 controller section fieldLayout row
-            // 引用为 {commandId:"discoverAdbDevices"} 叶子，前端 row 横排成
-            // 按钮与 controllerName + adbDevice 同行。
-            if (catalog != nullptr
-                && IsCurrentControllerAdb(settings, *catalog))
-            {
-                emit_command("discoverAdbDevices", discover_label);
-            }
-            (*obj)[std::string_view("commands")] = std::move(commands);
-        }
 
         // diagnostics 不在 document 上 (D-84-11：diagnostics 位于 envelope，
         // 和 document 同级)。这里不投影；envelope 由 BuildApplyResult 等调用
@@ -5839,8 +5864,9 @@ namespace Das::Plugins::DasMaaPi
                 settings.adapter.update_channel.value_or("");
 
             // check job 线程体：CheckUpdate → store.PutOutcome（真相源先落）
-            // → ReportCheckOutcome（推送是通知，断连早退不丢终态）→ Stop →
-            // Finish。http 经 slot 解析（TryStart 存档的同一 shared_ptr）。
+            // → ReportCheckOutcome（推送是通知，断连早退不丢终态）→ 按钮态
+            // 推送（值按 Finish 后状态）→ Stop → Finish。http 经 slot 解析
+            // （TryStart 存档的同一 shared_ptr）。
             auto job_body =
                 [job_pi_dir,
                  job_key,
@@ -5950,8 +5976,19 @@ namespace Das::Plugins::DasMaaPi
                         reporter,
                         job_current_version);
                 }
+                // 按钮态推送值按「Finish 后」状态计算（IsRunning 复位 + 刚落
+                // 终态的检查结果表条目，与再投影门控同源）；推送动作收在
+                // Finish 之前——Finish 的锁/cv 是测试等待点的 happens-before
+                // 边界，越过它会破坏等待方对推送结果的可见性。
                 if (reporter)
                 {
+                    const auto final_entry =
+                        UpdateCheckStore::Instance().Get(job_pi_dir);
+                    reporter->ReportUpdateButtonStates(
+                        /*check_disabled=*/false,
+                        ApplyUpdateButtonDisabled(
+                            final_entry,
+                            /*update_running=*/false));
                     reporter->Stop();
                 }
                 UpdateJobRegistry::Instance().Finish(slot);
@@ -6280,8 +6317,19 @@ namespace Das::Plugins::DasMaaPi
                             static_cast<int>(result))
                             .c_str());
                 }
+                // 按钮态推送（与 check job 同构）：值按 Finish 后状态计算；
+                // 检查结果表条目在 apply 全程保留（受理与完成均不清，交给
+                // 下次 checkUpdate 覆盖）→ 两键恢复 enabled。推送收在 Finish
+                // 之前（Finish 的锁/cv 是测试等待点的可见性边界）。
                 if (reporter)
                 {
+                    const auto final_entry =
+                        UpdateCheckStore::Instance().Get(job_pi_dir);
+                    reporter->ReportUpdateButtonStates(
+                        /*check_disabled=*/false,
+                        ApplyUpdateButtonDisabled(
+                            final_entry,
+                            /*update_running=*/false));
                     reporter->Stop();
                 }
                 UpdateJobRegistry::Instance().Finish(slot);

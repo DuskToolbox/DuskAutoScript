@@ -26,30 +26,12 @@ namespace Das::Http
 {
     namespace detail
     {
-        // setValue payload 中 value 必须是合法 JSON
-        // 标量（string/number/bool）。 对齐 authoring FieldDescriptor.value
-        // 类型语义；null/object/array 字段增量视为非法，安全跳过（不广播坏
-        // payload）。
-        inline bool IsValidPayloadValue(const yyjson::value& value)
-        {
-            if (value.is_string())
-            {
-                return true;
-            }
-            if (value.is_uint() || value.is_sint() || value.is_real())
-            {
-                return true;
-            }
-            if (value.is_bool())
-            {
-                return true;
-            }
-            return false;
-        }
-
         // 装配 authoring setValue change payload：
         // { "target": { "kind": "document" }, "fieldName": ..., "value": ... }
-        // 复用 authoring 规范格式，SSE 事件体零新协议。
+        // 复用 authoring 规范格式，SSE 事件体零新协议。value 形态由前端按
+        // JSON 类型分派（标量→字段值、对象→字段属性 patch），传输侧不做值
+        // 域校验（哑管道——按钮 disabled 对象 merge 依赖对象帧全量放行，
+        // 入口合法性由 ParseYyjsonFromString 保证）。
         inline std::optional<std::string> BuildSetValuePayload(
             const std::string&   field_name,
             const yyjson::value& value)
@@ -373,10 +355,6 @@ namespace Das::Http
             }
             auto parsed = Das::Utils::ParseYyjsonFromString(value_raw);
             if (!parsed)
-            {
-                return std::nullopt;
-            }
-            if (!detail::IsValidPayloadValue(*parsed))
             {
                 return std::nullopt;
             }

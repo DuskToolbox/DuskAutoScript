@@ -197,18 +197,8 @@ namespace Das::Core::TaskScheduler
             return true;
         }
 
-        // Forward declarations — defined after the structural helpers but
-        // referenced by FieldDescriptor/FieldContainer because commands[] can
-        // appear at every FieldContainer level (D-84-14/D-84-26).
-        // seen_ids_out 把 commands[].id 集合回传给 caller，供 fieldLayout
-        // 校验 {commandId} 叶子引用完整性。
-        AuthoringValidationResult ValidateCommandDescriptorArray(
-            const yyjson::value&   arr,
-            std::set<std::string>* seen_ids_out = nullptr);
-
         // Forward declaration — 按钮字段(inputType=9) 的 apply 模板复用同一
-        // 校验（定义位置在 CommandDescriptor 段，先于定义被 FieldDescriptor
-        // 引用）。
+        // 校验（定义位置在 apply 模板段，先于定义被 FieldDescriptor 引用）。
         AuthoringValidationResult ValidateCommandApplyTemplate(
             const yyjson::value& apply);
 
@@ -610,15 +600,6 @@ namespace Das::Core::TaskScheduler
                 }
             }
 
-            if (obj.contains("commands"))
-            {
-                if (auto r = ValidateCommandDescriptorArray(obj["commands"]);
-                    !r.valid)
-                {
-                    return r;
-                }
-            }
-
             if (!OnlyKeys(
                     obj,
                     {"name",
@@ -636,8 +617,7 @@ namespace Das::Core::TaskScheduler
                      "icon",
                      "apply",
                      "disabled",
-                     "confirmation",
-                     "commands"}))
+                     "confirmation"}))
             {
                 return Fail(
                     "unknownField",
@@ -665,21 +645,14 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
-        // fieldLayout 扩展为 6-arg。新参数：
-        //   - command_ids (down): 顶层 commands[] 的 id 集合，用于校验
-        //     {commandId} 叶子引用完整性（与 fieldName in field_names 对称）。
-        //   - referenced_command_ids (out): 已引用的 commandId 集合，用于
-        //     检测重复引用。独立于 referenced_names — 不污染 fieldName
-        //     全覆盖不变量；commandId 不要求全覆盖：未引用的 command 表示
-        //     不在 layout 中渲染，合法。
+        // fieldLayout 树校验（4-arg）。叶子只有 {fieldName}（按钮统一为
+        // inputType=9 FieldDescriptor 后，命令不再是 layout 的一等控件）。
         //   - row_allowed (down): 顶层 false，section.entries 内 true；row
         //     容器只能在 section.entries 内（schema 模糊防御）。
         AuthoringValidationResult ValidateFieldLayoutTree(
             const yyjson::value&         node,
             const std::set<std::string>& field_names,
-            const std::set<std::string>& command_ids,
             std::set<std::string>&       referenced_names,
-            std::set<std::string>&       referenced_command_ids,
             std::set<std::string>&       section_ids,
             bool                         row_allowed = false)
         {
@@ -726,44 +699,9 @@ namespace Das::Core::TaskScheduler
                 return Pass();
             }
 
-            // {commandId} 叶子 — 与 {fieldName} 对称，引用 commands[]
-            // 定义池。独立 referenced_command_ids 不污染 fieldName 全覆盖
-            // 不变量。
-            if (obj.contains("commandId"))
-            {
-                if (!obj["commandId"].is_string())
-                {
-                    return Fail(
-                        "invalidLayoutLeaf",
-                        "commandId must be string");
-                }
-                const auto cid = obj["commandId"].as_string().value();
-                if (cid.empty())
-                {
-                    return Fail(
-                        "invalidLayoutLeaf",
-                        "commandId must be non-empty");
-                }
-                if (command_ids.count(std::string(cid)) == 0)
-                {
-                    return Fail(
-                        "layoutCommandNotInContainer",
-                        "commandId not in commands[]");
-                }
-                if (!referenced_command_ids.insert(std::string(cid)).second)
-                {
-                    return Fail(
-                        "layoutDuplicateCommandRef",
-                        "commandId referenced multiple times");
-                }
-                if (!OnlyKeys(obj, {"commandId"}))
-                {
-                    return Fail(
-                        "unknownField",
-                        "layout command leaf rejects unknown field");
-                }
-                return Pass();
-            }
+            // {commandId} 叶子形态已退役：按钮统一为 inputType=9
+            // FieldDescriptor，layout 只认 {fieldName} 叶子——commandId 键
+            // 落到下方 invalidLayoutNode 拒绝。
 
             //{row:[...]} 横向容器。只在 section.entries 内合法
             // （row_allowed=true）；顶层直接放 row 会被拒（// schema
@@ -787,9 +725,7 @@ namespace Das::Core::TaskScheduler
                     if (auto r = ValidateFieldLayoutTree(
                             child,
                             field_names,
-                            command_ids,
                             referenced_names,
-                            referenced_command_ids,
                             section_ids,
                             /*row_allowed=*/true);
                         !r.valid)
@@ -866,9 +802,7 @@ namespace Das::Core::TaskScheduler
                     if (auto r = ValidateFieldLayoutTree(
                             child,
                             field_names,
-                            command_ids,
                             referenced_names,
-                            referenced_command_ids,
                             section_ids,
                             /*row_allowed=*/true);
                         !r.valid)
@@ -894,14 +828,13 @@ namespace Das::Core::TaskScheduler
 
             return Fail(
                 "invalidLayoutNode",
-                "layout node must be leaf {fieldName}/{commandId}, row, or "
+                "layout node must be leaf {fieldName}, row, or "
                 "section {id,label,entries}");
         }
 
         AuthoringValidationResult ValidateFieldLayout(
             const yyjson::value&         layout,
-            const std::set<std::string>& field_names,
-            const std::set<std::string>& command_ids)
+            const std::set<std::string>& field_names)
         {
             auto arr_opt = layout.as_array();
             if (!arr_opt)
@@ -909,16 +842,13 @@ namespace Das::Core::TaskScheduler
                 return Fail("invalidLayout", "fieldLayout must be array");
             }
             std::set<std::string> referenced_names;
-            std::set<std::string> referenced_command_ids;
             std::set<std::string> section_ids;
             for (const auto& node : arr_opt.value())
             {
                 if (auto r = ValidateFieldLayoutTree(
                         node,
                         field_names,
-                        command_ids,
                         referenced_names,
-                        referenced_command_ids,
                         section_ids,
                         /*row_allowed=*/false);
                     !r.valid)
@@ -926,8 +856,8 @@ namespace Das::Core::TaskScheduler
                     return r;
                 }
             }
-            // fieldName 全覆盖不变量保持 — commandId 不要求
-            // 全覆盖，未引用的 command 就是不在 layout 中渲染，合法。
+            // fieldName 全覆盖不变量：每个 fields[] 字段恰被引用一次
+            // （按钮字段也是普通字段，同一全覆盖门）。
             if (referenced_names.size() != field_names.size())
             {
                 return Fail(
@@ -937,7 +867,7 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
-        // Validate the apply template portion of a CommandDescriptor. The
+        // Validate the apply template portion of a button field. The
         // template keeps the single-change element shape {kind, payload} and
         // must NOT carry baseRevision; the submit-time builder wraps it (plus
         // the current revision) into the batch apply request
@@ -974,193 +904,15 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
-        // D-84-26/D-84-27: CommandDescriptor strict shape. Must contain
-        // exactly one of apply|openView; optional confirmation only allowed
-        // with apply; openView restricted to the built-in actionCatalog
-        // enumeration for Phase 84.
-        AuthoringValidationResult ValidateCommandDescriptor(
-            const yyjson::value&   cmd,
-            std::set<std::string>& seen_ids)
-        {
-            auto obj_opt = cmd.as_object();
-            if (!obj_opt)
-            {
-                return Fail(
-                    "invalidCommand",
-                    "CommandDescriptor must be object");
-            }
-            const auto& obj = obj_opt.value();
-
-            if (!HasStringField(obj, "id"))
-            {
-                return Fail("missingField", "CommandDescriptor.id required");
-            }
-            const auto id = obj["id"].as_string().value();
-            if (id.empty())
-            {
-                return Fail(
-                    "invalidCommandId",
-                    "CommandDescriptor.id must be non-empty");
-            }
-            if (!seen_ids.insert(std::string(id)).second)
-            {
-                return Fail(
-                    "duplicateCommandId",
-                    "CommandDescriptor.id duplicate within container");
-            }
-
-            if (!HasStringField(obj, "label"))
-            {
-                return Fail("missingField", "CommandDescriptor.label required");
-            }
-            if (obj["label"].as_string().value().empty())
-            {
-                return Fail(
-                    "invalidCommandLabel",
-                    "CommandDescriptor.label must be non-empty");
-            }
-
-            if (obj.contains("description") && !obj["description"].is_string())
-            {
-                return Fail(
-                    "invalidDescription",
-                    "CommandDescriptor.description must be string");
-            }
-
-            if (auto r = ValidateOptionalIcon(obj, "icon"); !r.valid)
-            {
-                return r;
-            }
-
-            const bool has_apply = obj.contains("apply");
-            const bool has_open_view = obj.contains("openView");
-            if (has_apply == has_open_view)
-            {
-                return Fail(
-                    "commandActionXorRequired",
-                    "CommandDescriptor must have exactly one of apply|openView");
-            }
-
-            if (obj.contains("confirmation"))
-            {
-                if (!has_apply)
-                {
-                    return Fail(
-                        "confirmationRequiresApply",
-                        "confirmation only allowed with apply");
-                }
-                if (!HasStringField(obj, "confirmation"))
-                {
-                    return Fail(
-                        "invalidConfirmation",
-                        "confirmation must be string");
-                }
-                if (obj["confirmation"].as_string().value().empty())
-                {
-                    return Fail(
-                        "invalidConfirmation",
-                        "confirmation must be non-empty");
-                }
-            }
-
-            // D-89-04: disabled（后端状态驱动的命令可用性，如 applyUpdate 无待
-            // 更新时置灰）。wire 位于命令对象顶层，缺失视为 false（89-04
-            // DasNativeUI 契约）。为 bool 时才合法。
-            if (obj.contains("disabled") && !obj["disabled"].is_bool())
-            {
-                return Fail(
-                    "invalidDisabled",
-                    "CommandDescriptor.disabled must be bool");
-            }
-
-            if (has_apply)
-            {
-                if (auto r = ValidateCommandApplyTemplate(obj["apply"]);
-                    !r.valid)
-                {
-                    return r;
-                }
-            }
-            else
-            {
-                if (!HasStringField(obj, "openView"))
-                {
-                    return Fail("invalidOpenView", "openView must be string");
-                }
-                const auto ov = obj["openView"].as_string().value();
-                if (ov != std::string_view("actionCatalog"))
-                {
-                    return Fail(
-                        "unsupportedOpenView",
-                        "openView must be actionCatalog");
-                }
-            }
-
-            if (!OnlyKeys(
-                    obj,
-                    {"id",
-                     "label",
-                     "description",
-                     "icon",
-                     "confirmation",
-                     "apply",
-                     "openView",
-                     "disabled"}))
-            {
-                return Fail(
-                    "unknownField",
-                    "CommandDescriptor rejects unknown field");
-            }
-            return Pass();
-        }
-
-        AuthoringValidationResult ValidateCommandDescriptorArray(
-            const yyjson::value&   arr,
-            std::set<std::string>* seen_ids_out)
-        {
-            auto arr_opt = arr.as_array();
-            if (!arr_opt)
-            {
-                return Fail("invalidCommands", "commands must be array");
-            }
-            std::set<std::string> seen_ids;
-            for (const auto& cmd : arr_opt.value())
-            {
-                if (auto r = ValidateCommandDescriptor(cmd, seen_ids); !r.valid)
-                {
-                    return r;
-                }
-            }
-            // 把 commands[].id 集合回传给 caller，供 fieldLayout 校验
-            // {commandId} 叶子的引用完整性（与 fieldName in field_names
-            // 对称）。
-            if (seen_ids_out != nullptr)
-            {
-                *seen_ids_out = std::move(seen_ids);
-            }
-            return Pass();
-        }
-
         // Validate a FieldContainer (document root, FormSequenceItem, or
-        // GraphNode): fields[], fieldLayout[], commands[]. Fills field_names
+        // GraphNode): fields[], fieldLayout[]. Fills field_names
         // so the caller can apply additional constraints (e.g. enabled
-        // collision check). 同时收集 command_ids 供 ValidateFieldLayout 校验
-        // {commandId} 叶子引用完整性。
+        // collision check). commands[] 通道已退役——按钮统一为 inputType=9
+        // FieldDescriptor（commands 键落到容器级 OnlyKeys 未知字段拒绝）。
         AuthoringValidationResult ValidateFieldContainer(
             const auto&            obj,
             std::set<std::string>& field_names)
         {
-            std::set<std::string> command_ids;
-            if (obj.contains("commands"))
-            {
-                if (auto r = ValidateCommandDescriptorArray(
-                        obj["commands"],
-                        &command_ids);
-                    !r.valid)
-                {
-                    return r;
-                }
-            }
             if (obj.contains("fields"))
             {
                 if (auto r = ValidateFieldDescriptorArray(
@@ -1173,10 +925,8 @@ namespace Das::Core::TaskScheduler
             }
             if (obj.contains("fieldLayout"))
             {
-                if (auto r = ValidateFieldLayout(
-                        obj["fieldLayout"],
-                        field_names,
-                        command_ids);
+                if (auto r =
+                        ValidateFieldLayout(obj["fieldLayout"], field_names);
                     !r.valid)
                 {
                     return r;
@@ -1297,7 +1047,6 @@ namespace Das::Core::TaskScheduler
                      "description",
                      "fields",
                      "fieldLayout",
-                     "commands",
                      "enabled",
                      "debugInfo"}))
             {
@@ -1521,7 +1270,6 @@ namespace Das::Core::TaskScheduler
                      "targetKind",
                      "fields",
                      "fieldLayout",
-                     "commands",
                      "ports",
                      "debugInfo"}))
             {
@@ -3127,7 +2875,6 @@ namespace Das::Core::TaskScheduler
                  "revision",
                  "fields",
                  "fieldLayout",
-                 "commands",
                  "formSequence",
                  "graph",
                  "actionCatalog",

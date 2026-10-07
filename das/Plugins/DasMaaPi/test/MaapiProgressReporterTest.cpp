@@ -2,6 +2,7 @@
 #include "../src/PiUpdateService.h"
 #include "../src/UpdateCheckStore.h"
 
+#include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
@@ -11,12 +12,15 @@
 #include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
 #include <gtest/gtest.h>
+#include <spdlog/details/log_msg.h>
+#include <spdlog/sinks/base_sink.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -114,7 +118,9 @@ namespace
         const char* name_raw = nullptr;
         EXPECT_EQ(name->GetUtf8(&name_raw), DAS_S_OK);
         DasPtr<IDasReadOnlyString> text;
-        EXPECT_EQ(value->ToString(0, text.Put()), DAS_S_OK);
+        // ToString 的 indent>=0 是 pretty 形态（对象值多行展开）——断言用
+        // 紧凑序列化（-1），对象 value 的形状断言才稳定。
+        EXPECT_EQ(value->ToString(-1, text.Put()), DAS_S_OK);
         const char* text_raw = nullptr;
         EXPECT_EQ(text->GetUtf8(&text_raw), DAS_S_OK);
         return {
@@ -165,10 +171,10 @@ namespace
         {
             write_json(
                 "en.json",
-                R"json({"progress.updateFound": "New version available ({0})", "progress.upToDate": "Already up to date ({0})", "progress.checkFailed": "Check failed: {0}"})json");
+                R"json({"progress.updateFound": "New version available ({0})", "progress.upToDate": "Already up to date ({0})", "progress.checkFailed": "Check failed: {0}", "diagnostic.progressPatchKeyRejected": "Progress field patch key not in whitelist, dropped: {0}"})json");
             write_json(
                 "zh-cn.json",
-                R"json({"progress.updateFound": "发现新版本（{0}）", "progress.upToDate": "已是最新（{0}）", "progress.checkFailed": "检查失败：{0}"})json");
+                R"json({"progress.updateFound": "发现新版本（{0}）", "progress.upToDate": "已是最新（{0}）", "progress.checkFailed": "检查失败：{0}", "diagnostic.progressPatchKeyRejected": "进度字段增量键不在白名单，已丢弃：{0}"})json");
         }
         else
         {
@@ -674,6 +680,125 @@ TEST(MaapiProgressReporterTest, ReportCheckOutcomeWithoutStartDoesNotPush)
 }
 
 // ============================================================================
+// ReportFieldPatch / ReportUpdateButtonStates：字段属性 patch 推送（对象
+// value 字段增量的白名单构造入口——推送方是唯一校验位，传输侧哑管道不校验；
+// 白名单 = {disabled}，结构键改了断 fieldLayout 引用、value 禁入对象防
+// 标量/patch 双通道歧义）。
+// ============================================================================
+
+// 捕获 g_logger 消息（DAS_LOG_ERROR 的 i18n 报错文案断言用；测试静态链
+// DasCoreObjects，g_logger 与 DasLogError* 同进程单例）。
+class CapturingSink final : public spdlog::sinks::base_sink<std::mutex>
+{
+public:
+    std::vector<std::string> messages;
+
+protected:
+    void sink_it_(const spdlog::details::log_msg& msg) override
+    {
+        messages.emplace_back(msg.payload.data(), msg.payload.size());
+    }
+
+    void flush_() override {}
+};
+
+class ScopedLogCapture
+{
+public:
+    ScopedLogCapture()
+    {
+        sink_ = std::make_shared<CapturingSink>();
+        Das::Core::g_logger->sinks().push_back(sink_);
+    }
+
+    ~ScopedLogCapture()
+    {
+        auto& sinks = Das::Core::g_logger->sinks();
+        sinks.erase(
+            std::remove(sinks.begin(), sinks.end(), sink_),
+            sinks.end());
+    }
+
+    bool Contains(std::string_view needle) const
+    {
+        return std::any_of(
+            sink_->messages.begin(),
+            sink_->messages.end(),
+            [needle](const std::string& message)
+            { return message.find(needle) != std::string::npos; });
+    }
+
+private:
+    std::shared_ptr<CapturingSink> sink_;
+};
+
+// 白名单外键（name/value/label）逐键丢弃、合法键照常发出；每个被丢键一条
+// DAS_LOG_ERROR（i18n diagnostic.progressPatchKeyRejected 文案带键名）。
+TEST(MaapiProgressReporterTest, ReportFieldPatchDropsKeysOutsideWhitelist)
+{
+    GlobalLocaleGuard                      locale_guard("zh-cn");
+    DasPtr<Das::ExportInterface::IDasI18n> i18n = MakeInjectedCheckOutcomeI18n(
+        "ReportFieldPatchDropsKeysOutsideWhitelist",
+        /*with_check_keys=*/true);
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    ScopedLogCapture log_capture;
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    reporter->SetI18n(i18n);
+    ASSERT_TRUE(reporter->Start());
+
+    reporter->ReportFieldPatch(
+        "checkUpdate",
+        {{std::string("disabled"), yyjson::value(false)},
+         {std::string("name"),
+          yyjson::value(std::string("oops"), yyjson::copy_string)},
+         {std::string("value"),
+          yyjson::value(std::string("oops"), yyjson::copy_string)},
+         {std::string("label"),
+          yyjson::value(std::string("oops"), yyjson::copy_string)}});
+
+    ASSERT_EQ(fake->entries.size(), 1u);
+    const auto fields = ReadEntryFields(fake->entries.front().Get());
+    ASSERT_EQ(fields.size(), 1u);
+    EXPECT_EQ(fields.at("checkUpdate"), R"({"disabled":false})");
+    // 三个被丢键各一条报错（文案带键名）。
+    EXPECT_TRUE(log_capture.Contains("已丢弃：name"));
+    EXPECT_TRUE(log_capture.Contains("已丢弃：value"));
+    EXPECT_TRUE(log_capture.Contains("已丢弃：label"));
+
+    reporter->Stop();
+}
+
+// 更新按钮态推送：单 entry 双字段（checkUpdate/applyUpdate 各携带
+// {disabled:bool} 对象 value）——job 终态推送的 payload 形状钉。
+TEST(MaapiProgressReporterTest, ReportUpdateButtonStatesPushesPairInOneEntry)
+{
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    ASSERT_TRUE(reporter->Start());
+
+    reporter->ReportUpdateButtonStates(
+        /*check_disabled=*/false,
+        /*apply_disabled=*/true);
+
+    ASSERT_EQ(fake->entries.size(), 1u);
+    EXPECT_EQ(ReadEntryKey(fake->entries.front().Get()), "key1");
+    const auto fields = ReadEntryFields(fake->entries.front().Get());
+    ASSERT_EQ(fields.size(), 2u);
+    EXPECT_EQ(fields.at("checkUpdate"), R"({"disabled":false})");
+    EXPECT_EQ(fields.at("applyUpdate"), R"({"disabled":true})");
+
+    reporter->Stop();
+}
+
+// ============================================================================
 // Task 3: 更新 section 字段投影（五字段无 updateKey + fieldLayout 置顶）
 // ============================================================================
 
@@ -745,7 +870,7 @@ std::optional<yyjson::value> FindLayoutSection(
     for (auto it = layout->begin(); it != layout->end(); ++it)
     {
         auto section = it->as_object();
-        if (!section)
+        if (!section || !section->contains(std::string_view("id")))
         {
             continue;
         }
@@ -887,8 +1012,8 @@ TEST(MaapiProgressReporterTest, ReleaseNoteValueFromPendingAndEmptyFallback)
     }
 }
 
-// Behavior 4: 有条目时 fieldLayout 首位是更新 section，且五字段在更新
-// section 内。
+// Behavior 4: 有条目时 fieldLayout 首位是 newPreset 顶层叶子（按钮字段
+// 置顶扁平组），首个 section 是更新 section，且五字段在更新 section 内。
 TEST(MaapiProgressReporterTest, UpdateSectionFirstInLayoutWhenPending)
 {
     using namespace Das::Plugins::DasMaaPi;
@@ -908,11 +1033,32 @@ TEST(MaapiProgressReporterTest, UpdateSectionFirstInLayoutWhenPending)
     auto layout = (*doc_obj)[std::string_view("fieldLayout")].as_array();
     ASSERT_TRUE(layout.has_value());
     ASSERT_FALSE(layout->empty());
-    auto first = layout->begin()->as_object();
-    ASSERT_TRUE(first.has_value());
-    EXPECT_EQ(
-        std::string((*first)[std::string_view("id")].as_string().value_or("")),
-        "update");
+    {
+        auto first = layout->begin()->as_object();
+        ASSERT_TRUE(first.has_value());
+        ASSERT_TRUE(first->contains(std::string_view("fieldName")));
+        EXPECT_EQ(
+            std::string(
+                (*first)[std::string_view("fieldName")].as_string().value_or(
+                    "")),
+            "newPreset");
+    }
+    {
+        // 首个 section（跳过顶层叶子）是 update。
+        std::string first_section_id;
+        for (auto&& node : *layout)
+        {
+            auto node_obj = node.as_object();
+            if (node_obj && node_obj->contains(std::string_view("id")))
+            {
+                first_section_id = std::string(
+                    (*node_obj)[std::string_view("id")].as_string().value_or(
+                        ""));
+                break;
+            }
+        }
+        EXPECT_EQ(first_section_id, "update");
+    }
 
     auto update_section = FindLayoutSection(document, "update");
     ASSERT_TRUE(update_section.has_value());

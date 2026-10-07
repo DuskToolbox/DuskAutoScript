@@ -92,32 +92,6 @@
         "icon": { "$ref": "#/$defs/IconString" }
       }
     },
-    "CommandDescriptor": {
-      "type": "object",
-      "required": ["id", "label"],
-      "additionalProperties": false,
-      "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "label": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "icon": { "$ref": "#/$defs/IconString" },
-        "confirmation": {
-          "type": "string",
-          "minLength": 1,
-          "$comment": "Only allowed when apply is present (confirmation + openView is rejected)."
-        },
-        "apply": { "$ref": "#/$defs/CommandApplyTemplate" },
-        "openView": { "const": "actionCatalog" },
-        "disabled": {
-          "type": "boolean",
-          "$comment": "D-89-04: 后端状态驱动的命令可用性（如 applyUpdate 无待更新时置灰）。wire 位于命令对象顶层，缺失视为 false。"
-        }
-      },
-      "oneOf": [
-        { "required": ["apply"], "not": { "required": ["openView"] } },
-        { "required": ["openView"], "not": { "required": ["apply"] } }
-      ]
-    },
     "CommandApplyTemplate": {
       "type": "object",
       "required": ["kind", "payload"],
@@ -188,10 +162,6 @@
           "type": "string",
           "minLength": 1,
           "$comment": "Only allowed when apply is present."
-        },
-        "commands": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/CommandDescriptor" }
         }
       },
       "allOf": [
@@ -250,15 +220,6 @@
         "fieldName": { "type": "string", "minLength": 1 }
       }
     },
-    "FieldLayoutLeafCommand": {
-      "type": "object",
-      "required": ["commandId"],
-      "additionalProperties": false,
-      "$comment": "command 作为 fieldLayout 一等控件 — 引用顶层 commands[] 定义池，与 {fieldName} 对称。",
-      "properties": {
-        "commandId": { "type": "string", "minLength": 1 }
-      }
-    },
     "FieldLayoutRow": {
       "type": "object",
       "required": ["row"],
@@ -270,7 +231,6 @@
           "items": {
             "oneOf": [
               { "$ref": "#/$defs/FieldLayoutLeafField" },
-              { "$ref": "#/$defs/FieldLayoutLeafCommand" },
               { "$ref": "#/$defs/FieldLayoutRow" }
             ]
           }
@@ -292,7 +252,6 @@
           "items": {
             "oneOf": [
               { "$ref": "#/$defs/FieldLayoutLeafField" },
-              { "$ref": "#/$defs/FieldLayoutLeafCommand" },
               { "$ref": "#/$defs/FieldLayoutRow" }
             ]
           }
@@ -302,10 +261,9 @@
     "FieldLayoutNode": {
       "oneOf": [
         { "$ref": "#/$defs/FieldLayoutLeafField" },
-        { "$ref": "#/$defs/FieldLayoutLeafCommand" },
         { "$ref": "#/$defs/FieldLayoutSection" }
       ],
-      "$comment": "顶层 layout node 不含 FieldLayoutRow — row 只能在 section.entries 内（validator 拒绝 rowOutsideSection）。"
+      "$comment": "顶层 layout node 不含 FieldLayoutRow — row 只能在 section.entries 内（validator 拒绝 rowOutsideSection）。命令不再是 layout 控件：按钮统一为 inputType=9 FieldDescriptor，叶子只有 {fieldName}。"
     },
     "EntryRef": {
       "type": "object",
@@ -326,10 +284,6 @@
         "fieldLayout": {
           "type": "array",
           "items": { "$ref": "#/$defs/FieldLayoutNode" }
-        },
-        "commands": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/CommandDescriptor" }
         }
       }
     },
@@ -354,10 +308,6 @@
         "fieldLayout": {
           "type": "array",
           "items": { "$ref": "#/$defs/FieldLayoutNode" }
-        },
-        "commands": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/CommandDescriptor" }
         }
       }
     },
@@ -385,10 +335,6 @@
         "fieldLayout": {
           "type": "array",
           "items": { "$ref": "#/$defs/FieldLayoutNode" }
-        },
-        "commands": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/CommandDescriptor" }
         },
         "ports": {
           "type": "array",
@@ -568,10 +514,6 @@
         "fieldLayout": {
           "type": "array",
           "items": { "$ref": "#/$defs/FieldLayoutNode" }
-        },
-        "commands": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/CommandDescriptor" }
         },
         "formSequence": { "$ref": "#/$defs/FormSequence" },
         "graph": { "$ref": "#/$defs/GraphDocument" },

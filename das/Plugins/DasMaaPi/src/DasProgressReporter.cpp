@@ -644,6 +644,137 @@ namespace Plugins::DasMaaPi
         }
     }
 
+    void DasProgressReporter::ReportFieldPatch(
+        std::string_view                                   field_name,
+        std::vector<std::pair<std::string, yyjson::value>> patch)
+    {
+        // 与 ReportFinal 同款早退链：断开后不再浪费 IPC，未 Start / 无
+        // service 直接返回。
+        if (!started_ || disconnected_.load())
+        {
+            return;
+        }
+        if (!service_)
+        {
+            return;
+        }
+        auto* const i18n = GetI18n();
+
+        // 逐键白名单过滤（对象 patch 的键空间 = 允许运行时变的键；结构键改了
+        // 断 fieldLayout 引用、value 禁入对象防标量/patch 双通道歧义）。白名单
+        // 外键丢弃 + i18n 报错——推送方是唯一校验位，传输侧哑管道不校验。
+        yyjson::value object = Das::Utils::MakeYyjsonObject();
+        auto          obj = object.as_object();
+        size_t        kept = 0;
+        for (auto& [key, value] : patch)
+        {
+            if (key != "disabled")
+            {
+                const auto tmpl =
+                    TranslateKey(i18n, "diagnostic.progressPatchKeyRejected");
+                const std::string text =
+                    tmpl.empty() ? ("进度字段增量键不在白名单，已丢弃：" + key)
+                                 : DAS_FMT_NS::vformat(
+                                       std::string_view(tmpl),
+                                       DAS_FMT_NS::make_format_args(key));
+                DAS_LOG_ERROR(text.c_str());
+                continue;
+            }
+            (*obj)[std::string_view(key)] = Das::Utils::CloneYyjsonValue(value);
+            ++kept;
+        }
+        if (kept == 0)
+        {
+            return;
+        }
+        // 对象经序列化往返转 IDasJson（照 MakeJsonFieldValue 范式——
+        // IDasJsonImpl 符号未导出，插件只能走导出工厂）。
+        auto serialized = Das::Utils::SerializeYyjsonValue(object);
+        if (!serialized)
+        {
+            return;
+        }
+        DasPtr<Das::ExportInterface::IDasJson> object_value;
+        if (DAS::IsFailed(
+                ParseDasJsonFromString(serialized->c_str(), object_value.Put()))
+            || !object_value)
+        {
+            return;
+        }
+
+        const std::string                         field_name_text{field_name};
+        std::vector<DasProgressUpdateImpl::Field> fields;
+        fields.emplace_back(field_name_text, std::move(object_value));
+
+        DasPtr<Das::ExportInterface::IDasProgressUpdate> entry =
+            DasProgressUpdateImpl::Make(key_, std::move(fields));
+        const auto rc = service_->Report(entry.Get());
+        if (DAS::IsFailed(rc))
+        {
+            DAS_LOG_ERROR(
+                DAS::fmt::format(
+                    "DasProgressReporter: ReportFieldPatch failed key={} "
+                    "field={} result={}",
+                    key_,
+                    field_name_text,
+                    static_cast<int>(rc))
+                    .c_str());
+        }
+    }
+
+    void DasProgressReporter::ReportUpdateButtonStates(
+        bool check_disabled,
+        bool apply_disabled)
+    {
+        if (!started_ || disconnected_.load())
+        {
+            return;
+        }
+        if (!service_)
+        {
+            return;
+        }
+
+        // 每字段一个 {disabled:bool} 对象，同一 entry 双字段（前端逐 fieldName
+        // merge 进 fields[i]，按钮态实时恢复）。值构造复用 patch 白名单入口
+        // （构造对象 value 的唯一入口，键域一致由同一路径保证）。
+        const auto make_button_state_value = [](bool disabled)
+        {
+            yyjson::value object = Das::Utils::MakeYyjsonObject();
+            (*object.as_object())[std::string_view("disabled")] = disabled;
+            auto serialized = Das::Utils::SerializeYyjsonValue(object);
+            if (!serialized)
+            {
+                return DasPtr<Das::ExportInterface::IDasJson>{};
+            }
+            DasPtr<Das::ExportInterface::IDasJson> result;
+            ParseDasJsonFromString(serialized->c_str(), result.Put());
+            return result;
+        };
+
+        std::vector<DasProgressUpdateImpl::Field> fields;
+        fields.emplace_back(
+            "checkUpdate",
+            make_button_state_value(check_disabled));
+        fields.emplace_back(
+            "applyUpdate",
+            make_button_state_value(apply_disabled));
+
+        DasPtr<Das::ExportInterface::IDasProgressUpdate> entry =
+            DasProgressUpdateImpl::Make(key_, std::move(fields));
+        const auto rc = service_->Report(entry.Get());
+        if (DAS::IsFailed(rc))
+        {
+            DAS_LOG_ERROR(
+                DAS::fmt::format(
+                    "DasProgressReporter: ReportUpdateButtonStates failed "
+                    "key={} result={}",
+                    key_,
+                    static_cast<int>(rc))
+                    .c_str());
+        }
+    }
+
     void DasProgressReporter::OnSubscribersDisconnected()
     {
         disconnected_.store(true);

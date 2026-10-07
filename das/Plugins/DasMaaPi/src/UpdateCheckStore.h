@@ -72,7 +72,8 @@ namespace Das::Plugins::DasMaaPi
             const std::filesystem::path& pi_dir,
             UpdateCheckEntry             entry);
 
-        // BT 读（投影 / 按钮门 / applyUpdate 前置校验）：返回条目快照。
+        // BT 读（投影 / 按钮门 / applyUpdate 前置校验）；job 线程在 Finish
+        // 之后也读（按钮态终态推送取同源条目）。返回条目快照。
         std::optional<UpdateCheckEntry> Get(
             const std::filesystem::path& pi_dir) const;
 
