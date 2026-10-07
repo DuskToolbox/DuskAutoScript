@@ -2953,19 +2953,19 @@ namespace Das::Plugins::DasMaaPi
                && !settings.adapter.interface_path->empty();
     }
 
-    // applyUpdate 按钮禁用门（投影与 job 终态推送同源——推送值必须与再投影
-    // 一致，否则 SSE 恢复态与下次 Get 文档漂移）：检查结果表无条目 / 非
-    // FoundUpdate 态 / 无下载链接均禁用（部分信息路径 has_update=true 但
+    // applyUpdate 按钮禁用门（idle 态；投影与 job 终态推送同源——推送值必须
+    // 与再投影一致，否则 SSE 恢复态与下次 Get 文档漂移）：检查结果表无条目 /
+    // 非 FoundUpdate 态 / 无下载链接均禁用（部分信息路径 has_update=true 但
     // download_url 为空，后端以 nothing to apply 拒绝——投影必须与后端命令
-    // 可用性一致）。running 位由调用方传入（投影现查 IsRunning，job 终态
-    // 推送在 Finish 之后恒 false）。
+    // 可用性一致）。运行态门控不在本函数：running 时按钮是「取消」toggle，
+    // 可点性由投影/终态推送各自按 running 位计算（job 终态推送在 Finish 之后
+    // 恒 idle）。
     bool ApplyUpdateButtonDisabled(
-        const std::optional<UpdateCheckEntry>& check_entry,
-        bool                                   update_running)
+        const std::optional<UpdateCheckEntry>& check_entry)
     {
         return !check_entry.has_value()
                || check_entry->state != UpdateCheckEntry::State::FoundUpdate
-               || check_entry->info.download_url.empty() || update_running;
+               || check_entry->info.download_url.empty();
     }
 
     yyjson::value ProjectAuthoringDocument(
@@ -3634,8 +3634,9 @@ namespace Das::Plugins::DasMaaPi
         // newPreset 无条件投影（preset 创建入口）；checkUpdate/applyUpdate 仅
         // project_interface 已配置（未配置时 checkUpdate 受理必失败，投影与
         // 后端命令可用性一致）；discoverAdbDevices 仅 Adb controller。
-        // disabled 门控：checkUpdate 跟 job running 位；applyUpdate 与
-        // ApplyUpdateButtonDisabled 同源（检查结果表条目 + running）。
+        // disabled 门控：checkUpdate 跟 job running 位；applyUpdate 是 toggle
+        // ——running 时变身「取消」且可点（点击 = 请求取消），idle 回「更新」
+        // 并按检查结果条目门控（ApplyUpdateButtonDisabled 同源）。
         {
             fields.as_array()->emplace_back(
                 MakeButtonField("newPreset", Translate("command.newPreset")));
@@ -3653,8 +3654,10 @@ namespace Das::Plugins::DasMaaPi
                     update_running));
                 fields.as_array()->emplace_back(MakeButtonField(
                     "applyUpdate",
-                    Translate("command.applyUpdate"),
-                    ApplyUpdateButtonDisabled(check_entry, update_running)));
+                    Translate(
+                        update_running ? "command.cancelUpdate"
+                                       : "command.applyUpdate"),
+                    !update_running && ApplyUpdateButtonDisabled(check_entry)));
             }
             if (catalog != nullptr
                 && IsCurrentControllerAdb(settings, *catalog))
@@ -5986,9 +5989,8 @@ namespace Das::Plugins::DasMaaPi
                         UpdateCheckStore::Instance().Get(job_pi_dir);
                     reporter->ReportUpdateButtonStates(
                         /*check_disabled=*/false,
-                        ApplyUpdateButtonDisabled(
-                            final_entry,
-                            /*update_running=*/false));
+                        ApplyUpdateButtonDisabled(final_entry),
+                        Translate("command.applyUpdate"));
                     reporter->Stop();
                 }
                 UpdateJobRegistry::Instance().Finish(slot);
@@ -6157,6 +6159,29 @@ namespace Das::Plugins::DasMaaPi
                 "adapter.interfacePath");
             return false;
         }
+        // toggle 受理分流（applyUpdate 运行中再点 = 请求取消，不再走防重入
+        // 拒绝）：running 时本次点击经 registry 请求取消——受理秒回成功，
+        // 终态（更新已中止 / 按钮复原）经既有 SSE 字段增量通道推送。替换
+        // 阶段是不可回退点（全有或全无）：迟到取消拒绝 + 诊断，UI 状态零
+        // 扰动。分流后 job 恰已收尾（NotFound）→ 落回既有受理路径。
+        if (UpdateJobRegistry::Instance().IsRunning(*pi_dir))
+        {
+            switch (UpdateJobRegistry::Instance().RequestCancel(*pi_dir))
+            {
+            case UpdateCancelOutcome::Cancelled:
+                return true;
+            case UpdateCancelOutcome::ReplaceStage:
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    Translate("diagnostic.updateFinalizeNotCancellable"),
+                    DAS_E_MAAPI_UPDATE_APPLY_FAILED,
+                    "applyUpdate");
+                return false;
+            case UpdateCancelOutcome::NotFound:
+                break;
+            }
+        }
         // 前置读检查结果表（checkUpdate 结果真相源，进程级存活）：需
         // FoundUpdate 条目（含 info 全量 + 条目内 progress_key——apply 的
         // reporter 与 check 同一流）。非 FoundUpdate（未检查过 / Checking /
@@ -6235,9 +6260,23 @@ namespace Das::Plugins::DasMaaPi
                 // 裸错误码降为附注。
                 UpdateStage            last_stage = UpdateStage::Download;
                 const ProgressReporter stage_tracking_cb =
-                    [&last_stage, &progress_cb](const UpdateProgress& progress)
+                    [&last_stage, &progress_cb, &slot, &reporter](
+                        const UpdateProgress& progress)
                 {
                     last_stage = progress.stage;
+                    // 替换入口 = 不可回退点：首个 Replace 回调置 slot 标记
+                    // （此后 registry RequestCancel 拒绝取消）并推按钮翻转
+                    // 为灰「更新」——迟到取消只剩诊断拒绝，按钮态由终态推送
+                    // 复原。标记先于推送：置位不依赖 reporter 存活。
+                    if (progress.stage == UpdateStage::Replace
+                        && !slot->replace_stage.exchange(true) && reporter)
+                    {
+                        reporter->ReportFieldPatch(
+                            "applyUpdate",
+                            {{std::string("label"),
+                              JsonString(Translate("command.applyUpdate"))},
+                             {std::string("disabled"), yyjson::value(true)}});
+                    }
                     if (progress_cb)
                     {
                         progress_cb(progress);
@@ -6319,17 +6358,17 @@ namespace Das::Plugins::DasMaaPi
                 }
                 // 按钮态推送（与 check job 同构）：值按 Finish 后状态计算；
                 // 检查结果表条目在 apply 全程保留（受理与完成均不清，交给
-                // 下次 checkUpdate 覆盖）→ 两键恢复 enabled。推送收在 Finish
-                // 之前（Finish 的锁/cv 是测试等待点的可见性边界）。
+                // 下次 checkUpdate 覆盖）→ applyUpdate 复原 enabled + label
+                // 「更新」（toggle 回 idle 形态）。推送收在 Finish 之前
+                // （Finish 的锁/cv 是测试等待点的可见性边界）。
                 if (reporter)
                 {
                     const auto final_entry =
                         UpdateCheckStore::Instance().Get(job_pi_dir);
                     reporter->ReportUpdateButtonStates(
                         /*check_disabled=*/false,
-                        ApplyUpdateButtonDisabled(
-                            final_entry,
-                            /*update_running=*/false));
+                        ApplyUpdateButtonDisabled(final_entry),
+                        Translate("command.applyUpdate"));
                     reporter->Stop();
                 }
                 UpdateJobRegistry::Instance().Finish(slot);

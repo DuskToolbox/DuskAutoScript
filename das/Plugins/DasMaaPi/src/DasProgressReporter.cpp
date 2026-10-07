@@ -662,13 +662,14 @@ namespace Plugins::DasMaaPi
 
         // 逐键白名单过滤（对象 patch 的键空间 = 允许运行时变的键；结构键改了
         // 断 fieldLayout 引用、value 禁入对象防标量/patch 双通道歧义）。白名单
-        // 外键丢弃 + i18n 报错——推送方是唯一校验位，传输侧哑管道不校验。
+        // = {disabled, label}（label 消费者：applyUpdate toggle 文案翻转）。
+        // 白名单外键丢弃 + i18n 报错——推送方是唯一校验位，传输侧哑管道不校验。
         yyjson::value object = Das::Utils::MakeYyjsonObject();
         auto          obj = object.as_object();
         size_t        kept = 0;
         for (auto& [key, value] : patch)
         {
-            if (key != "disabled")
+            if (key != "disabled" && key != "label")
             {
                 const auto tmpl =
                     TranslateKey(i18n, "diagnostic.progressPatchKeyRejected");
@@ -723,8 +724,9 @@ namespace Plugins::DasMaaPi
     }
 
     void DasProgressReporter::ReportUpdateButtonStates(
-        bool check_disabled,
-        bool apply_disabled)
+        bool               check_disabled,
+        bool               apply_disabled,
+        const std::string& apply_label_text)
     {
         if (!started_ || disconnected_.load())
         {
@@ -735,13 +737,20 @@ namespace Plugins::DasMaaPi
             return;
         }
 
-        // 每字段一个 {disabled:bool} 对象，同一 entry 双字段（前端逐 fieldName
-        // merge 进 fields[i]，按钮态实时恢复）。值构造复用 patch 白名单入口
-        // （构造对象 value 的唯一入口，键域一致由同一路径保证）。
-        const auto make_button_state_value = [](bool disabled)
+        // 每字段一个 {disabled:bool} 对象（applyUpdate 附带 label，键域与
+        // patch 白名单 {disabled,label} 一致），同一 entry 双字段（前端逐
+        // fieldName merge 进 fields[i]，按钮态实时恢复）。值构造复用 patch
+        // 白名单入口的键域（构造对象 value 的唯一路径）。
+        const auto make_button_state_value =
+            [](bool disabled, const std::string& label_text)
         {
             yyjson::value object = Das::Utils::MakeYyjsonObject();
             (*object.as_object())[std::string_view("disabled")] = disabled;
+            if (!label_text.empty())
+            {
+                (*object.as_object())[std::string_view("label")] =
+                    yyjson::value(std::string(label_text));
+            }
             auto serialized = Das::Utils::SerializeYyjsonValue(object);
             if (!serialized)
             {
@@ -755,10 +764,10 @@ namespace Plugins::DasMaaPi
         std::vector<DasProgressUpdateImpl::Field> fields;
         fields.emplace_back(
             "checkUpdate",
-            make_button_state_value(check_disabled));
+            make_button_state_value(check_disabled, std::string{}));
         fields.emplace_back(
             "applyUpdate",
-            make_button_state_value(apply_disabled));
+            make_button_state_value(apply_disabled, apply_label_text));
 
         DasPtr<Das::ExportInterface::IDasProgressUpdate> entry =
             DasProgressUpdateImpl::Make(key_, std::move(fields));

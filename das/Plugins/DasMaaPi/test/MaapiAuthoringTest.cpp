@@ -7973,11 +7973,23 @@ namespace
             latch_cv_.notify_all();
         }
 
+        // 对齐生产 BeastHttpClient 语义：RequestCancel 不是「放行」而是「打断」
+        // ——io_context stop 后在途请求以失败收尾。挂起中的 DownloadStream 被
+        // 打断后返回失败（toggle 取消链路的下载段终态来源）；计数供受理侧
+        // 断言 http 中断确被触达。
         void RequestCancel() override
         {
-            ReleaseDownload();
-            ReleaseChecks();
+            {
+                const std::lock_guard<std::mutex> lock(latch_mutex_);
+                download_cancelled_ = true;
+                release_latch_ = true;
+                release_checks_ = true;
+            }
+            ++request_cancel_count;
+            latch_cv_.notify_all();
         }
+
+        int request_cancel_count = 0;
 
         int CountRequestsWith(std::string_view fragment) const
         {
@@ -8035,6 +8047,12 @@ namespace
                             lock,
                             std::chrono::seconds(3),
                             [this] { return release_latch_; });
+                        if (download_cancelled_)
+                        {
+                            // 被打断（RequestCancel）而非放行：请求以失败收尾。
+                            out_status = 0;
+                            return DAS_E_FAIL;
+                        }
                     }
                     out_status = route.status;
                     if (route.status != 200)
@@ -8113,6 +8131,7 @@ namespace
         std::condition_variable latch_cv_;
         bool                    release_latch_ = false;
         bool                    release_checks_ = false;
+        bool                    download_cancelled_ = false;
     };
 
     // 临时项目目录（interface.json 所在目录 = D-89-01 更新目标）。唯一名防并行
@@ -8540,6 +8559,39 @@ namespace
         return false;
     }
 
+    // Apply 响应 diagnostics 数组中是否存在 message 含给定子串的条目
+    // （i18n 文案断言用——区分同错误码的不同拒绝原因）。
+    bool HasDiagnosticWithMessageContaining(
+        const yyjson::value& result,
+        std::string_view     needle)
+    {
+        auto obj = result.as_object();
+        if (!obj || !obj->contains(std::string_view("diagnostics")))
+        {
+            return false;
+        }
+        auto arr = (*obj)[std::string_view("diagnostics")].as_array();
+        if (!arr)
+        {
+            return false;
+        }
+        for (auto it = arr->begin(); it != arr->end(); ++it)
+        {
+            auto diag = it->as_object();
+            if (!diag || !diag->contains(std::string_view("message")))
+            {
+                continue;
+            }
+            const auto message =
+                (*diag)[std::string_view("message")].as_string().value_or("");
+            if (message.find(needle) != std::string::npos)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // RAII：构造时设进程级 GlobalLocale，析构时复位 en（进程单例，测试间
     // 隔离；与 MaapiProgressReporterTest 的同名 guard 同款）。投影 i18n
     // Translate 经 GlobalLocale 解析；需要精确文案断言（如已是最新/检查失败
@@ -8674,7 +8726,10 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateDispatchesAndEnablesApply)
     auto apply_cmd = FindRootField(document, "applyUpdate");
     ASSERT_TRUE(apply_cmd.has_value());
     EXPECT_EQ(FieldOf(*apply_cmd, "inputType").as_sint().value_or(0), 9);
-    EXPECT_TRUE(FieldOf(*apply_cmd, "disabled").as_bool().value_or(false));
+    // toggle（job running）：applyUpdate 变身「取消」且可点（disabled 键
+    // 缺失 == false，点击 = 请求取消）。
+    EXPECT_FALSE(FieldHasDisabled(apply_cmd));
+    EXPECT_EQ(FieldOf(*apply_cmd, "label").as_string().value_or(""), "Cancel");
     // 根级 commands 键退役：按钮统一为字段，commands 不再投影。
     EXPECT_FALSE(
         document.as_object().value().contains(std::string_view("commands")));
@@ -8799,6 +8854,8 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateDispatchesAndEnablesApply)
         const auto [apply_name, apply_value] = ReadEntryField(button_entry, 1);
         EXPECT_EQ(apply_name, "applyUpdate");
         EXPECT_NE(apply_value.find("\"disabled\":false"), std::string::npos);
+        // 终态推送复原 label（toggle 文案回 idle 形态「Update」）。
+        EXPECT_NE(apply_value.find("\"label\":\"Update\""), std::string::npos);
     }
     // 再投影：applyUpdate enabled（FoundUpdate + 有下载链接；缺失
     // disabled == false），checkUpdate enabled（slot idle）。
@@ -9761,13 +9818,18 @@ TEST(
     }
 }
 
-// 防重入：job 运行中（下载挂起）再次 applyUpdate → 拒绝（ok=false）+
-// error 级诊断（DAS_E_MAAPI_UPDATE_APPLY_FAILED）+ 无 accepted
-// commandResult；registry 仍 running。收尾经 fake 的 RequestCancel 释放
-// latch（同时覆盖取消覆盖方法本身）+ 等待缝收干净 slot。
-TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateRejectedWhileJobRunning)
+// toggle 受理（applyUpdate 运行中再点 = 请求取消，不再防重入拒绝）：下载
+// 挂起中二次 applyUpdate → 受理秒回成功 + accepted commandResult + registry
+// RequestCancel 生效（取消标志 + 在途 http 中断）→ 下载以取消终态收尾
+// （「已中止」文案）→ 按钮终态推送复原（disabled:false + label「更新」）；
+// pi_dir 旧内容保留 + 检查结果条目保留（可重试）。
+TEST(
+    MaapiUpdateCommandTest,
+    InvokeCommandApplyUpdateToggleRequestsCancelWhileRunning)
 {
     using namespace Das::Plugins::DasMaaPi;
+
+    GlobalLocaleGuard locale_guard("zh-cn");
 
     TempUpdateProject project;
     project.WriteInterface(
@@ -9785,12 +9847,19 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateRejectedWhileJobRunning)
 
     MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
     session.SetHttpClientForTest(http.get());
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+    session.SetProgressServiceForTest(service.Get());
+
     PiUpdateInfo info;
     info.has_update = true;
     info.version_name = "v1.2.0";
     info.download_url =
         "https://github.com/owner/repo/releases/download/v1.2.0/"
         "test-project-win-x86_64-v1.2.0.zip";
+    info.progress_key = "toggle-cancel-key";
     SeedFoundUpdateOutcome(project.Dir(), info);
 
     // 1) 首次受理成功（job 挂起在下载中）。
@@ -9804,27 +9873,342 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateRejectedWhileJobRunning)
     EXPECT_EQ(DocumentRevisionFromApplyResult(r1), 1);
     ASSERT_TRUE(UpdateJobRegistry::Instance().IsRunning(project.Dir()));
 
-    // 2) job 运行中二次 applyUpdate → 拒绝 + error 诊断（错误码 -10008）+
-    //    无 accepted commandResult + revision 不递增。
+    // 2) 运行中再点（toggle 语义）→ 受理秒回成功 + accepted commandResult
+    //    + 在途 http 中断被触达（fake 的 RequestCancel 计数）。
+    const auto cancel_start = std::chrono::steady_clock::now();
     DasPtr<Das::ExportInterface::IDasJson> r2_json;
     auto                                   c2 = ParseDasJson(
         "{\"baseRevision\":1,\"kind\":\"invokeCommand\","
         "\"payload\":{\"commandId\":\"applyUpdate\"}}");
     ASSERT_EQ(session.ApplyChange(c2.Get(), r2_json.Put()), DAS_S_OK);
+    const auto cancel_elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - cancel_start)
+            .count();
     auto r2 = ReadJsonInterface(r2_json.Get());
-    EXPECT_GE(CountDiagnosticsBySeverity(r2, "error"), 1u);
-    EXPECT_TRUE(HasDiagnosticWithCode(r2, static_cast<std::int64_t>(-10008)));
-    EXPECT_FALSE(CommandResultOf(r2).has_value());
-    EXPECT_EQ(DocumentRevisionFromApplyResult(r2), 1);
-    EXPECT_TRUE(UpdateJobRegistry::Instance().IsRunning(project.Dir()));
+    EXPECT_EQ(CountDiagnosticsBySeverity(r2, "error"), 0u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(r2), 2);
+    EXPECT_LT(cancel_elapsed_ms, 2000);
+    auto cancel_cr = CommandResultOf(r2);
+    ASSERT_TRUE(cancel_cr.has_value());
+    EXPECT_EQ(
+        std::string(cancel_cr->as_object()
+                        .value()[std::string_view("commandId")]
+                        .as_string()
+                        .value_or("")),
+        "applyUpdate");
+    EXPECT_TRUE(cancel_cr->as_object()
+                    .value()[std::string_view("data")]
+                    .as_object()
+                    .value()[std::string_view("accepted")]
+                    .as_bool()
+                    .value_or(false));
+    EXPECT_GE(http->request_cancel_count, 1);
 
-    // 3) 收尾：经 fake 的 RequestCancel 释放挂起下载，等待缝收干净 slot。
-    http->RequestCancel();
+    // 3) job 以取消终态收口：「更新失败：更新已中止」（取消映射文案）。
     ASSERT_TRUE(
         UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
             project.Dir(),
             std::chrono::seconds(10)));
     EXPECT_FALSE(UpdateJobRegistry::Instance().IsRunning(project.Dir()));
+    ASSERT_FALSE(fake->entries.empty());
+    {
+        const auto [name, value] =
+            ReadEntryField(OutcomeEntryOf(fake->entries), 0);
+        EXPECT_EQ(name, "updateProgress");
+        EXPECT_NE(value.find("已中止"), std::string::npos);
+    }
+    // 按钮终态推送复原：checkUpdate disabled:false；applyUpdate
+    // disabled:false + label「更新」（toggle 文案随终态回 idle 形态）。
+    {
+        auto*  button_entry = fake->entries.back().Get();
+        size_t field_count = 0;
+        ASSERT_EQ(button_entry->GetFieldCount(&field_count), DAS_S_OK);
+        ASSERT_EQ(field_count, 2u);
+        const auto [check_name, check_value] = ReadEntryField(button_entry, 0);
+        EXPECT_EQ(check_name, "checkUpdate");
+        EXPECT_NE(check_value.find("\"disabled\":false"), std::string::npos);
+        const auto [apply_name, apply_value] = ReadEntryField(button_entry, 1);
+        EXPECT_EQ(apply_name, "applyUpdate");
+        EXPECT_NE(apply_value.find("\"disabled\":false"), std::string::npos);
+        EXPECT_NE(apply_value.find("\"label\":\"更新\""), std::string::npos);
+    }
+
+    // pi_dir 旧内容保留（取消发生在下载段）+ 检查结果条目保留（可重试）。
+    const auto current =
+        ReadFileText(project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    EXPECT_NE(current.find("1.0.0"), std::string::npos);
+    {
+        const auto entry = UpdateCheckStore::Instance().Get(project.Dir());
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->state, UpdateCheckEntry::State::FoundUpdate);
+    }
+}
+
+// 下载段中断（PiUpdateService 直测）：挂起中的 DownloadStream 被
+// http->RequestCancel() 打断（对齐生产 io stop → 请求以失败收尾）且取消
+// 标志已置 → ApplyUpdate 返回 DAS_E_MAAPI_UPDATE_CANCELLED（区分于普通
+// 下载失败的 APPLY_FAILED——取消终态文案走「已中止」而非「下载失败」）。
+TEST(MaapiUpdateCommandTest, ApplyUpdateDownloadInterruptionReturnsCancelled)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    const std::string new_interface =
+        MakeUpdateInterface("1.2.0", "https://github.com/owner/repo");
+    auto http = std::make_shared<FakeUpdateHttpClient>();
+    http->AddRoute(
+        "/releases/download/v1.2.0/",
+        BuildStoredZip({{"interface.json", new_interface}}),
+        200);
+    http->BlockDownloads();
+
+    PiUpdateInfo info;
+    info.has_update = true;
+    info.version_name = "v1.2.0";
+    info.download_url =
+        "https://github.com/owner/repo/releases/download/v1.2.0/"
+        "test-project-win-x86_64-v1.2.0.zip";
+
+    std::atomic<bool> cancel_requested{false};
+    DasResult         result = DAS_S_OK;
+    std::thread       job(
+        [&]
+        {
+            result = PiUpdateService::ApplyUpdate(
+                project.Dir(),
+                info,
+                *http,
+                /*proxy_url=*/{},
+                /*mirrorchyan_cdk=*/{},
+                /*progress_reporter=*/{},
+                [&cancel_requested] { return cancel_requested.load(); });
+        });
+    cancel_requested.store(true);
+    http->RequestCancel();
+    job.join();
+
+    ASSERT_EQ(result, DAS_E_MAAPI_UPDATE_CANCELLED);
+    // 取消发生在下载段：pi_dir 未动。
+    const auto current =
+        ReadFileText(project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    EXPECT_NE(current.find("1.0.0"), std::string::npos);
+
+    // 对照：同型下载失败但无取消标志 → APPLY_FAILED（取消码只归属取消，
+    // 不吞普通失败）。
+    http->SetNetworkFailure(true);
+    const auto failed = PiUpdateService::ApplyUpdate(
+        project.Dir(),
+        info,
+        *http,
+        /*proxy_url=*/{},
+        /*mirrorchyan_cdk=*/{},
+        /*progress_reporter=*/{},
+        [] { return false; });
+    EXPECT_EQ(failed, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
+}
+
+// 替换入口按钮翻转（不可回退点入口推送）：apply job 首个 Replace 进度
+// 回调 → slot 置 replace 标记 + 经 patch 白名单入口推 applyUpdate
+// {label:「更新」, disabled:true}（迟到取消只剩诊断拒绝，按钮态由终态
+// 推送复原）。
+TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateFlipsButtonAtReplaceEntry)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    GlobalLocaleGuard locale_guard("zh-cn");
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    const std::string new_interface =
+        MakeUpdateInterface("1.2.0", "https://github.com/owner/repo");
+    auto http = std::make_shared<FakeUpdateHttpClient>();
+    http->AddRoute(
+        "/releases/download/v1.2.0/",
+        BuildStoredZip({{"interface.json", new_interface}}),
+        200);
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(http.get());
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+    session.SetProgressServiceForTest(service.Get());
+
+    PiUpdateInfo info;
+    info.has_update = true;
+    info.version_name = "v1.2.0";
+    info.download_url =
+        "https://github.com/owner/repo/releases/download/v1.2.0/"
+        "test-project-win-x86_64-v1.2.0.zip";
+    info.progress_key = "replace-flip-key";
+    SeedFoundUpdateOutcome(project.Dir(), info);
+
+    DasPtr<Das::ExportInterface::IDasJson> r1_json;
+    auto                                   c1 = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c1.Get(), r1_json.Put()), DAS_S_OK);
+    auto r1 = ReadJsonInterface(r1_json.Get());
+    EXPECT_EQ(CountDiagnosticsBySeverity(r1, "error"), 0u);
+
+    ASSERT_TRUE(
+        UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+            project.Dir(),
+            std::chrono::seconds(10)));
+
+    // 扫描全部 entry：存在 applyUpdate 字段、值含 label「更新」+
+    // disabled:true 的翻转帧（替换入口）。
+    bool flip_found = false;
+    for (const auto& entry : fake->entries)
+    {
+        size_t field_count = 0;
+        ASSERT_EQ(entry->GetFieldCount(&field_count), DAS_S_OK);
+        for (size_t index = 0; index < field_count; ++index)
+        {
+            const auto [name, value] = ReadEntryField(entry.Get(), index);
+            if (name == "applyUpdate"
+                && value.find("\"disabled\":true") != std::string::npos
+                && value.find("\"label\":\"更新\"") != std::string::npos)
+            {
+                flip_found = true;
+            }
+        }
+    }
+    EXPECT_TRUE(flip_found) << "replace-entry flip patch not pushed";
+}
+
+// RequestCancel 三态：无 slot → NotFound；运行中（下载/解压段）→ Cancelled
+// （取消标志置位 + 在途 http 中断被触达）；replace_stage 置位后 →
+// ReplaceStage 拒绝（不可回退点，标志与 http 均不动）。slot 复用后
+// replace_stage 复位（第二次运行可再取消）。
+TEST(MaapiUpdateCommandTest, UpdateJobRegistryRequestCancelOutcomeStates)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto& registry = UpdateJobRegistry::Instance();
+
+    // 无 slot → NotFound。
+    const auto missing_pi_dir =
+        std::filesystem::temp_directory_path()
+        / Das::Utils::PathFromUtf8("maapi_request_cancel_missing_dir");
+    EXPECT_EQ(
+        registry.RequestCancel(missing_pi_dir),
+        UpdateCancelOutcome::NotFound);
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+    auto http = std::make_shared<FakeUpdateHttpClient>();
+
+    const auto start_spinning_job = [&registry, &http, &project]
+    {
+        return registry.TryStart(
+            project.Dir(),
+            http,
+            [](const std::shared_ptr<UpdateJobSlot>& job_slot)
+            {
+                for (int spin = 0;
+                     spin < 2000 && !job_slot->cancel_requested.load();
+                     ++spin)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                UpdateJobRegistry::Instance().Finish(job_slot);
+            });
+    };
+
+    // 运行中 → Cancelled（标志 + http 中断）。
+    auto slot = start_spinning_job();
+    ASSERT_NE(slot, nullptr);
+    EXPECT_TRUE(registry.IsRunning(project.Dir()));
+    const int cancel_count_before = http->request_cancel_count;
+    EXPECT_EQ(
+        registry.RequestCancel(project.Dir()),
+        UpdateCancelOutcome::Cancelled);
+    EXPECT_EQ(http->request_cancel_count, cancel_count_before + 1);
+    ASSERT_TRUE(registry.WaitForSlotIdleForTest(
+        project.Dir(),
+        std::chrono::seconds(10)));
+
+    // slot 复用：replace_stage 复位后 → ReplaceStage 拒绝（标志与 http 不
+    // 动），收尾经直接置标志（RequestCancel 对 replace 阶段拒绝）。
+    auto replace_slot = start_spinning_job();
+    ASSERT_NE(replace_slot, nullptr);
+    replace_slot->replace_stage.store(true);
+    const int replace_cancel_count_before = http->request_cancel_count;
+    EXPECT_EQ(
+        registry.RequestCancel(project.Dir()),
+        UpdateCancelOutcome::ReplaceStage);
+    EXPECT_EQ(http->request_cancel_count, replace_cancel_count_before);
+    replace_slot->cancel_requested.store(true);
+    ASSERT_TRUE(registry.WaitForSlotIdleForTest(
+        project.Dir(),
+        std::chrono::seconds(10)));
+}
+
+// 迟到取消（替换阶段封锁，用户裁决 A）：job 已置 replace_stage 标记
+// （不可回退点——apply job 的阶段回调在首个 Replace 进度时置位，此处经
+// registry 直接占位 + 手动置位驱动）时 applyUpdate（toggle 语义下的取消
+// 点击）受理拒绝 + error 诊断（i18n「已进入最终应用阶段，无法取消」）+
+// 无 commandResult + revision 不递增；job 本身不受扰动（继续跑完）。
+TEST(
+    MaapiUpdateCommandTest,
+    InvokeCommandApplyUpdateLateCancelAtReplaceStageRejected)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    GlobalLocaleGuard locale_guard("zh-cn");
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    auto& registry = UpdateJobRegistry::Instance();
+    auto  slot = registry.TryStart(
+        project.Dir(),
+        /*http=*/nullptr,
+        [](const std::shared_ptr<UpdateJobSlot>& job_slot)
+        {
+            for (int spin = 0;
+                 spin < 2000 && !job_slot->cancel_requested.load();
+                 ++spin)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            UpdateJobRegistry::Instance().Finish(job_slot);
+        });
+    ASSERT_NE(slot, nullptr);
+    slot->replace_stage.store(true);
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_TRUE(HasDiagnosticWithCode(
+        result,
+        static_cast<std::int64_t>(-10008))); // DAS_E_MAAPI_UPDATE_APPLY_FAILED
+    EXPECT_TRUE(
+        HasDiagnosticWithMessageContaining(result, "已进入最终应用阶段"));
+    EXPECT_FALSE(CommandResultOf(result).has_value());
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+
+    // 收尾：直接置取消标志（RequestCancel 对 replace 阶段拒绝）。
+    slot->cancel_requested.store(true);
+    ASSERT_TRUE(registry.WaitForSlotIdleForTest(
+        project.Dir(),
+        std::chrono::seconds(10)));
 }
 
 // 受理占位与线程构造在 TryStart 锁内一体完成：不变量 running==true ⇒
@@ -9961,12 +10345,15 @@ TEST(MaapiProjectionTest, CommandsApplyUpdateDisabledDrivenByPendingState)
     settings.adapter.interface_path =
         "C:/das-authoring-apply-disabled-no-pending/interface.json";
 
-    // 无条目（未检查）→ applyUpdate disabled。
+    // 无条目（未检查）→ applyUpdate disabled；label 保持 idle 形态「Update」。
     auto doc_no_pending = ProjectAuthoringDocument(settings, &catalog, {}, 0);
     auto apply_no_pending = FindRootField(doc_no_pending, "applyUpdate");
     ASSERT_TRUE(apply_no_pending.has_value());
     EXPECT_TRUE(
         FieldOf(*apply_no_pending, "disabled").as_bool().value_or(false));
+    EXPECT_EQ(
+        FieldOf(*apply_no_pending, "label").as_string().value_or(""),
+        "Update");
     auto check_cmd = FindRootField(doc_no_pending, "checkUpdate");
     ASSERT_TRUE(check_cmd.has_value());
     EXPECT_FALSE(FieldHasDisabled(check_cmd));
@@ -10061,13 +10448,18 @@ TEST(MaapiProjectionTest, UpdateSectionProgressLeadsThenVersionAndReleaseNote)
         << "remaining update section entries must keep fields[] order";
 }
 
-// 后台更新 job 运行态投影（后端 registry 状态驱动）：受理响应自身的
-// document（ApplyChange dispatch 先于投影，TryStart 已生效）中 checkUpdate
-// 与 applyUpdate 均 disabled；slot idle 后投影恢复既有条件——checkUpdate
-// 恒可点（无 disabled），applyUpdate 回到 pending 驱动 enabled。
-TEST(MaapiProjectionTest, UpdateCommandsDisabledWhileJobRunningAndIdleAfter)
+// 后台更新 job 运行态投影（toggle 语义）：受理响应自身的 document
+// （ApplyChange dispatch 先于投影，TryStart 已生效）中 checkUpdate disabled；
+// applyUpdate 变身「取消」且可点（点击 = 请求取消）。slot idle 后投影恢复：
+// checkUpdate 恒可点（无 disabled），applyUpdate 回「更新」+ pending 驱动
+// enabled（FoundUpdate + 有下载链接）。
+TEST(
+    MaapiProjectionTest,
+    UpdateCommandsToggleLabelWhileJobRunningAndRestoreAfter)
 {
     using namespace Das::Plugins::DasMaaPi;
+
+    GlobalLocaleGuard locale_guard("zh-cn");
 
     TempUpdateProject project;
     project.WriteInterface(
@@ -10093,7 +10485,8 @@ TEST(MaapiProjectionTest, UpdateCommandsDisabledWhileJobRunningAndIdleAfter)
         "test-project-win-x86_64-v1.2.0.zip";
     SeedFoundUpdateOutcome(project.Dir(), info);
 
-    // 受理 → 响应 document 已含双键 disabled。
+    // 受理 → 响应 document：checkUpdate disabled；applyUpdate label=取消、
+    // 可点（disabled 键缺失 == false）。
     DasPtr<Das::ExportInterface::IDasJson> r1_json;
     auto                                   c1 = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
@@ -10107,11 +10500,12 @@ TEST(MaapiProjectionTest, UpdateCommandsDisabledWhileJobRunningAndIdleAfter)
     EXPECT_TRUE(FieldOf(*check_cmd, "disabled").as_bool().value_or(false));
     auto apply_cmd = FindRootField(document, "applyUpdate");
     ASSERT_TRUE(apply_cmd.has_value());
-    EXPECT_TRUE(FieldOf(*apply_cmd, "disabled").as_bool().value_or(false));
+    EXPECT_FALSE(FieldHasDisabled(apply_cmd));
+    EXPECT_EQ(FieldOf(*apply_cmd, "label").as_string().value_or(""), "取消");
 
     // 释放 + 等待 idle → 投影恢复：checkUpdate 无 disabled，applyUpdate
-    // 回到检查结果条目条件（FoundUpdate + 有下载链接 → enabled，缺失
-    // disabled == false）。
+    // 回到检查结果条目条件（FoundUpdate + 有下载链接 → enabled）+ label
+    // 复原「更新」。
     http->ReleaseDownload();
     ASSERT_TRUE(
         UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
@@ -10128,6 +10522,7 @@ TEST(MaapiProjectionTest, UpdateCommandsDisabledWhileJobRunningAndIdleAfter)
     auto idle_apply = FindRootField(idle_document, "applyUpdate");
     ASSERT_TRUE(idle_apply.has_value());
     EXPECT_FALSE(FieldHasDisabled(idle_apply));
+    EXPECT_EQ(FieldOf(*idle_apply, "label").as_string().value_or(""), "更新");
 }
 
 // D-89-07 修订：项目设置 section 投影两个只读版本字段。resourceVersion 值 =

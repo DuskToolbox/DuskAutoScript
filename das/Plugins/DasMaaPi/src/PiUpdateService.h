@@ -162,10 +162,12 @@ namespace Das::Plugins::DasMaaPi
         // （与检查请求一致）。
         // progress_reporter 为空时不产生进度回调；非空时按阶段（下载/解压/
         // 替换）上报进度，供 IPC 推送链路消费。
-        // cancel_check 非空时在解压循环每条目与替换循环每文件开头轮询，
-        // 返回 true 即中止（返回 DAS_E_MAAPI_UPDATE_CANCELLED，旧目录/
-        // pi_dir 按既有失败契约处理）——使进程退出收尾对本地 IO 阶段的
-        // join 有界。空 = 不可取消（既有行为）。
+        // cancel_check 非空时在下载失败分支与解压循环每条目开头轮询，返回
+        // true 即中止（返回 DAS_E_MAAPI_UPDATE_CANCELLED，旧目录/pi_dir 按
+        // 既有失败契约处理）——取消窗口只覆盖下载+解压（占时长 95%+）；
+        // 替换阶段是不可回退点（全有或全无），不观察取消、无轮询点（替换
+        // 中段取消会留下混合坏态且侧备份已逐文件删除，无法自动回滚）。
+        // 空 = 不可取消（既有行为）。
         static DasResult ApplyUpdate(
             const std::filesystem::path& pi_dir,
             const PiUpdateInfo&          info,

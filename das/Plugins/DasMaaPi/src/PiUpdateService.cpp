@@ -1053,6 +1053,9 @@ namespace Das::Plugins::DasMaaPi
         // std::filesystem_error）时把新版本移入 {pi_dir}/.pending/{rel}
         // 并警告， 其余文件正常替换。interface.json 自身被锁（session 正持有）→
         // 整体 失败返回 -10008，pi_dir 保持完整（含原 interface.json）。
+        // 替换 = 不可回退点（全有或全无）：不观察取消——替换中段取消会留下
+        // 「新 interface.json + 旧资源」混合坏态且侧备份已逐文件删除，无法
+        // 自动回滚。
         //
         // WR-03 加固：1) 先固定完整文件清单并确保 interface.json 最先处理——
         // 若它被锁，在任何其他文件被触碰前即返回 -10008，旧目录保持完整，满足
@@ -1061,8 +1064,7 @@ namespace Das::Plugins::DasMaaPi
         // 路径消失（可恢复侧备份，避免文件丢失）。
         DasResult ReplaceFilesWithPending(
             const std::filesystem::path& extract_dir,
-            const std::filesystem::path& pi_dir,
-            const std::function<bool()>& cancel_check)
+            const std::filesystem::path& pi_dir)
         {
             std::vector<std::filesystem::path> files;
             std::error_code                    ec;
@@ -1091,15 +1093,6 @@ namespace Das::Plugins::DasMaaPi
             std::vector<std::string> pending_files;
             for (const auto& src : files)
             {
-                // 取消观察缝：每文件开头轮询，命中即中止（interface.json 最
-                // 先处理，此前已替换的文件保持新版本，pi_dir 整体一致性由
-                // 备份目录保底）。
-                if (cancel_check && cancel_check())
-                {
-                    LogWarning(
-                        "PiUpdateService: update cancelled during replace");
-                    return DAS_E_MAAPI_UPDATE_CANCELLED;
-                }
                 const auto rel = src.lexically_relative(extract_dir);
                 const auto target = pi_dir / rel;
                 std::filesystem::create_directories(target.parent_path(), ec);
@@ -1460,6 +1453,12 @@ namespace Das::Plugins::DasMaaPi
                     download_status,
                     static_cast<int>(download_result),
                     download_elapsed_ms));
+            // 下载被取消打断（RequestCancel 中断在途 HTTP）：走取消终态，
+            // 区分于普通下载失败（终态文案「已中止」而非「下载失败」）。
+            if (cancel_check && cancel_check())
+            {
+                return DAS_E_MAAPI_UPDATE_CANCELLED;
+            }
             return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
         }
         LogInfo(
@@ -1551,7 +1550,7 @@ namespace Das::Plugins::DasMaaPi
                     ec.message()));
             // 回滚：rename 失败时 pi_dir 保持原样（未移动），无需恢复。
             const auto fallback_result =
-                ReplaceFilesWithPending(extract_dir, pi_dir, cancel_check);
+                ReplaceFilesWithPending(extract_dir, pi_dir);
             LogInfo(
                 DAS::fmt::format(
                     "PiUpdateService: update replace (per-file) finished "

@@ -49,6 +49,7 @@ namespace Das::Plugins::DasMaaPi
             slots_.emplace(key, slot);
         }
         slot->cancel_requested.store(false);
+        slot->replace_stage.store(false);
         slot->running.store(true);
         slot->http = std::move(http);
         // worker 线程构造在锁内完成（不变量 running==true ⇒
@@ -78,6 +79,28 @@ namespace Das::Plugins::DasMaaPi
         const auto                        it =
             slots_.find(Das::Utils::PathToUtf8(pi_dir.lexically_normal()));
         return it != slots_.end() && it->second->running.load();
+    }
+
+    UpdateCancelOutcome UpdateJobRegistry::RequestCancel(
+        const std::filesystem::path& pi_dir)
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto                        it =
+            slots_.find(Das::Utils::PathToUtf8(pi_dir.lexically_normal()));
+        if (it == slots_.end() || !it->second->running.load())
+        {
+            return UpdateCancelOutcome::NotFound;
+        }
+        if (it->second->replace_stage.load())
+        {
+            return UpdateCancelOutcome::ReplaceStage;
+        }
+        it->second->cancel_requested.store(true);
+        if (it->second->http != nullptr)
+        {
+            it->second->http->RequestCancel();
+        }
+        return UpdateCancelOutcome::Cancelled;
     }
 
     void UpdateJobRegistry::Finish(const std::shared_ptr<UpdateJobSlot>& slot)

@@ -1227,10 +1227,13 @@ TEST(PiUpdateService, ApplyUpdateCancelDuringExtractionReturnsCancelled)
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
-TEST(PiUpdateService, ApplyUpdateCancelDuringReplaceReturnsCancelled)
+TEST(PiUpdateService, ApplyUpdateReplaceStageIgnoresCancelCheck)
 {
-    // 替换循环取消：被锁文件触发逐文件降级路径后，首文件开头命中取消 →
-    // 专用取消码，pi_dir 保留旧内容。
+    // 替换 = 不可回退点（全有或全无）：取消观察缝只覆盖下载+解压；进入替换
+    // 后 cancel_check 即使命中，替换也照常完成——替换中段取消会留下
+    // 「新 interface.json + 旧资源」混合坏态且侧备份已逐文件删除，无法自动
+    // 回滚，故从机制上消除。进度回调在首个 Replace 阶段事件处翻转取消
+    // 标志（模拟迟到取消请求落在替换入口）。
     FakePiHttpClient http;
     http.AddRoute(
         "/download/package.zip",
@@ -1241,41 +1244,39 @@ TEST(PiUpdateService, ApplyUpdateCancelDuringReplaceReturnsCancelled)
 
     TempPiProject project;
     project.WriteInterface(MakeInterface("1.0.0", "", ""));
-    {
-        std::ofstream locked(
-            project.Dir() / DAS_PATH_LITERAL("MaaFramework.dll"),
-            std::ios::binary);
-        locked << "old-dll-bytes";
-        locked.flush();
-    }
-    // 持有句柄阻止目录整体 rename → 逐文件替换降级路径。
-    std::ifstream lock(
-        project.Dir() / DAS_PATH_LITERAL("MaaFramework.dll"),
-        std::ios::binary);
 
     PiUpdateInfo info;
     info.version_name = "1.2.0";
     info.download_url = "https://example.com/download/package.zip";
 
+    bool       cancel_requested = false;
+    const auto flip_on_replace =
+        [&cancel_requested](const UpdateProgress& progress)
+    {
+        if (progress.stage == UpdateStage::Replace)
+        {
+            cancel_requested = true;
+        }
+    };
     const auto result = PiUpdateService::ApplyUpdate(
         project.Dir(),
         info,
         http,
         /*proxy_url=*/{},
         /*mirrorchyan_cdk=*/{},
-        /*progress_reporter=*/{},
-        /*cancel_check=*/[] { return true; });
-    lock.close();
+        flip_on_replace,
+        [&cancel_requested] { return cancel_requested; });
 
-    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_CANCELLED);
+    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(cancel_requested);
 
-    // interface.json 未被替换（首文件处理前即中止）。
-    std::ifstream old_interface(
+    // 替换照常完成：interface.json 已是新版。
+    std::ifstream new_interface(
         project.Dir() / DAS_PATH_LITERAL("interface.json"));
     std::string content(
-        (std::istreambuf_iterator<char>(old_interface)),
+        (std::istreambuf_iterator<char>(new_interface)),
         std::istreambuf_iterator<char>());
-    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+    EXPECT_EQ(content, "{\"version\":\"1.2.0\"}");
 }
 
 TEST(PiUpdateService, ApplyUpdateLockedFileStagedToPending)

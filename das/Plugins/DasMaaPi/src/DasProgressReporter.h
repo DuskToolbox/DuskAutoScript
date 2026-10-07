@@ -72,18 +72,26 @@ namespace Plugins::DasMaaPi
             const std::string&  failure_detail);
 
         // 字段属性 patch 推送（构造对象 value 字段增量的唯一入口）：patch 逐键
-        // 过白名单，白名单外键丢弃该键 + i18n 报错（推送方是唯一校验位，传输
-        // 侧哑管道不校验）；过滤后仍有键则组装 {key:value} 对象，经序列化往返
-        // 转 IDasJson 上报（照 MakeJsonFieldValue 范式）。全键被丢 / 未 Start /
-        // 已断开时为空操作。
+        // 过白名单（{disabled, label}——label 首个消费者是 applyUpdate toggle
+        // 文案翻转：替换入口推 {label:「更新」, disabled:true}），白名单外键
+        // 丢弃该键 + i18n 报错（推送方是唯一校验位，传输侧哑管道不校验）；
+        // 过滤后仍有键则组装 {key:value} 对象，经序列化往返转 IDasJson 上报
+        // （照 MakeJsonFieldValue 范式）。全键被丢 / 未 Start / 已断开时为
+        // 空操作。
         void ReportFieldPatch(
             std::string_view                                   field_name,
             std::vector<std::pair<std::string, yyjson::value>> patch);
 
-        // 更新按钮态推送：单 entry 双字段（checkUpdate / applyUpdate 各携带
-        // {disabled:bool} 对象 value）。job 终态在 Finish 之后调用（IsRunning
-        // 已复位，推送值与再投影一致——按钮灰死 bug 的修复链）。
-        void ReportUpdateButtonStates(bool check_disabled, bool apply_disabled);
+        // 更新按钮态推送：单 entry 双字段（checkUpdate 携带 {disabled:bool}；
+        // applyUpdate 附带 label——toggle 文案随终态复原 idle 形态，键域与
+        // patch 白名单一致）。job 终态在 Finish 之后调用（IsRunning 已复位，
+        // 推送值与再投影一致——按钮灰死 bug 的修复链）。apply_label_text 由
+        // 调用方 Translate（reporter 不自带 command.* 键解析，与既有 i18n
+        // 职责边界一致）。
+        void ReportUpdateButtonStates(
+            bool               check_disabled,
+            bool               apply_disabled,
+            const std::string& apply_label_text);
 
         // 该 key 所有 SSE 订阅断开（OnAllSubscribersDisconnected 命中 own
         // key）。

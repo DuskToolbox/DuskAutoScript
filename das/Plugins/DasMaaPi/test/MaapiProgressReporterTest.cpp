@@ -682,8 +682,8 @@ TEST(MaapiProgressReporterTest, ReportCheckOutcomeWithoutStartDoesNotPush)
 // ============================================================================
 // ReportFieldPatch / ReportUpdateButtonStates：字段属性 patch 推送（对象
 // value 字段增量的白名单构造入口——推送方是唯一校验位，传输侧哑管道不校验；
-// 白名单 = {disabled}，结构键改了断 fieldLayout 引用、value 禁入对象防
-// 标量/patch 双通道歧义）。
+// 白名单 = {disabled, label}，结构键改了断 fieldLayout 引用、value 禁入对象
+// 防标量/patch 双通道歧义）。
 // ============================================================================
 
 // 捕获 g_logger 消息（DAS_LOG_ERROR 的 i18n 报错文案断言用；测试静态链
@@ -732,7 +732,8 @@ private:
     std::shared_ptr<CapturingSink> sink_;
 };
 
-// 白名单外键（name/value/label）逐键丢弃、合法键照常发出；每个被丢键一条
+// 白名单外键（name/value）逐键丢弃、合法键（disabled/label——label 首个
+// 消费者是 applyUpdate toggle 文案翻转）照常发出；每个被丢键一条
 // DAS_LOG_ERROR（i18n diagnostic.progressPatchKeyRejected 文案带键名）。
 TEST(MaapiProgressReporterTest, ReportFieldPatchDropsKeysOutsideWhitelist)
 {
@@ -752,29 +753,29 @@ TEST(MaapiProgressReporterTest, ReportFieldPatchDropsKeysOutsideWhitelist)
     ASSERT_TRUE(reporter->Start());
 
     reporter->ReportFieldPatch(
-        "checkUpdate",
+        "applyUpdate",
         {{std::string("disabled"), yyjson::value(false)},
+         {std::string("label"),
+          yyjson::value(std::string("取消"), yyjson::copy_string)},
          {std::string("name"),
           yyjson::value(std::string("oops"), yyjson::copy_string)},
          {std::string("value"),
-          yyjson::value(std::string("oops"), yyjson::copy_string)},
-         {std::string("label"),
           yyjson::value(std::string("oops"), yyjson::copy_string)}});
 
     ASSERT_EQ(fake->entries.size(), 1u);
     const auto fields = ReadEntryFields(fake->entries.front().Get());
     ASSERT_EQ(fields.size(), 1u);
-    EXPECT_EQ(fields.at("checkUpdate"), R"({"disabled":false})");
-    // 三个被丢键各一条报错（文案带键名）。
+    EXPECT_EQ(fields.at("applyUpdate"), R"({"disabled":false,"label":"取消"})");
+    // 两个被丢键各一条报错（文案带键名）。
     EXPECT_TRUE(log_capture.Contains("已丢弃：name"));
     EXPECT_TRUE(log_capture.Contains("已丢弃：value"));
-    EXPECT_TRUE(log_capture.Contains("已丢弃：label"));
 
     reporter->Stop();
 }
 
-// 更新按钮态推送：单 entry 双字段（checkUpdate/applyUpdate 各携带
-// {disabled:bool} 对象 value）——job 终态推送的 payload 形状钉。
+// 更新按钮态推送：单 entry 双字段（checkUpdate {disabled}；applyUpdate 附带
+// label——toggle 文案随终态复原 idle 形态，键域与 patch 白名单一致）——job
+// 终态推送的 payload 形状钉。
 TEST(MaapiProgressReporterTest, ReportUpdateButtonStatesPushesPairInOneEntry)
 {
     DasPtr<Das::ExportInterface::IDasProgressService> service =
@@ -786,14 +787,15 @@ TEST(MaapiProgressReporterTest, ReportUpdateButtonStatesPushesPairInOneEntry)
 
     reporter->ReportUpdateButtonStates(
         /*check_disabled=*/false,
-        /*apply_disabled=*/true);
+        /*apply_disabled=*/true,
+        /*apply_label_text=*/"更新");
 
     ASSERT_EQ(fake->entries.size(), 1u);
     EXPECT_EQ(ReadEntryKey(fake->entries.front().Get()), "key1");
     const auto fields = ReadEntryFields(fake->entries.front().Get());
     ASSERT_EQ(fields.size(), 2u);
     EXPECT_EQ(fields.at("checkUpdate"), R"({"disabled":false})");
-    EXPECT_EQ(fields.at("applyUpdate"), R"({"disabled":true})");
+    EXPECT_EQ(fields.at("applyUpdate"), R"({"disabled":true,"label":"更新"})");
 
     reporter->Stop();
 }
