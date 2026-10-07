@@ -152,8 +152,8 @@
         },
         "inputType": {
           "type": "integer",
-          "enum": [0, 1, 2, 3, 4, 5, 6, 7, 8],
-          "$comment": "0=plain 1=select 2=multiselect 3=long-input 4=region-select 5=filePath 6=directoryPath 7=markdown (readonly, release note/welcome; value may be markdown text or http(s) URL — URL triggers client-side fetch + RFC 7234 cache + markdown render). 8=time (24h \"HH:MM\" string; requires valueType=4). The vocabulary is closed at 0-8: component-domain type words (taskRepositoryRef) never extend it — their typed dispatch rides on the optional \"type\" config type word instead."
+          "enum": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+          "$comment": "0=plain 1=select 2=multiselect 3=long-input 4=region-select 5=filePath 6=directoryPath 7=markdown (readonly, release note/welcome; value may be markdown text or http(s) URL — URL triggers client-side fetch + RFC 7234 cache + markdown render). 8=time (24h \"HH:MM\" string; requires valueType=4). 9=button (name=commandId; apply template rides on the FieldDescriptor; disabled coexists with readonly; value is always null; requires valueType=4 and apply). The vocabulary is closed at 0-9: component-domain type words (taskRepositoryRef) never extend it — their typed dispatch rides on the optional \"type\" config type word instead."
         },
         "value": { "$ref": "#/$defs/JsonValue" },
         "type": {
@@ -176,6 +176,19 @@
         },
         "validation": { "$ref": "#/$defs/FieldValidation" },
         "icon": { "$ref": "#/$defs/IconString" },
+        "apply": {
+          "$ref": "#/$defs/CommandApplyTemplate",
+          "$comment": "Button field (inputType=9) submit template riding on the FieldDescriptor itself."
+        },
+        "disabled": {
+          "type": "boolean",
+          "$comment": "Button field availability driven by backend state; absent means false. Pushed to clients via object-valued SSE setValue field increments ({\"disabled\": bool} merged into the matching fields[i])."
+        },
+        "confirmation": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Only allowed when apply is present."
+        },
         "commands": {
           "type": "array",
           "items": { "$ref": "#/$defs/CommandDescriptor" }
@@ -211,6 +224,21 @@
             "required": ["valueType"]
           },
           "$comment": "inputType==8 (time) requires valueType==4 (string \"HH:MM\" 24h); the C++ validator enforces the same."
+        },
+        {
+          "if": {
+            "properties": {
+              "inputType": { "const": 9 }
+            },
+            "required": ["inputType"]
+          },
+          "then": {
+            "properties": {
+              "valueType": { "const": 4 }
+            },
+            "required": ["valueType", "apply"]
+          },
+          "$comment": "inputType==9 (button) requires valueType==4 and the apply template; the C++ validator enforces the same."
         }
       ]
     },

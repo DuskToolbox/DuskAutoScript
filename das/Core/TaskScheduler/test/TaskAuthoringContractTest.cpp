@@ -3403,29 +3403,11 @@ TEST(TaskAuthoringContractTest, GraphNodePortDynamicKeyValidation)
     EXPECT_EQ(r_bad_dynamic.error_kind, "invalidPortDynamic");
 }
 
-// inputType 词表保持 0-8 官方词表：9（曾短暂用于仓库条目选择器）与 10
-// 一并拒绝——taskRepositoryRef 的分派走字段 config 类型词（"type" 键），
-// 不在 inputType 上扩词。
-TEST(TaskAuthoringContractTest, RepositoryRefInputTypeNineRejected)
+// inputType 词表保持 0-9 官方词表（9=button）：10 拒绝——taskRepositoryRef
+// 的分派走字段 config 类型词（"type" 键），不在 inputType 上扩词；button
+// 语义（apply 模板/valueType=4）由 ButtonField* 用例覆盖。
+TEST(TaskAuthoringContractTest, RepositoryRefInputTypeTenRejected)
 {
-    auto unsupported = ParseJson(R"json({
-        "contractVersion": 1,
-        "viewKind": "graph",
-        "revision": 0,
-        "graph": {"nodes": [{"id": "n", "fields": [
-            {
-                "name": "repositoryRef",
-                "label": "repositoryRef",
-                "valueType": 16,
-                "inputType": 9,
-                "value": null
-            }
-        ]}]}
-    })json");
-    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(unsupported);
-    EXPECT_FALSE(r1.valid);
-    EXPECT_EQ(r1.error_kind, "invalidInputType");
-
     auto ten = ParseJson(R"json({
         "contractVersion": 1,
         "viewKind": "graph",
@@ -3533,8 +3515,8 @@ TEST(TaskAuthoringContractTest, FieldTaskGuidOptionalStringKey)
     EXPECT_EQ(r2.error_kind, "invalidFieldTaskGuid");
 }
 
-// schema FieldDescriptor.inputType enum 不含 9（与 C++ INPUT_TYPES 对账），
-// 且 "type"（config 类型词）属性在 schema 内声明为字符串。
+// schema FieldDescriptor.inputType enum 含 9（button，与 C++ INPUT_TYPES
+// 对账）且不含 10，"type"（config 类型词）属性在 schema 内声明为字符串。
 TEST(TaskAuthoringContractTest, SchemaJsonInputTypeVocabularyAndTypeWordLocked)
 {
     const auto schema_path = ResolveSchemaJsonPath();
@@ -3570,7 +3552,7 @@ TEST(TaskAuthoringContractTest, SchemaJsonInputTypeVocabularyAndTypeWordLocked)
         ASSERT_TRUE(value.has_value());
         input_type_values.insert(*value);
     }
-    EXPECT_FALSE(input_type_values.contains(9));
+    EXPECT_TRUE(input_type_values.contains(9));
     EXPECT_FALSE(input_type_values.contains(10));
     for (int64_t legal : {0, 1, 2, 3, 4, 5, 6, 7, 8})
     {
@@ -4586,6 +4568,114 @@ TEST(TaskAuthoringContractTest, FieldDescriptorCommandsValidated)
     auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
     EXPECT_FALSE(r.valid);
     EXPECT_EQ(r.error_kind, "commandActionXorRequired");
+}
+
+// =============================================================================
+// button inputType=9（apply 模板挂字段描述符）
+// =============================================================================
+
+// button 字段正例：name=commandId、valueType=4、inputType=9、value=null、
+// apply={kind,payload} 在场；disabled/confirmation/icon 可选在场。
+TEST(TaskAuthoringContractTest, ButtonFieldValidPasses)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {
+                "name": "checkUpdate", "label": "检查更新",
+                "valueType": 4, "inputType": 9, "value": null,
+                "apply": {"kind": "invokeCommand", "payload": {"commandId": "checkUpdate"}},
+                "disabled": true,
+                "confirmation": "确认执行？",
+                "icon": "https://example.com/icon.png"
+            },
+            {
+                "name": "applyUpdate", "label": "应用更新",
+                "valueType": 4, "inputType": 9, "value": null,
+                "apply": {"kind": "invokeCommand", "payload": {"commandId": "applyUpdate"}}
+            }
+        ],
+        "fieldLayout": [
+            {"fieldName": "checkUpdate"},
+            {"fieldName": "applyUpdate"}
+        ]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(r.valid) << r.message;
+}
+
+// it=9 缺 apply → FAIL missingField。
+TEST(TaskAuthoringContractTest, ButtonFieldRequiresApplyTemplate)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "b", "label": "按钮", "valueType": 4,
+            "inputType": 9, "value": null
+        }]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "missingField");
+}
+
+// it=9 valueType!=4 → FAIL invalidValueType。
+TEST(TaskAuthoringContractTest, ButtonFieldRequiresStringValueType)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "b", "label": "按钮", "valueType": 0,
+            "inputType": 9, "value": null,
+            "apply": {"kind": "invokeCommand", "payload": {"commandId": "b"}}
+        }]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "invalidValueType");
+}
+
+// confirmation 无 apply 在场 → FAIL confirmationRequiresApply。
+TEST(TaskAuthoringContractTest, ButtonFieldConfirmationRequiresApply)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "b", "label": "按钮", "valueType": 4,
+            "inputType": 0, "value": "",
+            "confirmation": "确认执行？"
+        }]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "confirmationRequiresApply");
+}
+
+// 扩键后白名单仍封口：未知键 → FAIL unknownField。
+TEST(TaskAuthoringContractTest, ButtonFieldRejectsUnknownField)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "b", "label": "按钮", "valueType": 4,
+            "inputType": 9, "value": null,
+            "apply": {"kind": "invokeCommand", "payload": {"commandId": "b"}},
+            "buttonStyle": "primary"
+        }]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "unknownField");
 }
 
 // =============================================================================

@@ -44,7 +44,7 @@ namespace Das::Core::TaskScheduler
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 
-        constexpr std::array<int, 9> INPUT_TYPES{0, 1, 2, 3, 4, 5, 6, 7, 8};
+        constexpr std::array<int, 10> INPUT_TYPES{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
         bool IsOneOf(
             std::string_view value,
@@ -205,6 +205,12 @@ namespace Das::Core::TaskScheduler
         AuthoringValidationResult ValidateCommandDescriptorArray(
             const yyjson::value&   arr,
             std::set<std::string>* seen_ids_out = nullptr);
+
+        // Forward declaration — 按钮字段(inputType=9) 的 apply 模板复用同一
+        // 校验（定义位置在 CommandDescriptor 段，先于定义被 FieldDescriptor
+        // 引用）。
+        AuthoringValidationResult ValidateCommandApplyTemplate(
+            const yyjson::value& apply);
 
         // D-84-11 strict Diagnostic: required severity/message, optional
         // integer code, optional string path, no other fields.
@@ -508,6 +514,25 @@ namespace Das::Core::TaskScheduler
                     "inputType 8 (time) requires valueType=4 (string \"HH:MM\")");
             }
 
+            // button(inputType=9) 必须 valueType=4 且 apply 模板在场：按钮
+            // 的提交语义（kind/payload）挂在字段描述符上，前端 click 照模板
+            // 提交；value 恒投影 null（JsonValue 已放行，此处不特判）。
+            if (it == 9)
+            {
+                if (vt != 4)
+                {
+                    return Fail(
+                        "invalidValueType",
+                        "inputType 9 (button) requires valueType=4");
+                }
+                if (!obj.contains("apply"))
+                {
+                    return Fail(
+                        "missingField",
+                        "inputType 9 (button) requires apply template");
+                }
+            }
+
             if (obj.contains("candidates"))
             {
                 if (it != 1 && it != 2)
@@ -545,6 +570,46 @@ namespace Das::Core::TaskScheduler
                 return r;
             }
 
+            // 按钮字段三键：apply 复用 CommandApplyTemplate 校验（单一实现
+            // 不重写）；disabled 缺失视为 false（与 readonly 同形态）；
+            // confirmation 仅 apply 在场时合法（沿用 CommandDescriptor 上
+            // confirmation 的约束语义）。
+            if (obj.contains("apply"))
+            {
+                if (auto r = ValidateCommandApplyTemplate(obj["apply"]);
+                    !r.valid)
+                {
+                    return r;
+                }
+            }
+            if (obj.contains("disabled") && !obj["disabled"].is_bool())
+            {
+                return Fail(
+                    "invalidDisabled",
+                    "FieldDescriptor.disabled must be bool");
+            }
+            if (obj.contains("confirmation"))
+            {
+                if (!obj.contains("apply"))
+                {
+                    return Fail(
+                        "confirmationRequiresApply",
+                        "confirmation only allowed with apply");
+                }
+                if (!HasStringField(obj, "confirmation"))
+                {
+                    return Fail(
+                        "invalidConfirmation",
+                        "confirmation must be string");
+                }
+                if (obj["confirmation"].as_string().value().empty())
+                {
+                    return Fail(
+                        "invalidConfirmation",
+                        "confirmation must be non-empty");
+                }
+            }
+
             if (obj.contains("commands"))
             {
                 if (auto r = ValidateCommandDescriptorArray(obj["commands"]);
@@ -569,6 +634,9 @@ namespace Das::Core::TaskScheduler
                      "candidates",
                      "validation",
                      "icon",
+                     "apply",
+                     "disabled",
+                     "confirmation",
                      "commands"}))
             {
                 return Fail(
