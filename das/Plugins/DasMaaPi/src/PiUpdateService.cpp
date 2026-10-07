@@ -1442,7 +1442,11 @@ namespace Das::Plugins::DasMaaPi
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 rate_tracker.Now() - download_start)
                 .count();
-        if (IsFailed(download_result) || download_status != 200)
+        // 取消可能以成功形态收尾：取消请求弃置在途协程后，截断下载会以
+        // 成功返回 + 200 的形态落盘，故失败判定条件本身须含取消——命中
+        // 即视作失败进分支，截断产物永不进入解压。
+        if (IsFailed(download_result) || download_status != 200
+            || (cancel_check && cancel_check()))
         {
             LogError(
                 DAS::fmt::format(

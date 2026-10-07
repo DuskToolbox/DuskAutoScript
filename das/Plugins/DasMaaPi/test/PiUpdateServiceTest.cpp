@@ -1227,6 +1227,46 @@ TEST(PiUpdateService, ApplyUpdateCancelDuringExtractionReturnsCancelled)
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
+TEST(PiUpdateService, ApplyUpdateTruncatedDownloadWithCancelReturnsCancelled)
+{
+    // 取消可能以成功形态收尾：取消请求弃置在途协程后，截断下载会以
+    // status=200 + 成功返回的形态落盘——判定条件须含取消，截断产物
+    // 不得进入解压（否则终态错报解压失败而非已中止）。
+    FakePiHttpClient http;
+    http.AddRoute("/download/package.zip", "truncated-garbage-not-a-zip");
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(
+        project.Dir(),
+        info,
+        http,
+        /*proxy_url=*/{},
+        /*mirrorchyan_cdk=*/{},
+        /*progress_reporter=*/{},
+        /*cancel_check=*/[] { return true; });
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_CANCELLED);
+
+    // 旧内容未被替换（截断产物未进入解压/替换，pi_dir 未动）。
+    std::ifstream old_interface(
+        project.Dir() / DAS_PATH_LITERAL("interface.json"));
+    std::string content(
+        (std::istreambuf_iterator<char>(old_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+    // .update 临时目录已清理。
+    auto update_dir_name = project.Dir().filename();
+    update_dir_name += DAS_PATH_LITERAL(".update");
+    const auto update_root = project.Dir().parent_path() / update_dir_name;
+    EXPECT_FALSE(std::filesystem::exists(update_root));
+}
+
 TEST(PiUpdateService, ApplyUpdateReplaceStageIgnoresCancelCheck)
 {
     // 替换 = 不可回退点（全有或全无）：取消观察缝只覆盖下载+解压；进入替换
