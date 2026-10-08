@@ -2,6 +2,9 @@
 #include "controller/DasSchedulerController.hpp"
 #include <IpcTestConfig.h>
 #include <Windows.h>
+
+#include "TestAdmission.h"
+
 #include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/GraphRuntime/GraphBoundaryComponents.h>
@@ -2129,6 +2132,19 @@ protected:
             EXPECT_EQ(scheduler_->Disable(), DAS_S_OK);
         }
 
+        // 释放顺序：先 scheduler_/plugin_manager_(释放 IPC 句柄与子进程
+        // 对象) -> 再停事件循环 -> 最后清理共享内存段。PluginManager
+        // 关停会把卸载任务派发到 BusinessThread：io_context 先停会让该
+        // 任务失去执行载体，非 BT 调用方的泵化等待随之死等（并发下窗口
+        // 张开即挂起）——必须在 RequestStop 之前完成 Shutdown。
+        scheduler_.reset();
+        if (plugin_manager_)
+        {
+            plugin_manager_->Shutdown();
+        }
+        plugin_manager_.reset();
+        settings_manager_.reset();
+
         // RequestStop 内部将 running_ 置 false 并 io_context->stop()，
         // 使 Run() 返回，io_thread_ 随后 join。仅当 IpcContext 已成功
         // 创建时才需要通知它退出；SetUp 早期失败时 ipc_sp_ 是 nullptr。
@@ -2140,16 +2156,6 @@ protected:
         {
             io_thread_.join();
         }
-
-        // 释放顺序：先 scheduler_/plugin_manager_(释放 IPC 句柄与子进程对象) ->
-        // 再清理共享内存段。
-        scheduler_.reset();
-        if (plugin_manager_)
-        {
-            plugin_manager_->Shutdown();
-        }
-        plugin_manager_.reset();
-        settings_manager_.reset();
         if (shm_segment_)
         {
             shm_segment_->destroy<FactoryTaskSharedState>("state");
@@ -2201,6 +2207,14 @@ protected:
 
     static inline std::atomic<uint64_t> s_shm_counter{0};
 };
+
+// ====== host 申报（准入闸门注册，注册器同时装入 listener） ======
+// 申报值=本族用例加载的 loadMode:ipc 插件数上界（一插件一 host）：基线
+// 部署探针 FactoryPlugin（1 host），真实数据用例再叠加两个真实插件包
+// （DasGraphTask/DasFlowControl，共 3）。生产路径 spawn（PluginManager→
+// IpcRemotePluginHost）测试侧不可见，故无违约计数（用户裁决：不动生产
+// 文件）。插件数变动时同步改申报值。
+DAS_TEST_MAX_HOSTS_SUITE(SchedulerRuntimeBackedTest, 3)
 
 // ============================================================
 // Execution tests

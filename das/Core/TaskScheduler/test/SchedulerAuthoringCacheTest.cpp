@@ -18,6 +18,9 @@
 
 #include <IpcTestConfig.h>
 #include <Windows.h>
+
+#include "TestAdmission.h"
+
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
@@ -448,6 +451,17 @@ protected:
             EXPECT_EQ(scheduler_->Disable(), DAS_S_OK);
         }
 
+        // PluginManager 关停会把卸载任务派发到 BusinessThread：io_context
+        // 先停会让该任务失去执行载体，非 BT 调用方的泵化等待随之死等
+        // （并发下窗口张开即挂起）——Shutdown 必须先于 RequestStop。
+        scheduler_.reset();
+        if (plugin_manager_)
+        {
+            plugin_manager_->Shutdown();
+        }
+        plugin_manager_.reset();
+        settings_manager_.reset();
+
         if (ipc_sp_)
         {
             ipc_sp_->RequestStop();
@@ -456,14 +470,6 @@ protected:
         {
             io_thread_.join();
         }
-
-        scheduler_.reset();
-        if (plugin_manager_)
-        {
-            plugin_manager_->Shutdown();
-        }
-        plugin_manager_.reset();
-        settings_manager_.reset();
         if (shm_segment_)
         {
             shm_segment_->destroy<FactoryTaskSharedState>("state");
@@ -556,6 +562,13 @@ protected:
 
     static inline std::atomic<uint64_t> s_shm_counter{0};
 };
+
+// ====== host 申报（准入闸门注册，注册器同时装入 listener） ======
+// 申报值=本族用例加载的 loadMode:ipc 插件数（一插件一 host）：夹具只部署
+// 探针 FactoryPlugin（1 host）。生产路径 spawn（PluginManager→
+// IpcRemotePluginHost）测试侧不可见，故无违约计数（用户裁决：不动生产
+// 文件）。插件数变动时同步改申报值。
+DAS_TEST_MAX_HOSTS_SUITE(SchedulerAuthoringCacheTest, 1)
 
 // REQ-06a: a second Get on the same task reuses the cached session — the
 // FakeAuthoringSession shared-memory `authoring_session_count` stays at 1.
