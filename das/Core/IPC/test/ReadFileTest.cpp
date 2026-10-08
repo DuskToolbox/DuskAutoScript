@@ -5,6 +5,7 @@
  * Tests file content reading, missing file error, and size limit enforcement.
  */
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <das/Core/IPC/HandshakeSerialization.h>
@@ -32,8 +33,14 @@ namespace
     {
         void SetUp() override
         {
+            // 固定名在系统临时目录里被全部测试进程共享：并行跑同族用例
+            // 时 SetUp/TearDown 的 remove_all 会删掉彼此正在读写的文件。
+            // 掺 steady_clock 戳让每个测试进程拿独立目录。
+            const auto stamp =
+                std::chrono::steady_clock::now().time_since_epoch().count();
             tmp_dir_ = std::filesystem::temp_directory_path()
-                       / DAS_PATH_LITERAL("das_read_file_test");
+                       / Das::Utils::PathFromUtf8(
+                           "das_read_file_test_" + std::to_string(stamp));
             std::filesystem::remove_all(tmp_dir_);
             std::filesystem::create_directories(tmp_dir_);
 

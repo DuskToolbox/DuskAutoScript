@@ -20,9 +20,14 @@ namespace
 {
     std::filesystem::path UniqueConcurrencyTestDir()
     {
+        // 裸计数名在每个测试进程里都从 0 重来：同族不同用例并行时多个
+        // 进程会拿同名目录。掺 steady_clock 戳保证跨进程唯一，计数只
+        // 负责进程内多次调用的区分。
         static std::atomic<int> counter{0};
-        auto                    name =
-            "scheduler_concurrency_" + std::to_string(counter.fetch_add(1));
+        const auto              stamp =
+            std::chrono::steady_clock::now().time_since_epoch().count();
+        auto name = "scheduler_concurrency_" + std::to_string(stamp) + "_"
+                    + std::to_string(counter.fetch_add(1));
         return std::filesystem::current_path() / Das::Utils::PathFromUtf8(name);
     }
 

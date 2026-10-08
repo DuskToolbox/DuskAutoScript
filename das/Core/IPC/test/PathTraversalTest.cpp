@@ -7,6 +7,7 @@
  * accepting valid relative paths.
  */
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <das/Core/IPC/HandshakeSerialization.h>
@@ -35,8 +36,14 @@ namespace
     {
         void SetUp() override
         {
+            // 固定名在系统临时目录里被全部测试进程共享：并行跑同族用例
+            // 时会用彼此的目录内容做穿越断言。掺 steady_clock 戳让每个
+            // 测试进程拿独立目录。
+            const auto stamp =
+                std::chrono::steady_clock::now().time_since_epoch().count();
             tmp_dir_ = std::filesystem::temp_directory_path()
-                       / DAS_PATH_LITERAL("das_path_traversal_test");
+                       / Das::Utils::PathFromUtf8(
+                           "das_path_traversal_test_" + std::to_string(stamp));
             std::filesystem::create_directories(tmp_dir_);
             std::filesystem::create_directories(
                 tmp_dir_ / DAS_PATH_LITERAL("subdir"));

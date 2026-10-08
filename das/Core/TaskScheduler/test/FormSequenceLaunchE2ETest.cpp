@@ -80,10 +80,14 @@ namespace
 
     std::filesystem::path UniqueE2ETestDir()
     {
+        // 裸计数名在每个测试进程里都从 0 重来：同族不同用例并行时多个
+        // 进程会拿同名目录互相 remove_all。掺 PID 保证跨进程唯一，计数
+        // 只负责进程内多次调用的区分。
         static std::atomic<int> counter{0};
-        const auto              name =
-            "formseq_launch_e2e_" + std::to_string(counter.fetch_add(1));
-        auto path =
+        const auto name = "formseq_launch_e2e_"
+                          + std::to_string(::GetCurrentProcessId()) + "_"
+                          + std::to_string(counter.fetch_add(1));
+        auto       path =
             std::filesystem::current_path() / Das::Utils::PathFromUtf8(name);
         std::filesystem::remove_all(path);
         return path;

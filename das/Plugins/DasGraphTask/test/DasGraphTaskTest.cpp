@@ -3119,9 +3119,14 @@ namespace
         // en/zh-CN 双 locale 夹具表（{0} 位置占位符）。
         std::filesystem::path WriteI18nFixture()
         {
+            // 固定目录名会被并行运行的多个 locale 用例同时写同内容文件
+            // （存在撕裂读窗口）：掺 steady_clock 戳让每次调用独立。
+            const auto stamp =
+                std::chrono::steady_clock::now().time_since_epoch().count();
             const std::filesystem::path directory =
                 std::filesystem::current_path()
-                / DAS_PATH_LITERAL("graphtask-focus-i18n-fixture");
+                / Das::Utils::PathFromUtf8(
+                    "graphtask-focus-i18n-fixture-" + std::to_string(stamp));
             std::filesystem::create_directories(directory);
             {
                 std::ofstream file(

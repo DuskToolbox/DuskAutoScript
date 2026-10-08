@@ -65,10 +65,19 @@ namespace
 {
     std::filesystem::path UniqueTestDir()
     {
+        // 裸计数名在每个测试进程里都从 0 重来：同族不同用例并行时多个
+        // 进程会拿同名目录互相 remove_all。掺 PID 保证跨进程唯一，计数
+        // 只负责进程内多次调用的区分。
         static std::atomic<int> counter{0};
-        auto                    name = "scheduler_authoring_cache_test_"
-                                       + std::to_string(counter.fetch_add(1));
-        auto                    path =
+        const uint64_t          pid =
+#ifdef _WIN32
+            static_cast<uint64_t>(::GetCurrentProcessId());
+#else
+            static_cast<uint64_t>(::getpid());
+#endif
+        auto name = "scheduler_authoring_cache_test_" + std::to_string(pid)
+                    + "_" + std::to_string(counter.fetch_add(1));
+        auto path =
             std::filesystem::current_path() / Das::Utils::PathFromUtf8(name);
         std::filesystem::remove_all(path);
         return path;

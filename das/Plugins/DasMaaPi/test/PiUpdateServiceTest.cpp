@@ -8,6 +8,7 @@
 #include <openssl/sha.h>
 #include <zlib.h>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -226,10 +227,16 @@ namespace
     public:
         explicit TempPiProject(std::string name = {})
         {
+            // 裸计数名在每个测试进程里都从 0 重来：同族不同用例并行时
+            // 多个进程会撞进同一临时目录互相 Cleanup。掺 steady_clock 戳
+            // 保证跨进程唯一，计数只负责进程内多实例的区分。
             static std::atomic<int> counter{0};
             if (name.empty())
             {
-                name = "PiUpdate_" + std::to_string(counter.fetch_add(1));
+                const auto stamp =
+                    std::chrono::steady_clock::now().time_since_epoch().count();
+                name = "PiUpdate_" + std::to_string(stamp) + "_"
+                       + std::to_string(counter.fetch_add(1));
             }
             name_ = std::move(name);
             dir_ = std::filesystem::temp_directory_path()
