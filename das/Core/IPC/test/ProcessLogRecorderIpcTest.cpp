@@ -22,6 +22,7 @@
 #include <Das.ExportInterface.DasJson.hpp>
 #include <Das.ExportInterface.IDasStringVector.hpp>
 
+#include "TestAdmission.h"
 #include <Das.ExportInterface.IDasPortMap.hpp>
 #include <Das.ExportInterface.IDasReadOnlyPortMap.hpp>
 #include <Das.PluginInterface.IDasPluginPackage.hpp>
@@ -185,6 +186,10 @@ namespace
                 Das::Utils::PathToUtf8(host_exe_path_),
                 session_id,
                 IpcTestConfig::GetHostStartTimeoutMs());
+            if (DAS::IsOk(result))
+            {
+                DasTestAdmissionNoteHostStart();
+            }
             return result;
         }
 
@@ -259,6 +264,11 @@ namespace
         }
     };
 } // namespace
+
+// ====== host 申报（准入闸门注册，注册器同时装入 listener） ======
+// 两用例共用 fixture，其中仅 ProxyRecordRoundTrip 启 host（Local 路径
+// 直调本地 recorder 不 spawn），单 host 基线。
+DAS_TEST_MAX_HOSTS_SUITE(ProcessLogRecorderIpcE2ETest, 1)
 
 // 跨进程 proxy Record 往返（Pitfall #1 修复的回归守卫）：
 // 插件经 DasQueryMainProcessInterfaceByName 拿 recorder proxy，构造 entry

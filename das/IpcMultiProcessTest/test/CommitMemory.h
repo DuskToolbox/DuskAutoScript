@@ -22,6 +22,12 @@
 #include <string>
 
 #ifdef DAS_WINDOWS
+// IpcMPT 测试目标外的消费树（经显式 include 路径引用本头）没有目标级
+// WIN32_LEAN_AND_MEAN，先置位再引 windows.h，防 winsock v1 与消费方后续
+// asio/winsock2 头冲突
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 
 #include <psapi.h>

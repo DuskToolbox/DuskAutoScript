@@ -24,6 +24,7 @@
 #include <Das.ExportInterface.DasJson.hpp>
 #include <Das.ExportInterface.IDasStringVector.hpp>
 
+#include "TestAdmission.h"
 #include <Das.ExportInterface.IDasPortMap.hpp>
 #include <Das.ExportInterface.IDasReadOnlyPortMap.hpp>
 #include <Das.ExportInterface.IDasVariantVector.hpp>
@@ -247,6 +248,10 @@ namespace
                 Das::Utils::PathToUtf8(host_exe_path_),
                 session_id,
                 IpcTestConfig::GetHostStartTimeoutMs());
+            if (DAS::IsOk(result))
+            {
+                DasTestAdmissionNoteHostStart();
+            }
             return result;
         }
 
@@ -330,6 +335,9 @@ namespace
     };
 
 } // namespace
+
+// ====== host 申报（准入闸门注册，注册器同时装入 listener） ======
+DAS_TEST_MAX_HOSTS_SUITE(LocaleServiceIpcE2ETest, 1)
 
 TEST_F(
     LocaleServiceIpcE2ETest,

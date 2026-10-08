@@ -389,6 +389,12 @@ if(${DAS_BUILD_TEST})
     target_include_directories(TaskSchedulerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ForeignInterfaceHost/test)
     target_include_directories(DebugTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ForeignInterfaceHost/test)
 
+# IpcMPT 测试准入基建头（TestAdmission.h / CommitMemory.h / LoopbackPort.h）
+# 是单份原件，外部消费树经显式 include 路径引用同一份，禁止复制副本
+# （IpcTestConfig.h 双胞胎漂移同型事故）。路径追加在既有路径之后：同名
+# IpcTestConfig.h 的既有解析（FIH 副本）不受影响，IpcMPT 路径只提供新基建头。
+    target_include_directories(IPCTest PRIVATE ${CMAKE_SOURCE_DIR}/das/IpcMultiProcessTest/test)
+
 endif()
 
 # Python 绑定文件拷贝：DuskAutoScript.py 和 _DasCorePythonExport.pyd 必须与 DasCore.dll 在同一目录
