@@ -1839,6 +1839,17 @@ DasResult IpcRunLoop::Run()
     running_.store(true);
     exit_code_.store(DAS_S_OK);
 
+    // Run 返回即不再运行：停止先于启动的交错下，RequestStop 的早退
+    // 路径观察到的一直是 running_==false、不会回置，Run 自身收尾必须
+    // 落闸——否则 IsRunning 永久为真、后续 Run 误报死锁、心跳线程
+    // 轮询循环也因此不退出。
+    struct RunningResetGuard
+    {
+        std::atomic<bool>& flag;
+
+        ~RunningResetGuard() { flag.store(false); }
+    } running_reset{running_};
+
     // 创建 work guard 保持 io_context 运行
     // 确保 Run() 阻塞直到 RequestStop() 被调用
     work_guard_.emplace(io_context_->get_executor());
@@ -1851,6 +1862,14 @@ DasResult IpcRunLoop::Run()
 
     // 启动超时检查定时器
     ScheduleTimeoutCheck();
+
+    // io_context 一旦 stop 过就永久停在 stopped 态，复用同一 runloop 的
+    // 下一轮 Run 若不 restart 会立即空返回——此前仅因 running_ 标志卡真
+    // 而未被察觉。restart 前置保证每轮 Run 真正跑事件循环。
+    if (io_context_->stopped())
+    {
+        io_context_->restart();
+    }
 
     // 阻塞运行事件循环
     io_context_->run();
