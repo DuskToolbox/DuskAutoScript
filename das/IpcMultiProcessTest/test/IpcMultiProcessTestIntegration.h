@@ -23,6 +23,7 @@
 #pragma once
 
 #include "IpcTestConfig.h"
+#include "LoopbackPort.h"
 
 // Boost 头文件（用于进程启动测试）
 #include <boost/asio/io_context.hpp>
@@ -71,7 +72,7 @@ protected:
 
         if (use_http_context)
         {
-            http_port_ = FindFreeLoopbackPort();
+            http_port_ = LoopbackPort::FindFreeLoopbackPort();
             DAS::Core::IPC::MainProcess::WebSocketConfig ws_config;
             ws_config.listen_address = "127.0.0.1";
             ws_config.listen_port = http_port_;
@@ -172,39 +173,6 @@ protected:
             session_id);
 
         return DAS_S_OK;
-    }
-
-    uint16_t FindFreeLoopbackPort()
-    {
-        // 高位固定端口探测：从 48080 起递增，避开 Windows 动态端口排除范围
-        // （当前 49806-53273 被排除）与 well-known 保留端口（<1024）
-        constexpr uint16_t start_port = 48080;
-        constexpr uint16_t end_port = 48999;
-        constexpr int      max_attempts = 50;
-        for (int i = 0; i < max_attempts; ++i)
-        {
-            const uint16_t port = static_cast<uint16_t>(start_port + i);
-            if (port > end_port)
-            {
-                break;
-            }
-            boost::asio::io_context        io_context;
-            boost::asio::ip::tcp::acceptor acceptor(io_context);
-            boost::system::error_code      ec;
-            acceptor.open(boost::asio::ip::tcp::v4(), ec);
-            if (ec)
-            {
-                return 0;
-            }
-            acceptor.bind(
-                {boost::asio::ip::make_address("127.0.0.1"), port},
-                ec);
-            if (!ec)
-            {
-                return port;
-            }
-        }
-        return 0;
     }
 
     std::filesystem::path                                 host_exe_path_;
