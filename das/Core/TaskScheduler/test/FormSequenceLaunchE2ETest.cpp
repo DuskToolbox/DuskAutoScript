@@ -15,6 +15,9 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+
+#include "TestAdmission.h"
+
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
@@ -504,6 +507,14 @@ namespace
         std::string shm_name_;
         std::thread io_thread_;
     };
+
+    // ====== host 申报（准入闸门注册，注册器同时装入 listener） ======
+    // 申报值=本用例加载的 loadMode:ipc 插件数（一插件一 host）：调度器
+    // Initialize 扫描 plugin_dir_ 内全部 3 个 ipc 包（探针组件 FactoryPlugin
+    // + DasGraphTask + DasFlowControl）。生产路径 spawn（PluginManager→
+    // IpcRemotePluginHost）测试侧不可见，故无违约计数（用户裁决：不动
+    // 生产文件）。插件数变动时同步改申报值。
+    DAS_TEST_MAX_HOSTS_SUITE(FormSequenceLaunchE2ETest, 3)
 
     // 目标程序未启动等价场景：formSequence 图 = [launch 节点（spawn 窗口
     // 替身 + 等可见窗口出现）→ 探针组件节点（信号门控后执行并计数）]，

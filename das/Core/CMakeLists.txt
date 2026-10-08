@@ -394,6 +394,7 @@ if(${DAS_BUILD_TEST})
 # （IpcTestConfig.h 双胞胎漂移同型事故）。路径追加在既有路径之后：同名
 # IpcTestConfig.h 的既有解析（FIH 副本）不受影响，IpcMPT 路径只提供新基建头。
     target_include_directories(IPCTest PRIVATE ${CMAKE_SOURCE_DIR}/das/IpcMultiProcessTest/test)
+    target_include_directories(TaskSchedulerTest PRIVATE ${CMAKE_SOURCE_DIR}/das/IpcMultiProcessTest/test)
 
 endif()
 

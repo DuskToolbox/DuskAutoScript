@@ -142,6 +142,11 @@ if(DAS_BUILD_TEST)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/das/Core/ForeignInterfaceHost/include)
+    # IpcMPT 测试准入基建头（TestAdmission.h/CommitMemory.h）单份原件的显式
+    # include 引用，不复制副本；路径追加在既有路径之后，IpcTestConfig.h 的
+    # 既有解析（FIH 副本）不受影响。
+    target_include_directories(DasMaaPiTest PRIVATE
+        ${CMAKE_SOURCE_DIR}/das/IpcMultiProcessTest/test)
 
     # Per-config overrides REQUIRED — parent das/Plugins/CMakeLists.txt:1-15
     # sets directory-level CMAKE_RUNTIME_OUTPUT_DIRECTORY_<CONFIG>=bin/<CONFIG>/plugins

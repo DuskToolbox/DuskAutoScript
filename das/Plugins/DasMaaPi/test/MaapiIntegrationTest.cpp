@@ -1,5 +1,6 @@
 #include "../src/PretaskRunner.h"
 #include "FakeMaaApiBoundary.h"
+#include "TestAdmission.h"
 
 #include <IpcTestConfig.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
@@ -235,6 +236,13 @@ namespace
     };
 
 } // namespace
+
+// ====== host 申报（准入闸门注册，注册器同时装入 listener） ======
+// 申报值=fixture 每用例加载的 loadMode:ipc 插件数（一插件一 host）：
+// SetUp 经 LoadPlugin(PluginPackageDir()) 恒加载 1 个 DasMaaPi 包。
+// 生产路径 spawn（PluginManager→IpcRemotePluginHost）测试侧不可见，
+// 故无违约计数（用户裁决：不动生产文件）。插件数变动时同步改申报值。
+DAS_TEST_MAX_HOSTS_SUITE(MaapiIntegrationFixture, 1)
 
 TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
 {
