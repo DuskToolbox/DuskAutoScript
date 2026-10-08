@@ -70,8 +70,11 @@ namespace TestAdmission
         13ull * 1024 * 1024;
 
     /// 测试基数预留：测试进程自身（不 host）运行所需的 commit 下限
+    /// （实测于 2026-10-08 Windows ember 树 -j8 并发采样：ASAN 测试进程
+    /// 稳态中位 467.8MiB、峰 498.7MiB——初始 256MiB 低估使全量并行下
+    /// 系统 commit 突刺耗尽，host 启动的 SHM 池创建失败；499 × 1.3 取整）
     constexpr std::uint64_t DAS_TEST_BASE_COMMIT_RESERVE_BYTES =
-        256ull * 1024 * 1024;
+        640ull * 1024 * 1024;
 
 #if DAS_TEST_ADMISSION_ASAN_ACTIVE
     constexpr std::uint64_t DAS_TEST_HOST_COMMIT_ESTIMATE_BYTES_ACTIVE =

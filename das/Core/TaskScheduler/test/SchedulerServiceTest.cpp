@@ -6757,8 +6757,11 @@ TEST_F(
     // 冷启动执行（无 UI 预热）：两探针各收各值。
     ASSERT_EQ(scheduler_->RunTaskNow(0), DAS_S_OK);
     {
+        // 观察窗按全量 -j 并行重标定：图执行的每跳是跨 host 往返，
+        // 32 路并发争抢下 30 秒窗会被挤爆（隔离态数秒即达）；健康轮
+        // 秒级收敛，放大上限不拖慢。
         const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            std::chrono::steady_clock::now() + std::chrono::seconds(90);
         bool sinks_done = false;
         while (std::chrono::steady_clock::now() < deadline)
         {

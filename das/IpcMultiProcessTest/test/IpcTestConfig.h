@@ -54,22 +54,25 @@ namespace IpcTestConfig
      * @brief 获取启动 Host 进程的超时时间（毫秒）
      *
      * 当设置 DAS_DEBUG=1 环境变量时，返回 0（无限等待）。
-     * 否则返回默认的 10000 毫秒（10秒）。
+     * 否则返回默认的 30000 毫秒（30秒）。
+     * 上限按全量 -j 拉满并行重标定：低并行下 10 秒足够，32 路并发
+     * ASAN 进程争抢 CPU 时 host 启动会超原窗，误报为确定性失败。
      */
     inline uint32_t GetHostStartTimeoutMs()
     {
-        return detail::IsDebugMode() ? 0 : 10000;
+        return detail::IsDebugMode() ? 0 : 30000;
     }
 
     /**
      * @brief 获取加载插件的超时时间
      *
      * 当设置 DAS_DEBUG=1 环境变量时，返回 0（无限等待）。
-     * 否则返回默认的 30000 毫秒（30秒）。
+     * 否则返回默认的 90000 毫秒（90秒）。
+     * 上限按全量 -j 拉满并行重标定（同 GetHostStartTimeoutMs）。
      */
     inline std::chrono::milliseconds GetPluginLoadTimeout()
     {
-        return std::chrono::milliseconds(detail::IsDebugMode() ? 0 : 30000);
+        return std::chrono::milliseconds(detail::IsDebugMode() ? 0 : 90000);
     }
 
     /**

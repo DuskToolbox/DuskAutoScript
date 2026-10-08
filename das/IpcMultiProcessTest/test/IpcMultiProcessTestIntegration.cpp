@@ -4036,11 +4036,13 @@ TEST_F(
 
     // 必须等 FakeMain 就绪后再启动 DasHost：host 侧打开 SHM 池的重试
     // 窗口有限，若与 FakeMain 的进程启动并发，大体积 ASAN 测试进程的
-    // 启动延迟会耗尽窗口，握手确定性超时
+    // 启动延迟会耗尽窗口，握手确定性超时。等待上限走插件加载超时通道：
+    // 子进程就绪与插件加载同类，全量 -j 并行下固定 10 秒会被 CPU 争抢
+    // 挤爆（低并行下秒级即就绪，放大上限不拖慢健康轮）。
     const bool shm_ready =
         FakeMainProcess::KillParentSharedMemory::WaitForSharedMemoryReady(
             FakeMainProcess::KILL_PARENT_SHM_NAME,
-            std::chrono::seconds(10));
+            IpcTestConfig::GetPluginLoadTimeout());
     ASSERT_TRUE(shm_ready) << "FakeMain did not create shared memory in time";
     DAS_CORE_LOG_INFO("Shared memory is ready");
 
