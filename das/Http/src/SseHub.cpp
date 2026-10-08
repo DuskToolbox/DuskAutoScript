@@ -72,16 +72,7 @@ namespace Das::Http
         }
         if (key_empty)
         {
-            if (on_key_empty_)
-            {
-                // key-empty 反向通知含跨进程同步 IPC（DasHttp → DasMaaPi），
-                // 在 SseSession 的 strand 线程上执行会阻塞该 strand 上全部
-                // SSE 会话的写（所有连接共享同一 strand）——post 到 hub 的
-                // io_context 全局队列，由任意空闲 worker 执行，脱离 strand
-                // 串行化约束。
-                auto cb = on_key_empty_;
-                boost::asio::post(ioc_, [cb, key]() { cb(key); });
-            }
+            ScheduleKeyEmptyNotification(key);
         }
     }
 
@@ -127,6 +118,86 @@ namespace Das::Http
     {
         const std::unique_lock lock(mutex_);
         on_key_empty_ = std::move(on_key_empty);
+    }
+
+    void SseHub::SetKeyEmptyGrace(std::chrono::milliseconds grace)
+    {
+        const std::unique_lock lock(mutex_);
+        key_empty_grace_ = grace;
+    }
+
+    void SseHub::ScheduleKeyEmptyNotification(const std::string& key)
+    {
+        if (invalidated_.load())
+        {
+            return;
+        }
+        std::shared_ptr<boost::asio::steady_timer> timer;
+        {
+            const std::unique_lock lock(mutex_);
+            // 同 key 已有待触发定时器：到点复查自会覆盖（归零→回归→再归零
+            // 的二次宽限可能短于全值，可接受——首排程已含一次完整窗口）。
+            if (pending_key_empty_.contains(key))
+            {
+                return;
+            }
+            timer = std::make_shared<boost::asio::steady_timer>(
+                ioc_,
+                key_empty_grace_);
+            pending_key_empty_[key] = timer;
+        }
+        DAS_LOG_INFO(
+            DAS_FMT_NS::format(
+                "SseHub: key-empty grace scheduled key={} grace_ms={}",
+                key,
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    key_empty_grace_)
+                    .count())
+                .c_str());
+        // handler 持 self + timer：hub 与定时器存活到触发为止，销毁序无关。
+        auto self = shared_from_this();
+        timer->async_wait(
+            [self = std::move(self), key, timer](
+                const boost::system::error_code& ec)
+            {
+                {
+                    const std::unique_lock lock(self->mutex_);
+                    // 身份比对防误删后续排程的新定时器。
+                    const auto it = self->pending_key_empty_.find(key);
+                    if (it != self->pending_key_empty_.end()
+                        && it->second == timer)
+                    {
+                        self->pending_key_empty_.erase(it);
+                    }
+                }
+                // 取消（关停/销毁）/失效/宽限期内订阅者回归：什么都不发生。
+                if (ec || self->invalidated_.load()
+                    || self->SubscriberCount(key) > 0)
+                {
+                    DAS_LOG_INFO(
+                        DAS_FMT_NS::format(
+                            "SseHub: key-empty grace skipped key={} ec={} "
+                            "subscribers={}",
+                            key,
+                            ec.message(),
+                            self->SubscriberCount(key))
+                            .c_str());
+                    return;
+                }
+                DAS_LOG_INFO(
+                    DAS_FMT_NS::format(
+                        "SseHub: key-empty grace elapsed key={}",
+                        key)
+                        .c_str());
+                if (self->on_key_empty_)
+                {
+                    // key-empty 反向通知含跨进程同步 IPC（DasHttp →
+                    // DasMaaPi）， 直连会占住当前 worker 直到对端返回——post 到
+                    // hub 的 io_context 全局队列，由任意空闲 worker 执行。
+                    auto cb = self->on_key_empty_;
+                    boost::asio::post(self->ioc_, [cb, key]() { cb(key); });
+                }
+            });
     }
 
     void SseHub::CleanupStaleConnections()

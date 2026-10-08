@@ -4,6 +4,7 @@
 #include <boost/asio/any_io_executor.hpp>
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -71,23 +72,53 @@ namespace
     TEST(SseHubTest, UnregisterToZero_FiresKeyEmptyWithKey)
     {
         boost::asio::io_context ioc;
-        Das::Http::SseHub       hub(ioc);
+        auto                    hub = std::make_shared<Das::Http::SseHub>(ioc);
+        // 测试注入毫秒级宽限（生产缺省 60s），run_for 驱动定时器路径。
+        hub->SetKeyEmptyGrace(std::chrono::milliseconds(1));
 
         std::vector<std::string> fired_keys;
-        hub.SetOnKeyEmpty([&fired_keys](const std::string& key)
-                          { fired_keys.push_back(key); });
+        hub->SetOnKeyEmpty([&fired_keys](const std::string& key)
+                           { fired_keys.push_back(key); });
 
         auto session = std::make_shared<FakeSession>(ioc, "k1");
-        hub.Register(session, "k1");
-        ASSERT_EQ(hub.SubscriberCount("k1"), 1u);
+        hub->Register(session, "k1");
+        ASSERT_EQ(hub->SubscriberCount("k1"), 1u);
 
-        hub.Unregister(session.get(), "k1");
+        hub->Unregister(session.get(), "k1");
 
-        EXPECT_EQ(hub.SubscriberCount("k1"), 0u);
-        // key-empty 回调经 post 异步执行（不阻塞调用线程），poll 驱动。
-        ioc.poll();
+        EXPECT_EQ(hub->SubscriberCount("k1"), 0u);
+        // key-empty 经宽限定时器 + post 两级异步，run_for 驱动到触发。
+        ioc.run_for(std::chrono::milliseconds(100));
         ASSERT_EQ(fired_keys.size(), 1u);
         EXPECT_EQ(fired_keys[0], "k1");
+    }
+
+    // 宽限期内订阅者回归（断线重连形态）→ 不触发 key-empty：业务侧快照与
+    // 生产不被连接抖动误清；回归后再归零仍按新一轮排程触发。
+    TEST(SseHubTest, ReconnectWithinGrace_DoesNotFireKeyEmpty)
+    {
+        boost::asio::io_context ioc;
+        auto                    hub = std::make_shared<Das::Http::SseHub>(ioc);
+        hub->SetKeyEmptyGrace(std::chrono::milliseconds(50));
+
+        int empty_fires = 0;
+        hub->SetOnKeyEmpty([&empty_fires](const std::string&)
+                           { ++empty_fires; });
+
+        auto session = std::make_shared<FakeSession>(ioc, "k1");
+        hub->Register(session, "k1");
+        hub->Unregister(session.get(), "k1");
+        // 宽限窗口内订阅者回归。
+        hub->Register(session, "k1");
+        ioc.run_for(std::chrono::milliseconds(200));
+        EXPECT_EQ(empty_fires, 0);
+
+        // 回归后再归零：fire 点复查生效，正常触发。run_for 因工作耗尽返回
+        // 后 io_context 进入 stopped 态，二次驱动前须 restart。
+        hub->Unregister(session.get(), "k1");
+        ioc.restart();
+        ioc.run_for(std::chrono::milliseconds(200));
+        EXPECT_EQ(empty_fires, 1);
     }
 
     TEST(SseHubTest, CleanupStaleConnections_RemovesExpired_NoKeyEmptyFiring)

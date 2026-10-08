@@ -2,8 +2,10 @@
 #define DAS_HTTP_SSE_HUB_HPP
 
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <shared_mutex>
@@ -27,10 +29,14 @@ namespace Das::Http
      * hub 不感知任何进度语义（业务中立）：只按 key 维护
      * weak_ptr<SseSessionBase> 集合，某 key 订阅归零时触发 key-empty 回调
      * （接入方接 IDasProgressService::OnAllSubscribersDisconnected）。
+     * key-empty 带宽限期：归零后先挂起，宽限期到点复查仍归零才触发——
+     * 宽限期内订阅者回归（断线重连）则什么都没发生，业务侧快照与生产
+     * 不被抖动误清。必须经 shared_ptr 构造（宽限定时器经
+     * enable_shared_from_this 延长 hub 生命周期）。
      *
      * @thread_safety 所有公开方法均为线程安全。
      */
-    class SseHub
+    class SseHub : public std::enable_shared_from_this<SseHub>
     {
     public:
         /**
@@ -89,6 +95,13 @@ namespace Das::Http
             std::function<void(const std::string&)> on_key_empty);
 
         /**
+         * @brief 设置 key-empty 宽限期（缺省 60s；测试注入毫秒级驱动）。
+         *
+         * 归零到触发之间留重连窗口：期间订阅者回归即取消清理。
+         */
+        void SetKeyEmptyGrace(std::chrono::milliseconds grace);
+
+        /**
          * @brief 移除已失效（weak_ptr expired）的会话，不触发 key-empty。
          */
         void CleanupStaleConnections();
@@ -104,6 +117,12 @@ namespace Das::Http
         boost::asio::io_context& IoCtx() noexcept { return ioc_; }
 
     private:
+        /**
+         * @brief 归零宽限定时器排程（fire-and-check，动作幂等无需 cancel
+         * 簿记）。
+         */
+        void ScheduleKeyEmptyNotification(const std::string& key);
+
         boost::asio::io_context&  ioc_;
         std::atomic<bool>         invalidated_{false};
         mutable std::shared_mutex mutex_;
@@ -112,6 +131,13 @@ namespace Das::Http
             std::vector<std::weak_ptr<SseSessionBase>>>
                                                 sessions_by_key_;
         std::function<void(const std::string&)> on_key_empty_;
+        std::chrono::milliseconds key_empty_grace_{std::chrono::seconds(60)};
+        // 待触发的宽限定时器（同 key 排程去重）。定时器经 handler 持有
+        // 自身 shared_ptr 存活，map 条目仅做去重与身份比对。
+        std::unordered_map<
+            std::string,
+            std::shared_ptr<boost::asio::steady_timer>>
+            pending_key_empty_;
     };
 
 } // namespace Das::Http

@@ -257,6 +257,9 @@ namespace
             : hub(std::make_shared<Das::Http::SseHub>(ioc)),
               service(std::make_shared<Das::Http::DasProgressServiceImpl>(hub))
         {
+            // 测试注入毫秒级宽限（生产缺省 60s），key-empty 路径可 run_for
+            // 驱动。
+            hub->SetKeyEmptyGrace(std::chrono::milliseconds(1));
         }
 
         void WireKeyEmpty()
@@ -342,8 +345,8 @@ TEST(DasProgressServiceTest, KeyEmptyNotifiesAllCallbacks)
     fixture.hub->Unregister(session.get(), "k1");
 
     ASSERT_EQ(fixture.hub->SubscriberCount("k1"), 0u);
-    // key-empty 反向通知经 post 异步执行（不阻塞 strand 线程），poll 驱动。
-    fixture.ioc.poll();
+    // key-empty 经宽限定时器 + post 两级异步，run_for 驱动到触发。
+    fixture.ioc.run_for(std::chrono::milliseconds(100));
     ASSERT_EQ(raw_cb->DisconnectedKeys().size(), 1u);
     EXPECT_EQ(raw_cb->DisconnectedKeys()[0], "k1");
 
@@ -399,7 +402,9 @@ TEST(DasProgressServiceTest, ReportBroadcastsObjectNullAndArrayValues)
             std::string("applyUpdate"),
             MakeJsonDocumentValue(R"({"disabled":true})")));
     fields.emplace_back(
-        std::make_pair(std::string("nullField"), MakeJsonDocumentValue("null")));
+        std::make_pair(
+            std::string("nullField"),
+            MakeJsonDocumentValue("null")));
     fields.emplace_back(
         std::make_pair(
             std::string("arrayField"),
@@ -512,8 +517,8 @@ TEST(DasProgressServiceTest, KeyEmptyEvictsSnapshot)
     fixture.hub->Register(session, "evict-key");
     fixture.hub->Unregister(session.get(), "evict-key");
     ASSERT_EQ(fixture.hub->SubscriberCount("evict-key"), 0u);
-    // key-empty 反向通知经 post 异步执行（不阻塞 strand 线程），poll 驱动。
-    fixture.ioc.poll();
+    // key-empty 经宽限定时器 + post 两级异步，run_for 驱动到触发。
+    fixture.ioc.run_for(std::chrono::milliseconds(100));
 
     EXPECT_TRUE(fixture.service->TakeSnapshot("evict-key").empty());
 }
