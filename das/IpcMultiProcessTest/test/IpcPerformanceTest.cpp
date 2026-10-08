@@ -13,6 +13,7 @@
 
 #include "BenchmarkStats.h"
 #include "IpcTestConfig.h"
+#include "TestAdmission.h"
 
 #include <Das.ExportInterface.IDasVariantVector.hpp>
 #include <Das.PluginInterface.IDasComponent.hpp>
@@ -547,6 +548,8 @@ protected:
             return nullptr;
         }
 
+        DasTestAdmissionNoteHostStart();
+
         return launcher;
     }
 
@@ -1023,6 +1026,15 @@ static void PrintBenchmarkResult(
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n";
 }
 
+// ====== host 申报（准入闸门注册，注册器同时装入 listener） ======
+DAS_TEST_MAX_HOSTS_SUITE(IpcPerformanceTest, 1)
+DAS_TEST_MAX_HOSTS(IpcPerformanceTest, DualHost_AlternatingCalls, 2)
+DAS_TEST_MAX_HOSTS(
+    IpcPerformanceTest,
+    MixedTransport_HttpAndIpcHostToHostPerformance,
+    2)
+DAS_TEST_MAX_HOSTS(IpcPerfColdStart, ColdStart_FirstCall, 1)
+
 // ====== Task 3: RoundTripLatency_Compute ======
 
 TEST_F(IpcPerformanceTest, RoundTripLatency_Compute)
@@ -1372,6 +1384,10 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
 
     for (size_t cycle = 0; cycle < num_cycles; ++cycle)
     {
+        // 串行生命周期：每轮结束把 host 计数恢复到本轮开始前的值
+        // （同时存活峰值 1，与申报 1 一致）
+        const TestAdmission::HostSessionScope admission_host_session;
+
         // 1. Create IIpcContext
         auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContext(
             /*enable_heartbeat=*/!IpcTestConfig::ShouldDisableHeartbeat());
@@ -1410,6 +1426,8 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
             run_thread.join();
             continue;
         }
+
+        DasTestAdmissionNoteHostStart();
 
         // 4. Load IpcTestPlugin2
         std::filesystem::path plugin_path;
@@ -1885,6 +1903,7 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
         "warn"};
     HostProcessGuard http_host(host_exe_path_, http_host_args);
     ASSERT_TRUE(http_host.IsRunning());
+    DasTestAdmissionNoteHostStart();
 
     SessionOnlyHostLauncher http_launcher(
         expected_http_session,
