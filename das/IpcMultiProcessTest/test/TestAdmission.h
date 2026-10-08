@@ -58,13 +58,16 @@ namespace TestAdmission
     constexpr std::uint64_t DAS_TEST_ADMISSION_TIMEOUT_MS = 120000;
 
     /// 单 host 提交内存估算（ASAN 档：影子内存+红区把堆开销放 2-3 倍；
-    /// 起步值，实测校准回填）
+    /// 实测于 2026-10-08 Windows ember 树，轻载 host 稳态中位 96.8MiB、
+    /// 重插件 host 峰 103MiB，97MiB 向上取整 × 1.3）
     constexpr std::uint64_t DAS_TEST_HOST_COMMIT_ESTIMATE_BYTES_ASAN =
-        512ull * 1024 * 1024;
+        127ull * 1024 * 1024;
 
-    /// 单 host 提交内存估算（非 ASAN 档；起步值，实测校准回填）
+    /// 单 host 提交内存估算（非 ASAN 档；实测于 2026-10-08 Windows
+    /// msvc-ember 树，host 稳态中位 8.4MiB / 峰值中位 9.1MiB，
+    /// 10MiB 向上取整 × 1.3）
     constexpr std::uint64_t DAS_TEST_HOST_COMMIT_ESTIMATE_BYTES =
-        128ull * 1024 * 1024;
+        13ull * 1024 * 1024;
 
     /// 测试基数预留：测试进程自身（不 host）运行所需的 commit 下限
     constexpr std::uint64_t DAS_TEST_BASE_COMMIT_RESERVE_BYTES =
