@@ -31,6 +31,7 @@
 #include "FakeMainProcess.h"
 #include "IDasComponent.h"
 #include "IDasPluginPackage.h"
+#include "TestAdmission.h"
 #include "das/DasTypes.hpp"
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -232,6 +233,7 @@ namespace
                 args,
                 boost::process::v2::process_start_dir(
                     Das::Utils::ToBoostPath(exe_path.parent_path())));
+            DasTestAdmissionNoteHostStart();
         }
 
         ~HostProcessGuard() { Stop(); }
@@ -839,6 +841,7 @@ namespace
         {
             return result;
         }
+        DasTestAdmissionNoteHostStart();
 
         result = context.CreateHostLauncher(deployment.host_a.Put());
         if (DAS::IsFailed(result) || !deployment.host_a)
@@ -854,6 +857,7 @@ namespace
         {
             return result;
         }
+        DasTestAdmissionNoteHostStart();
 
         DAS::DasPtr<IDasAsyncLoadPluginOperation> operation_a;
         result = context.LoadPluginAsync(
@@ -1350,10 +1354,16 @@ namespace
         desc.p_working_directory = working_directory.Get();
         desc.p_environment_config = environment_config.Get();
 
-        return launcher->StartWithDesc(
+        const DasResult start_result = launcher->StartWithDesc(
             &desc,
             IpcTestConfig::GetHostStartTimeoutMs(),
             session_id);
+        if (DAS::IsFailed(start_result))
+        {
+            return start_result;
+        }
+        DasTestAdmissionNoteHostStart();
+        return DAS_S_OK;
     }
 
     void AssertNodeComponentDispatchBehavior(IDasComponent* component)
@@ -1898,6 +1908,7 @@ namespace
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
         ASSERT_EQ(start_result, DAS_S_OK);
+        DasTestAdmissionNoteHostStart();
         ASSERT_TRUE(launcher->IsRunning());
         ASSERT_GT(session_id, static_cast<uint16_t>(0));
 
@@ -1953,6 +1964,35 @@ namespace
     }
 } // namespace
 
+// ====== host 申报（准入闸门注册，注册器同时装入 listener） ======
+// 套件默认 1：绝大多数用例经 fixture launcher_ 或单个直启 launcher 起
+// 1 个 host；实际同时起 2 个 host 的用例逐一精确申报。
+DAS_TEST_MAX_HOSTS_SUITE(IpcMultiProcessTestIntegration, 1)
+DAS_TEST_MAX_HOSTS(
+    IpcMultiProcessTestIntegration,
+    CrossProcess_HostToHostCall,
+    2)
+DAS_TEST_MAX_HOSTS(
+    IpcMultiProcessTestIntegration,
+    CrossProcess_HostToHostCall_HostKillFailsFast,
+    2)
+DAS_TEST_MAX_HOSTS(
+    IpcMultiProcessTestIntegration,
+    StopAllStopsHostsInOnePass,
+    2)
+DAS_TEST_MAX_HOSTS(
+    IpcMultiProcessTestIntegration,
+    MixedTransport_HttpAndIpcHostToHostCall,
+    2)
+DAS_TEST_MAX_HOSTS(
+    IpcMultiProcessTestIntegration,
+    CrossProcess_AsyncLoadPlugins,
+    2)
+DAS_TEST_MAX_HOSTS(
+    IpcMultiProcessTestIntegration,
+    CrossProcess_AsyncLoadPlugins_WhenAll,
+    2)
+
 TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
 {
     if (!std::filesystem::exists(host_exe_path_))
@@ -1967,6 +2007,7 @@ TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
+    DasTestAdmissionNoteHostStart();
     EXPECT_TRUE(launcher_->IsRunning());
     EXPECT_GT(launcher_->GetPid(), 0u);
     EXPECT_GT(session_id, static_cast<uint16_t>(0));
@@ -2037,6 +2078,7 @@ TEST_F(
 
     EXPECT_FALSE(launcher_->IsRunning());
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    DasTestAdmissionNoteHostStop();
 
     DAS::DasPtr<DAS::Core::IPC::IHostLauncher> restart_launcher;
     ASSERT_EQ(ctx_->CreateHostLauncher(restart_launcher.Put()), DAS_S_OK);
@@ -2049,6 +2091,7 @@ TEST_F(
         restarted_session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
+    DasTestAdmissionNoteHostStart();
     ASSERT_TRUE(restart_launcher->IsRunning());
     ASSERT_GT(restarted_session_id, static_cast<uint16_t>(0));
     EXPECT_EQ(restarted_session_id, restart_launcher->GetSessionId());
@@ -2513,12 +2556,14 @@ TEST_F(IpcMultiProcessTestIntegration, MultipleStartStop)
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
         ASSERT_EQ(result, DAS_S_OK) << "Failed at iteration " << i;
+        DasTestAdmissionNoteHostStart();
         EXPECT_TRUE(launcher_->IsRunning());
         EXPECT_GT(session_id, static_cast<uint16_t>(0));
 
         launcher_->Stop();
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         EXPECT_FALSE(launcher_->IsRunning());
+        DasTestAdmissionNoteHostStop();
     }
 }
 
@@ -2537,6 +2582,7 @@ TEST_F(IpcMultiProcessTestIntegration, StopTerminatesProcess)
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
+    DasTestAdmissionNoteHostStart();
     EXPECT_TRUE(launcher_->IsRunning());
 
     launcher_->Stop();
@@ -2674,6 +2720,7 @@ TEST_F(IpcMultiProcessTestIntegration, ExitWatcher_FiresAfterLauncherReuse)
     ASSERT_TRUE(launcher_->IsRunning());
     launcher_->Stop();
     ASSERT_FALSE(launcher_->IsRunning());
+    DasTestAdmissionNoteHostStop();
 
     // 注册退出回调（必须在第一次 Stop 之后：StopBodyRequestExit 的
     // ClearCallbacks 会清空 slot）。
@@ -3078,6 +3125,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         session_b,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
+    DasTestAdmissionNoteHostStart();
     EXPECT_GT(session_b, static_cast<uint16_t>(0));
 
     // 2. 创建并启动 Host A（调用方进程）
@@ -3091,6 +3139,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         session_a,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
+    DasTestAdmissionNoteHostStart();
     EXPECT_GT(session_a, static_cast<uint16_t>(0));
     EXPECT_NE(session_a, session_b);
 
@@ -3563,6 +3612,7 @@ TEST_F(IpcMultiProcessTestIntegration, StopAllStopsHostsInOnePass)
         stop_all_on_failure();
         FAIL() << "first host start failed: " << result;
     }
+    DasTestAdmissionNoteHostStart();
     uint16_t session_second = 0;
     result = host_second->Start(
         Das::Utils::PathToUtf8(host_exe_path_),
@@ -3573,6 +3623,7 @@ TEST_F(IpcMultiProcessTestIntegration, StopAllStopsHostsInOnePass)
         stop_all_on_failure();
         FAIL() << "second host start failed: " << result;
     }
+    DasTestAdmissionNoteHostStart();
     EXPECT_NE(session_first, session_second);
 
     // 两个存活 host + 一个未启动 + 一个空指针：StopAll 一次收口
@@ -3603,6 +3654,7 @@ TEST_F(IpcMultiProcessTestIntegration, MixedTransport_HttpAndIpcHostToHostCall)
         ipc_session,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
+    DasTestAdmissionNoteHostStart();
     ASSERT_GT(ipc_session, static_cast<uint16_t>(0));
 
     const uint16_t expected_http_session =
@@ -3887,6 +3939,7 @@ TEST_F(
         args,
         boost::process::v2::process_start_dir(
             Das::Utils::ToBoostPath(host_exe_path_.parent_path())));
+    DasTestAdmissionNoteHostStart();
 
     uint32_t host_pid = static_cast<uint32_t>(host_process.id());
     ASSERT_GT(host_pid, 0u);
@@ -4004,6 +4057,7 @@ TEST_F(
         host_args,
         boost::process::v2::process_start_dir(
             Das::Utils::ToBoostPath(host_exe_path_.parent_path())));
+    DasTestAdmissionNoteHostStart();
 
     auto host_pid = static_cast<uint32_t>(host_process.id());
     DAS_CORE_LOG_INFO(
@@ -4143,6 +4197,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
             session_id2,
             IpcTestConfig::GetHostStartTimeoutMs());
         ASSERT_EQ(result, DAS_S_OK);
+        DasTestAdmissionNoteHostStart();
     }
 
     // 5. 在第二个 Host 上使用异步接口加载插件2
@@ -4207,6 +4262,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
             session_id2,
             IpcTestConfig::GetHostStartTimeoutMs());
         ASSERT_EQ(result, DAS_S_OK);
+        DasTestAdmissionNoteHostStart();
     }
 
     // 3. 获取插件 JSON 路径
@@ -5197,6 +5253,7 @@ void AssertPythonDirectorLifecycleBehavior(
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(start_result, DAS_S_OK);
+    DasTestAdmissionNoteHostStart();
     ASSERT_TRUE(launcher->IsRunning());
     ASSERT_GT(session_id, static_cast<uint16_t>(0));
 
@@ -5335,6 +5392,7 @@ void RunCSharpBridgeLifecycleTest(
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(start_result, DAS_S_OK);
+    DasTestAdmissionNoteHostStart();
     ASSERT_TRUE(launcher->IsRunning());
     ASSERT_GT(session_id, static_cast<uint16_t>(0));
 
@@ -5642,6 +5700,7 @@ void AssertPythonFailurePathBehavior(
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(start_result, DAS_S_OK);
+    DasTestAdmissionNoteHostStart();
     ASSERT_TRUE(launcher->IsRunning());
     ASSERT_GT(session_id, static_cast<uint16_t>(0));
 

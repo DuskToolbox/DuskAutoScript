@@ -578,6 +578,19 @@ inline void DasTestAdmissionNoteHostStart()
     TestAdmission::CheckHostStartViolation(started_hosts, __FILE__, __LINE__);
 }
 
+/**
+ * @brief host 停止/退出配对递减：串行生命周期形态（前一 host 确认死亡
+ * 后下一个才启动）在旧 host 死亡确认处调用，维持计数「当前存活 host
+ * 数」语义
+ *
+ * 只与 DasTestAdmissionNoteHostStart 精确配对使用，不触发违约判定；
+ * 计数器按测试归零，误配对只影响本测试内的存活计数。
+ */
+inline void DasTestAdmissionNoteHostStop()
+{
+    --TestAdmission::detail::HostStartCounter();
+}
+
 // ====== 申报宏（文件作用域、TEST 定义旁使用） ======
 
 /// 精确申报：suite_name.test_name 最大同时启动 host 数。注册器静态

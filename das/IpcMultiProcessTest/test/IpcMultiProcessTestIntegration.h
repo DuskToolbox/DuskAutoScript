@@ -24,6 +24,7 @@
 
 #include "IpcTestConfig.h"
 #include "LoopbackPort.h"
+#include "TestAdmission.h"
 
 // Boost 头文件（用于进程启动测试）
 #include <boost/asio/io_context.hpp>
@@ -166,6 +167,7 @@ protected:
             DAS_CORE_LOG_ERROR("Failed to start host process");
             return result;
         }
+        DasTestAdmissionNoteHostStart();
 
         // Auto-registration happens inside Start() via ipc_context_ callback
         DAS_CORE_LOG_INFO(
