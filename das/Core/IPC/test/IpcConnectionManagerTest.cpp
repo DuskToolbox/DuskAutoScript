@@ -167,8 +167,9 @@ TEST_F(IpcConnectionManagerTest, HeartbeatTimeout_ConnectionMarkedDead)
     // Connection should initially be alive
     EXPECT_TRUE(manager_->IsConnectionAlive(2));
 
-    // Wait for timeout (default is 5000ms, but we use shorter in tests)
-    // In real tests, we would need to mock time or use configurable timeouts
+    // Wait briefly (well below the real timeout, which is far too long to
+    // wait here; a full timeout wait is covered by
+    // HeartbeatTimeout_TriggersCallback)
     // For now, just verify the connection is alive after a short wait
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
@@ -199,7 +200,7 @@ TEST_F(IpcConnectionManagerTest, HeartbeatInterval_Value)
 
 TEST_F(IpcConnectionManagerTest, HeartbeatTimeout_Value)
 {
-    EXPECT_EQ(ConnectionManager::HEARTBEAT_TIMEOUT_MS, 5000);
+    EXPECT_EQ(ConnectionManager::HEARTBEAT_TIMEOUT_MS, 20000);
 }
 
 // ====== Multiple Operations Tests ======
@@ -345,12 +346,14 @@ TEST_F(IpcConnectionManagerTest, HeartbeatTimeout_TriggersCallback)
     ASSERT_EQ(manager_->RegisterHostLauncher(2, launcher), DAS_S_OK);
 
     // Start heartbeat thread - it will detect timeout after
-    // HEARTBEAT_TIMEOUT_MS (5000ms)
+    // HEARTBEAT_TIMEOUT_MS
     manager_->StartHeartbeatThread();
 
-    // Wait long enough for timeout detection
-    // HEARTBEAT_INTERVAL_MS (1000ms) + HEARTBEAT_TIMEOUT_MS (5000ms) + margin
-    std::this_thread::sleep_for(std::chrono::milliseconds(7000));
+    // Wait long enough for timeout detection: interval + timeout + margin
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(
+            ConnectionManager::HEARTBEAT_TIMEOUT_MS
+            + (2 * ConnectionManager::HEARTBEAT_INTERVAL_MS)));
 
     manager_->StopHeartbeatThread();
 

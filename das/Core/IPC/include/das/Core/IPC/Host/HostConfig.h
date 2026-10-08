@@ -28,9 +28,9 @@ namespace Core
             constexpr size_t   DEFAULT_SHARED_MEMORY_SIZE =
                 16 * 1024 * 1024; // 16MB
 
-            // 心跳配置
+            // 心跳配置（与 ConnectionManager 心跳常量同值维护，改值须两处同改）
             constexpr uint32_t HEARTBEAT_INTERVAL_MS = 1000;
-            constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 5000;
+            constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 20000;
 
             // 连接超时
             constexpr uint32_t DEFAULT_CONNECTION_TIMEOUT_MS =

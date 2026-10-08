@@ -256,7 +256,9 @@ public:
     void UpdateHeartbeatTimestamp(uint16_t session_id);
 
     static constexpr uint32_t HEARTBEAT_INTERVAL_MS = 1000;
-    static constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 5000;
+    // 满载机器上外语运行时 host 初始化可 >5s 无心跳，过短的超时会杀健康
+    // host（20s 为实测重标定值）
+    static constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 20000;
 
 private:
     DasResult CleanupConnectionResources(uint16_t remote_id);
