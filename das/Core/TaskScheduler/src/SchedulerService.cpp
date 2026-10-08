@@ -3120,6 +3120,9 @@ namespace Das::Core::TaskScheduler
 
     DasResult SchedulerService::Enable()
     {
+        // 返回值必须在锁内取走：fsm_last_result_ 是共享成员，锁外读会被
+        // 并发调用者的 FSM 事件改写，让本次调用报出别人的结果。
+        DasResult result = DAS_S_OK;
         {
             const std::scoped_lock lock(mutex_);
             // 手动立即执行期间拒绝启动调度：执行槽被占时一切状态切换
@@ -3129,6 +3132,7 @@ namespace Das::Core::TaskScheduler
                 return DAS_E_TASK_WORKING;
             }
             fsm_->process_event(EvtEnable{});
+            result = fsm_last_result_;
         }
         // FsmActEnterRunning 置 Running 但不起 tick：先用最新 schedule 重算所有
         // task 的 next_execution_time（覆盖非 Running 态 apply 的 schedule 变更
@@ -3141,12 +3145,15 @@ namespace Das::Core::TaskScheduler
             StartTickTimer(ComputeNextDelay(task_instances_, now_unix));
         }
         NotifyStateChange();
-        return fsm_last_result_;
+        return result;
     }
 
     DasResult SchedulerService::Disable()
     {
         bool task_idle = false;
+        // 同 Enable：返回值锁内取走，锁外读 fsm_last_result_ 会拿到并发
+        // 调用者事件的结果。
+        DasResult result = DAS_S_OK;
         {
             const std::scoped_lock lock(mutex_);
             fsm_->process_event(EvtDisable{});
@@ -3157,6 +3164,7 @@ namespace Das::Core::TaskScheduler
             {
                 fsm_->process_event(EvtTickCompleted{});
             }
+            result = fsm_last_result_;
         }
         NotifyStateChange();
 
@@ -3191,7 +3199,7 @@ namespace Das::Core::TaskScheduler
                 static_cast<void>(stdexec::sync_wait(scope_.on_empty()));
             }
         }
-        return fsm_last_result_;
+        return result;
     }
 
     DasResult SchedulerService::RunTaskNow(int64_t task_id)
