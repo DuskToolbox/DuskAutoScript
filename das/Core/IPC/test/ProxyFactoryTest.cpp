@@ -540,6 +540,10 @@ TEST_F(
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_TRUE(proxy);
 
+    // 候车语义：物化申报入队后不再直发（下一写者/guard 周期/心跳班车
+    // 三级送出）。本夹具零载体，显式出清是唯一确定性送出机制。
+    static_cast<void>(run_loop_->FlushOutboundFifo());
+
     auto message = ReceiveNextSentMessage(std::chrono::seconds(1));
     ASSERT_TRUE(message.has_value())
         << "first materialization must declare itself with one RemoteAddRef";
@@ -559,7 +563,8 @@ TEST_F(
         std::memcmp(message->second.data(), &object_id_, sizeof(ObjectId)),
         0);
 
-    // 恰好一条：短期内不得出现第二条申报
+    // 恰好一条：出清后短期内不得出现第二条申报
+    static_cast<void>(run_loop_->FlushOutboundFifo());
     EXPECT_FALSE(
         ReceiveNextSentMessage(std::chrono::milliseconds(300)).has_value());
 
@@ -589,13 +594,18 @@ TEST_F(
     ASSERT_EQ(second_result, DAS_S_OK);
     ASSERT_TRUE(vector_proxy);
 
+    // 候车语义零载体：显式出清送出首条申报
+    static_cast<void>(run_loop_->FlushOutboundFifo());
+
     auto message = ReceiveNextSentMessage(std::chrono::seconds(1));
     ASSERT_TRUE(message.has_value());
     EXPECT_EQ(
         message->first.GetInterfaceId(),
         static_cast<uint32_t>(IpcCommandType::RemoteAddRef));
 
-    // 第二视图物化后不得再有追加申报
+    // 第二视图物化后不得再有追加申报（再次出清，堵住漏发藏在候车队列
+    // 里的假静默）
+    static_cast<void>(run_loop_->FlushOutboundFifo());
     EXPECT_FALSE(
         ReceiveNextSentMessage(std::chrono::milliseconds(300)).has_value());
 }
@@ -622,15 +632,16 @@ TEST_F(
     ASSERT_EQ(second_result, DAS_S_OK);
     ASSERT_TRUE(vector_proxy);
 
-    // 软排空物化期报文，之后的线上流量只剩 RELEASE
+    // 软排空物化期报文（候车语义零载体：显式出清后才真正送达），之后
+    // 的线上流量只剩 RELEASE
+    static_cast<void>(run_loop_->FlushOutboundFifo());
     static_cast<void>(ReceiveNextSentMessage(std::chrono::seconds(1)));
 
     vector_proxy.Reset();
     string_proxy.Reset();
 
-    // 观察窗口的 drain 触发点：非 BT 析构入队即触发之外，显式叠加一次
-    // guard 出清动作（FlushOutboundFifo）——RELEASE 到达不依赖心跳或
-    // 后续业务载体
+    // 观察窗口的 drain 触发点：显式 guard 出清动作（FlushOutboundFifo）
+    // ——RELEASE 到达不依赖心跳或后续业务载体
     static_cast<void>(run_loop_->FlushOutboundFifo());
 
     // 窗口内收帧至静默：恰一条 RELEASE（条目只移除一次，绝不按 proxy
@@ -933,12 +944,11 @@ TEST_F(
     materialized_proxy.Reset();
 }
 
-// 非 BT 线程（测试主线程，传真实 BT 的 weak_ptr）物化：入队 + 立即触发
-// drain——帧在调用窗口内到达（零延迟语义等价旧直发），单帧独占一次
-// 物理写
+// 非 BT 线程（测试主线程，传真实 BT 的 weak_ptr）物化：候车语义与 BT
+// 同款入队零直发；显式出清后帧在窗口内到达，单帧独占一次物理写
 TEST_F(
     ProxyAddRefForkTest,
-    NonBusinessThreadMaterializationSendsWithinWindowViaImmediateDrain)
+    NonBusinessThreadMaterializationDeliversViaExplicitFlush)
 {
     const auto physical_writes_before =
         run_loop_->GetOutboundPhysicalWriteCount();
@@ -950,6 +960,9 @@ TEST_F(
         DasReadOnlyStringProxy::InterfaceId);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_TRUE(proxy);
+
+    // 零载体场景：显式出清是候车控制面的唯一确定性送出机制
+    static_cast<void>(run_loop_->FlushOutboundFifo());
 
     EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(1)), 1u);
     EXPECT_EQ(
@@ -965,12 +978,12 @@ TEST_F(
     proxy.Reset();
 }
 
-// T10 完整锚点：非 BT 线程物化 → ①调用窗口内已产生一条独立 ADD_REF 帧
+// T10 完整锚点：非 BT 线程物化 → ①显式出清后窗口内一条独立 ADD_REF 帧
 // 且 header 无 bit1；②FIFO 前置为空、帧到达后出清为空；③该帧 target =
 // oid.session_id
 TEST_F(
     ProxyAddRefForkTest,
-    ExternalThreadMaterializationSendsStandaloneFrameWithinCallWindow)
+    ExternalThreadMaterializationDeliversStandaloneFrameViaExplicitFlush)
 {
     EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
     const auto physical_writes_before =
@@ -984,8 +997,10 @@ TEST_F(
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_TRUE(proxy);
 
-    // ① 返回后当次窗口内已到达一条独立 ADD_REF（入队即触发 drain，
-    // 不待周期）
+    // 零载体场景：显式出清送出入队帧，不待周期/心跳班车
+    static_cast<void>(run_loop_->FlushOutboundFifo());
+
+    // ① 出清后当次窗口内到达一条独立 ADD_REF
     EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(1)), 1u);
     EXPECT_EQ(
         run_loop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
