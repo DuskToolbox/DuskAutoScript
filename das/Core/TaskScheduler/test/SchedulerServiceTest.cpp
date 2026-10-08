@@ -6760,23 +6760,30 @@ TEST_F(
         // 观察窗按全量 -j 并行重标定：图执行的每跳是跨 host 往返，
         // 32 路并发争抢下 30 秒窗会被挤爆（隔离态数秒即达）；健康轮
         // 秒级收敛，放大上限不拖慢。
+        // 等待谓词必须是断言主语本身：component_do_count 在 Do 入口即
+        // 递增、先于收值观测落账，拿计数当完成信号会在最后一个 Do 的
+        // 计数与落账之间竞态误判缺值（隔离态 ~40% 复现）。
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::seconds(90);
-        bool sinks_done = false;
+        bool inputs_recorded = false;
         while (std::chrono::steady_clock::now() < deadline)
         {
             {
                 const ipc_scoped_lock lock(shared_state_->mutex);
-                sinks_done = shared_state_->component_do_count >= 2;
+                inputs_recorded =
+                    shared_state_->received_input_int_present
+                    && shared_state_->received_input_string_present;
             }
-            if (sinks_done)
+            if (inputs_recorded)
             {
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        ASSERT_TRUE(sinks_done)
-            << "downstream sink nodes never executed (component_do_count<2)";
+        ASSERT_TRUE(inputs_recorded)
+            << "typed port entries not recorded by sink nodes"
+            << " (component_do_count=" << shared_state_->component_do_count
+            << ")";
 
         const ipc_scoped_lock lock(shared_state_->mutex);
         ASSERT_TRUE(shared_state_->received_input_int_present)
