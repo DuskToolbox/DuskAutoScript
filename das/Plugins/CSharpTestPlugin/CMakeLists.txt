@@ -57,6 +57,12 @@ function(das_add_csharp_test_plugin_build
     set(_BUILD_STAMP
         "${CSHARP_TEST_PLUGIN_BUILD_ROOT}/${TARGET_FRAMEWORK}/${CSHARP_TEST_PLUGIN_CONFIGURATION}.stamp")
 
+    # 双 TFM 并行构建各自隐式 restore，共享源树 obj/ 会互相覆写
+    # project.assets.json（NETSDK1005）。BaseIntermediateOutputPath 按 TFM
+    # 隔离进构建树；尾部斜杠是 MSBuild 字符串拼接要求。
+    set(_BASE_INTERMEDIATE_DIR
+        "${CSHARP_TEST_PLUGIN_BUILD_ROOT}/${TARGET_FRAMEWORK}/obj/")
+
     file(GLOB _CS_PLUGIN_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cs")
 
@@ -76,6 +82,7 @@ function(das_add_csharp_test_plugin_build
             -p:GenerateRuntimeConfigurationFiles=true
             -p:DasGeneratedOutputDir="${DAS_CORE_CSHARP_OUTPUT_DIR}"
             -p:TargetFrameworks="${TARGET_FRAMEWORK}"
+            -p:BaseIntermediateOutputPath="${_BASE_INTERMEDIATE_DIR}"
             -v:minimal
         COMMAND ${CMAKE_COMMAND} -E touch "${_BUILD_STAMP}"
         DEPENDS
@@ -265,6 +272,7 @@ if(DAS_CSHARP_NATIVEAOT_SMOKE)
             -p:DasPluginAssemblyName="${CSHARP_TEST_PLUGIN_MODERN_NAME}"
             -p:DasGeneratedOutputDir="${DAS_CORE_CSHARP_OUTPUT_DIR}"
             -p:TargetFrameworks=net8.0
+            -p:BaseIntermediateOutputPath="${CSHARP_TEST_PLUGIN_BINARY_ROOT}/nativeaot/obj/"
             -v:minimal
         COMMAND ${CMAKE_COMMAND} -E touch "${_NATIVEAOT_STAMP}"
         DEPENDS
