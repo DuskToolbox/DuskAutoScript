@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <charconv>
 #include <cstdio>
 #include <ctime>
 

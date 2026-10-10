@@ -16,6 +16,7 @@
 
 #include <cpp_yyjson.hpp>
 
+#include <charconv>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
