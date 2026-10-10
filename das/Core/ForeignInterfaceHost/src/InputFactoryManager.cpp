@@ -6,6 +6,7 @@
 #include <das/DasException.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
+#include <algorithm>
 #include <utility>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN

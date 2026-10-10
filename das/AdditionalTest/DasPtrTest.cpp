@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cstdint>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
@@ -52,7 +53,7 @@ namespace
     class TestImpl : public IDasBase
     {
     private:
-        std::atomic_uint32_t count_{0};
+        std::atomic<uint32_t> count_{0};
 
     public:
         TestImpl() {}

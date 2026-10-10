@@ -2,6 +2,7 @@
 #define DAS_UTILS_UTILS_HPP
 
 #include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <das/IDasBase.h>
 #include <das/Utils/Config.h>
@@ -207,7 +208,7 @@ template <class T>
 class RefCounter
 {
 private:
-    std::atomic_uint32_t ref_count_{0};
+    std::atomic<uint32_t> ref_count_{0};
 
 public:
     RefCounter() = default;

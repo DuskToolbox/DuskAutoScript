@@ -157,6 +157,8 @@ def generate_cpp_file(
     parts.append('#include "lauxlib.h"')
     parts.append('#include "lualib.h"')
     parts.append('}')
+    parts.append('#include <atomic>')
+    parts.append('#include <cstdint>')
     parts.append('#include <cstdio>')
     parts.append('#include <string>')
     parts.append('#include <sol/sol.hpp>')

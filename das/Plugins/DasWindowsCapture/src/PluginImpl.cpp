@@ -10,6 +10,8 @@
 #include "WindowsCaptureFactoryImpl.h"
 
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <stdexcept>
 
 DAS_NS_BEGIN
@@ -56,7 +58,7 @@ DasResult WindowsCapturePlugin::CreateFeatureInterface(
     }
 }
 
-static std::atomic_int32_t g_ref_count;
+static std::atomic<int32_t> g_ref_count;
 
 void WindowsCaptureAddRef() { g_ref_count++; }
 

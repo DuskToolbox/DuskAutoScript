@@ -10,6 +10,8 @@
 #include "PluginImpl.h"
 
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <stdexcept>
 
 DAS_NS_BEGIN
@@ -65,7 +67,7 @@ DasResult AdbCapturePlugin::CreateFeatureInterface(
     }
 }
 
-static std::atomic_int32_t g_ref_count;
+static std::atomic<int32_t> g_ref_count;
 
 void AdbCaptureAddRef() { g_ref_count++; }
 

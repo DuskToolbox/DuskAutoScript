@@ -2,10 +2,13 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_IDASCAPTUREIMPL_H
 
 #include "Das.PluginInterface.IDasCapture.hpp"
+#include <cstdint>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Utils/Expected.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasCaptureManager.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasCaptureManager.hpp>
+#include <tuple>
+#include <vector>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 

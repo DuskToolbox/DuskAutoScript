@@ -1,6 +1,8 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_DASIIDVECTOR_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_DASIIDVECTOR_H
 
+#include <atomic>
+#include <cstdint>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Utils/Expected.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
@@ -12,8 +14,8 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 class DasGuidVectorImpl final : public ExportInterface::IDasGuidVector,
                                 public ExportInterface::IDasReadOnlyGuidVector
 {
-    std::atomic_uint32_t ref_count_{1};
-    std::vector<DasGuid> iids_{};
+    std::atomic<uint32_t> ref_count_{1};
+    std::vector<DasGuid>  iids_{};
 
 public:
     DasGuidVectorImpl() = default;

@@ -1,6 +1,8 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_DASSTRINGVECTOR_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_DASSTRINGVECTOR_H
 
+#include <atomic>
+#include <cstdint>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Utils/Expected.h>
 #include <das/_autogen/idl/abi/IDasStringVector.h>
@@ -11,7 +13,7 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 class DasStringVectorImpl final : public ExportInterface::IDasStringVector
 {
-    std::atomic_uint32_t     ref_count_{1};
+    std::atomic<uint32_t>    ref_count_{1};
     std::vector<std::string> strings_{};
 
 public:
