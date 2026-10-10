@@ -1,7 +1,3 @@
-// 因为我们对getenv的使用非常克制，所以这里可以使用宏屏蔽警告
-// warning C4996: 'getenv': This function or variable may be unsafe. Consider
-// using _dupenv_s instead.
-#define _CRT_SECURE_NO_WARNINGS
 #include <array>
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <cctype>
@@ -298,9 +294,10 @@ namespace Core
         // 默认 trace 使每次排查期加入热路径的调试日志在常规运行中全量
         // 计税（格式化 + stdout + 滚动文件 + notifier 三路 sink）
         spdlog::level::level_enum startup_level = spdlog::level::info;
-        if (const char* requested_level = std::getenv("DAS_LOG_LEVEL"))
+        if (const auto requested_level =
+                Das::Utils::GetEnvironmentText("DAS_LOG_LEVEL"))
         {
-            const std::string_view normalized{requested_level};
+            const std::string_view normalized{*requested_level};
             auto                   matches = [normalized](std::string_view name)
             {
                 return normalized.size() == name.size()

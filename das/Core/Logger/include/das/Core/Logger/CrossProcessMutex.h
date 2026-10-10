@@ -3,12 +3,12 @@
 
 // getenv/setenv is used to inherit the logger mutex identity into child
 // processes. Windows stores the owner pid; Linux stores the System V semid.
-#define _CRT_SECURE_NO_WARNINGS
 
 #include <boost/process/v2/pid.hpp>
 #include <cstdint>
 #include <cstdlib>
 #include <das/DasConfig.h>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 #include <limits>
 #include <stdexcept>
@@ -71,14 +71,15 @@ namespace Core
 
             inline LoggerMutexIdentity ResolveLoggerMutexIdentity()
             {
-                if (const char* owner_pid = std::getenv(LOGGER_MUTEX_ENV);
-                    owner_pid != nullptr && owner_pid[0] != '\0')
+                if (const auto owner_pid =
+                        Das::Utils::GetEnvironmentText(LOGGER_MUTEX_ENV);
+                    owner_pid.has_value() && !owner_pid->empty())
                 {
                     return {
                         DAS::fmt::format(
                             "{}{}",
                             LOGGER_MUTEX_PREFIX,
-                            owner_pid),
+                            *owner_pid),
                         false};
                 }
 

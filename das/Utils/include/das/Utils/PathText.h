@@ -55,7 +55,7 @@ inline std::string PathToGenericUtf8(const std::filesystem::path& source_path)
         u8_text.size()};
 }
 
-/// 环境变量值的原生宽度获取：宽 value_type 平台走 _wgetenv 宽源直构、
+/// 环境变量值的原生宽度获取：宽 value_type 平台走 _wdupenv_s 快照直构、
 /// 窄 value_type 平台走 getenv 本码直构——消灭转换而非修转换（Windows
 /// 的窄 getenv 值经 ANSI 代码页，非 ASCII 路径会损坏）。环境变量名是
 /// ASCII 标识符，展宽无损。
@@ -71,12 +71,18 @@ inline std::optional<std::filesystem::path> PathFromEnvironment(
             wide_name.push_back(
                 static_cast<wchar_t>(static_cast<unsigned char>(*cursor)));
         }
-        const wchar_t* wide_value = _wgetenv(wide_name.c_str());
-        if (wide_value == nullptr)
+        wchar_t*      wide_value = nullptr;
+        size_t        wide_value_length = 0;
+        const errno_t duplicate_result =
+            _wdupenv_s(&wide_value, &wide_value_length, wide_name.c_str());
+        if (duplicate_result != 0 || wide_value == nullptr)
         {
             return std::nullopt;
         }
-        return std::filesystem::path{std::wstring_view{wide_value}};
+        const std::filesystem::path environment_path{
+            std::wstring_view{wide_value, wide_value_length - 1}};
+        free(wide_value);
+        return environment_path;
     }
     else
     {
@@ -87,6 +93,32 @@ inline std::optional<std::filesystem::path> PathFromEnvironment(
         }
         return std::filesystem::path{std::string_view{narrow_value}};
     }
+}
+
+/// 环境变量 ASCII 文本读取：MSVC 的 CRT 环境块会被 _putenv 重建，getenv
+/// 返回的指针可能悬垂（C4996），故走 _dupenv_s 快照；其余平台 getenv 即
+/// 标准 API。值面向 ASCII 配置文本——非 ASCII 路径值走 PathFromEnvironment
+/// 的宽通道。
+inline std::optional<std::string> GetEnvironmentText(const char* name)
+{
+#ifdef _MSC_VER
+    char*  value = nullptr;
+    size_t value_length = 0;
+    if (_dupenv_s(&value, &value_length, name) != 0 || value == nullptr)
+    {
+        return std::nullopt;
+    }
+    const std::string environment_text{value, value_length - 1};
+    free(value);
+    return environment_text;
+#else
+    const char* value = std::getenv(name);
+    if (value == nullptr)
+    {
+        return std::nullopt;
+    }
+    return std::string{value};
+#endif
 }
 
 /// 命令行参数文本物化为 path 的唯一通道。Windows CRT 交付的窄 argv 是

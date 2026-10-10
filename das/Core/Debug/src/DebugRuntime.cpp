@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
-
 #include <das/Core/Debug/DebugEvent.h>
 #include <das/Core/Debug/DebugImageAnnotator.h>
 #include <das/Core/Debug/DebugRuntime.h>
@@ -52,9 +50,9 @@ namespace
 
     bool ReadEnabledSnapshot()
     {
-        if (const auto* env = std::getenv("DAS_DEBUG"))
+        if (const auto env = Das::Utils::GetEnvironmentText("DAS_DEBUG"))
         {
-            return std::string{env} == "1";
+            return *env == "1";
         }
 
 #ifdef _DEBUG

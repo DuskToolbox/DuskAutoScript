@@ -1,4 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
 #define DAS_BUILD_SHARED
 
 #include "SchedulerTestPluginImpl.h"
@@ -7,6 +6,7 @@
 #include <das/DasConfig.h>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/PathText.h>
 
 #include <Windows.h>
 
@@ -70,10 +70,11 @@ static void TryResolveSharedStateFromEnv()
     {
         return;
     }
-    const char* name = std::getenv("DAS_SCHEDULER_TEST_SHM_NAME");
-    if (name != nullptr && name[0] != '\0')
+    const auto name =
+        Das::Utils::GetEnvironmentText("DAS_SCHEDULER_TEST_SHM_NAME");
+    if (name.has_value() && !name->empty())
     {
-        DasTestPlugin_SetSharedMemoryName(name);
+        DasTestPlugin_SetSharedMemoryName(name->c_str());
     }
 }
 

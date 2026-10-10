@@ -2,7 +2,6 @@
  * @file HostLauncher.cpp
  * @brief Host 进程启动器实现
  */
-#define _CRT_SECURE_NO_WARNINGS
 
 #include <cassert>
 #include <cctype>

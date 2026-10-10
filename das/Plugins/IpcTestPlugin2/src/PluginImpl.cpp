@@ -1,9 +1,8 @@
-// getenv 触发的 CRT 弃用告警仅在 MSVC 存在，预定义宏关闭。
-#define _CRT_SECURE_NO_WARNINGS
 #include "PluginImpl.h"
 
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
+#include <das/Utils/PathText.h>
 #include <das/Utils/fmt.h>
 
 #include <cstdlib>
@@ -38,8 +37,9 @@ namespace
                                                segment;
         static EchoComponentSharedState* const shared_state = []()
         {
-            const char* segment_name = std::getenv(kIpcTestPlugin2ShmEnvName);
-            if (segment_name == nullptr || segment_name[0] == '\0')
+            const auto segment_name =
+                Das::Utils::GetEnvironmentText(kIpcTestPlugin2ShmEnvName);
+            if (!segment_name.has_value() || segment_name->empty())
             {
                 return static_cast<EchoComponentSharedState*>(nullptr);
             }
@@ -48,7 +48,7 @@ namespace
                 segment = std::make_unique<
                     boost::interprocess::managed_shared_memory>(
                     boost::interprocess::open_only_t{},
-                    segment_name);
+                    segment_name->c_str());
                 auto found = segment->find<EchoComponentSharedState>("state");
                 return found.first;
             }

@@ -92,11 +92,22 @@ namespace Plugins::DasGraphTask
             return true;
         }
 
-        // 解析锚定钟点 "HH:MM"（照 ParseDailyTime 纪律：sscanf 两段 + 范围
-        // 校验 hour 0-23 / minute 0-59，不夹紧、拒绝非法）。
+        // 解析锚定钟点 "HH:MM"（照 ParseDailyTime 纪律：from_chars 两段 +
+        // 范围校验 hour 0-23 / minute 0-59，不夹紧、拒绝非法）。
         bool ParseAnchorTime(const std::string& text, int& hour, int& minute)
         {
-            if (std::sscanf(text.c_str(), "%d:%d", &hour, &minute) != 2)
+            const char* const text_end = text.data() + text.size();
+            const auto hour_result =
+                std::from_chars(text.data(), text_end, hour);
+            if (
+                hour_result.ec != std::errc{} || hour_result.ptr == text_end
+                || *hour_result.ptr != ':')
+            {
+                return false;
+            }
+            const auto minute_result =
+                std::from_chars(hour_result.ptr + 1, text_end, minute);
+            if (minute_result.ec != std::errc{} || minute_result.ptr != text_end)
             {
                 return false;
             }

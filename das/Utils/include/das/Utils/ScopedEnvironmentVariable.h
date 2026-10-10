@@ -17,9 +17,9 @@
 DAS_UTILS_NS_BEGIN
 
 /// RAII 环境变量写作用域：构造快照原值，析构原样归还。值的读写必须与
-/// PathFromEnvironment 的 _wgetenv 读端同走宽通道——窄 _putenv_s 经 ANSI
-/// 代码页写入，非 ASCII 路径值会被损坏且与宽读端断裂；文本面统一仓内
-/// UTF-8 约定。
+/// PathFromEnvironment 的 _wdupenv_s 读端同走宽通道——窄 _putenv_s 经
+/// ANSI 代码页写入，非 ASCII 路径值会被损坏且与宽读端断裂；文本面统一
+/// 仓内 UTF-8 约定。
 class ScopedEnvironmentVariable
 {
 public:
@@ -52,12 +52,18 @@ private:
     std::optional<std::string> ReadCurrent() const
     {
 #ifdef _WIN32
-        const wchar_t* current = _wgetenv(WideName().c_str());
-        if (current == nullptr)
+        wchar_t* current = nullptr;
+        size_t   current_length = 0;
+        if (_wdupenv_s(&current, &current_length, WideName().c_str()) != 0
+            || current == nullptr)
         {
             return std::nullopt;
         }
-        return PathToUtf8(std::filesystem::path{std::wstring_view{current}});
+        const std::string current_text = PathToUtf8(
+            std::filesystem::path{
+                std::wstring_view{current, current_length - 1}});
+        free(current);
+        return current_text;
 #else
         const char* current = std::getenv(name_.c_str());
         if (current == nullptr)

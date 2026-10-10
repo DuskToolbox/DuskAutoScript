@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
-
 #include <das/Core/Logger/DasLogSessionImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>

@@ -680,9 +680,9 @@ namespace Contract
                 // 名单不含 signal，category 恒为 data——边界口不在 catalog
                 // 静态面里，connectGraphPorts 的边型推导据此解析，未声明
                 // 的动态口端点照旧拒绝。
-                for (const auto& entry : LoadNodeBoundaryPorts(node))
+                for (const auto& boundary_port : LoadNodeBoundaryPorts(node))
                 {
-                    if (entry.id == port_id)
+                    if (boundary_port.id == port_id)
                     {
                         return std::string(PORT_CATEGORY_DATA);
                     }

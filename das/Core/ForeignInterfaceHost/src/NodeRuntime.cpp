@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
-
 #include <das/Core/ForeignInterfaceHost/NodeRuntime.h>
 
 #include <das/Utils/BoostPathBridge.h>

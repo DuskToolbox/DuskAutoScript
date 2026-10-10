@@ -1,5 +1,3 @@
-// sscanf 触发的 CRT 弃用告警仅在 MSVC 存在，预定义宏关闭。
-#define _CRT_SECURE_NO_WARNINGS
 #include "MaapiScheduleBrain.h"
 
 #include <spdlog/spdlog.h>
@@ -37,7 +35,18 @@ namespace Das::Plugins::DasMaaPi
         // 范围校验 hour 0-23 / minute 0-59）。
         bool ParseDailyTime(const std::string& text, int& hour, int& minute)
         {
-            if (std::sscanf(text.c_str(), "%d:%d", &hour, &minute) != 2)
+            const char* const text_end = text.data() + text.size();
+            const auto hour_result =
+                std::from_chars(text.data(), text_end, hour);
+            if (
+                hour_result.ec != std::errc{} || hour_result.ptr == text_end
+                || *hour_result.ptr != ':')
+            {
+                return false;
+            }
+            const auto minute_result =
+                std::from_chars(hour_result.ptr + 1, text_end, minute);
+            if (minute_result.ec != std::errc{} || minute_result.ptr != text_end)
             {
                 return false;
             }
