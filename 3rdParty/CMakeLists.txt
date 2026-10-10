@@ -352,9 +352,29 @@ if (DAS_USE_BUNDLED_OPENCV)
     _download_and_config_opencv()
 
 else ()
-    find_package(OpenCV 5.0 QUIET COMPONENTS core imgproc imgcodecs features flann geometry xfeatures2d)
-    if (NOT OpenCV_FOUND)
-        find_package(OpenCV 4.8 REQUIRED COMPONENTS core imgproc imgcodecs features2d flann)
+    if(MSVC)
+        # MSVC 树不做系统级 5.0 优先探测：版本不匹配会吞掉 OpenCV_DIR 缓存
+        # 提示，且 PATH 搜索会捞到 MinGW ABI 的 OpenCV（如 MSYS2 clang64），
+        # 直到链接期才以 LNK2001 爆炸。只认显式 OpenCV_DIR 或 bundled 构建。
+        # OpenCV 的 version 文件是同主版本兼容语义（请求 4.8 遇 5.x 会被
+        # 拒），故第一步不带版本请求拿主版本，再按主版本请求组件表
+        # （5.x 无 features2d）；第二次调用复用已落位的 OpenCV_DIR，
+        # 不触发游走搜索。
+        find_package(OpenCV REQUIRED)
+        if(OpenCV_VERSION VERSION_GREATER_EQUAL 5)
+            find_package(
+                OpenCV REQUIRED COMPONENTS core imgproc imgcodecs features
+                flann geometry xfeatures2d)
+        else ()
+            find_package(
+                OpenCV REQUIRED COMPONENTS core imgproc imgcodecs features2d
+                flann)
+        endif ()
+    else ()
+        find_package(OpenCV 5.0 QUIET COMPONENTS core imgproc imgcodecs features flann geometry xfeatures2d)
+        if (NOT OpenCV_FOUND)
+            find_package(OpenCV 4.8 REQUIRED COMPONENTS core imgproc imgcodecs features2d flann)
+        endif ()
     endif ()
     if (NOT OpenCV_FOUND)
         message(FATAL_ERROR "OpenCV 4.8+/5.x not found. Please install it manually or set DAS_USE_BUNDLED_OPENCV=ON.")
